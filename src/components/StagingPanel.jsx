@@ -25,7 +25,11 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
   return (
     <div className="panel staging-panel glass-card">
       <div className="panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-        <span><span className="step-number">2</span> 정보 확인 및 송출</span>
+        <span>
+          <span className="step-number">2</span> 정보 확인 및 송출 
+          {stagedItem.source === 'meloming' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-emerald)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Meloming</span>}
+          {stagedItem.source === 'setlink' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-azure)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Setlink</span>}
+        </span>
         <button onClick={onClearStaged} className="btn-icon btn-icon-danger" title="비우기 (취소)" style={{fontSize:'0.85rem'}}>
           <X size={16} /> 비우기
         </button>
@@ -56,7 +60,14 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             autoFocus
           />
         </div>
-        <p style={{fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'-0.3rem', marginBottom:'0.5rem'}}>방송 화면에 표시될 곡명과 가수명을 수정하세요.</p>
+        <p style={{fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'-0.3rem', marginBottom:'0.5rem'}}>
+          방송 화면에 표시될 곡명과 가수명을 수정하세요.
+          {stagedItem.tags && stagedItem.tags.length > 0 && (
+            <span style={{marginLeft: '8px', color: 'var(--eureka-emerald)'}}>
+              (태그: {stagedItem.tags.join(', ')})
+            </span>
+          )}
+        </p>
 
         <label>가수 (선택)</label>
         <div className="search-input-wrapper">

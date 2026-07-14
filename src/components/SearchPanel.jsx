@@ -192,20 +192,23 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
   const renderSongbook = (platform, hookData, localSearch, setLocalSearch, isConnected, idValue, setIdValue, emptyMessage, helpText) => {
     if (!isConnected) {
       return (
-        <div className="onboarding" style={{textAlign:'center', marginTop:'2rem'}}>
+        <div className="onboarding" style={{textAlign:'center', marginTop:'2rem', padding:'2rem', background:'rgba(0,0,0,0.1)', borderRadius:'12px', border:'1px solid var(--glass-border)'}}>
           {platform === 'meloming' ? <Music size={48} color="var(--eureka-emerald)" style={{margin:'0 auto 1rem'}} /> : <Link size={48} color="var(--eureka-azure)" style={{margin:'0 auto 1rem'}} />}
           <h3 style={{marginBottom:'0.5rem', fontSize:'1.2rem', color:'var(--text-main)'}}>{platform === 'meloming' ? '멜로밍 노래책 연동' : 'Setlink 노래책 연동'}</h3>
-          <p style={{fontSize:'0.9rem', color:'var(--text-muted)', marginBottom:'1.5rem'}} dangerouslySetInnerHTML={{__html: helpText}} />
+          <p style={{fontSize:'0.9rem', color:'var(--text-muted)', marginBottom:'1.5rem', lineHeight:'1.5'}} dangerouslySetInnerHTML={{__html: helpText}} />
           <form onSubmit={(e) => { e.preventDefault(); handleIntegrationConnect(platform, idValue); }} style={{display:'flex', gap:'0.5rem', flexDirection:'column', maxWidth:'300px', margin:'0 auto'}}>
             <input 
               type="text" 
-              placeholder={platform === 'meloming' ? "멜로밍 채널 ID 입력" : "Setlink 공개 URL 또는 ID 입력"}
+              placeholder={platform === 'meloming' ? "예: meloming_channel_id" : "예: https://setlink.jp/public/... 또는 ID"}
               className="glass-input"
               value={idValue}
               onChange={e => setIdValue(e.target.value)}
               style={{textAlign:'center'}}
             />
             <button type="submit" className="btn-primary" style={{padding:'0.8rem'}}>내 노래책 불러오기</button>
+            <div style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.5rem'}}>
+              {platform === 'meloming' ? '채널 설정에서 제공하는 고유 ID를 입력하세요.' : 'Setlink에서 공유 버튼을 눌러 복사한 URL을 붙여넣으세요.'}
+            </div>
           </form>
         </div>
       );
@@ -273,56 +276,57 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
             </div>
           )}
           {displaySongs.map(song => (
-            <div key={song.id} className="result-item" style={{display:'block', cursor:'default'}}>
-              <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
-                <div>
-                  <div style={{fontSize:'1rem', fontWeight:'bold', color:'var(--text-main)'}}>{song.title}</div>
-                  <div style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.3rem'}}>{song.artist}</div>
-                  {song.tags && song.tags.length > 0 && (
-                    <div style={{display:'flex', gap:'0.3rem', flexWrap:'wrap', marginTop:'0.2rem'}}>
-                      {song.tags.map(t => (
-                        <span key={t} style={{fontSize:'0.65rem', padding:'0.1rem 0.4rem', background:'rgba(255,255,255,0.1)', borderRadius:'10px'}}>{t}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+            <div key={song.id} className="result-item songbook-item" style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0.8rem', gap:'1rem'}}>
+              <div style={{flex: 1, minWidth: 0}}>
+                <div style={{fontSize:'1rem', fontWeight:'bold', color:'var(--text-main)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{song.title}</div>
+                <div style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.3rem', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{song.artist}</div>
+                {song.tags && song.tags.length > 0 && (
+                  <div style={{display:'flex', gap:'0.3rem', flexWrap:'wrap', marginTop:'0.2rem'}}>
+                    {song.tags.map(t => (
+                      <span key={t} style={{fontSize:'0.65rem', padding:'0.1rem 0.5rem', background:'var(--chr-hat)', color:'#fff', borderRadius:'10px'}}>{t}</span>
+                    ))}
+                  </div>
+                )}
               </div>
-              
-              <div style={{display:'flex', gap:'0.5rem', marginTop:'0.8rem'}}>
+              <div style={{display: 'flex', flexDirection: 'column', gap: '0.3rem'}}>
                 <button 
                   className="btn-primary" 
-                  style={{flex:1, padding:'0.5rem', fontSize:'0.85rem', display:'flex', alignItems:'center', justifyContent:'center', gap:'0.4rem'}}
+                  style={{padding:'0.5rem 1rem', fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'0.4rem', flexShrink: 0}}
                   onClick={() => {
                     if (song.youtubeUrl) {
-                      // 유튜브 URL이 이미 있으면 바로 무대 올리기
                       onSelectResult({
-                        id: '', 
+                        id: song.youtubeUrl, 
                         title: song.title,
                         channelTitle: song.artist,
-                        src: song.youtubeUrl
+                        src: song.youtubeUrl,
+                        tags: song.tags,
+                        source: platform
                       });
                     } else {
-                      // 없으면 유튜브 탭으로 넘어가서 자동 검색
                       setQuery(`${song.artist} ${song.title}`);
                       handleTabChange('youtube');
                     }
                   }}
                 >
-                  <Search size={14}/> {song.youtubeUrl ? '유튜브 연계됨' : '유튜브 자동검색'}
+                  {song.youtubeUrl ? <><Music size={14}/>준비</> : <><Search size={14}/>MR 찾기</>}
                 </button>
-                <button 
-                  className="btn-copy secondary" 
-                  style={{flex:1, padding:'0.5rem', fontSize:'0.85rem', display:'flex', alignItems:'center', justifyContent:'center', gap:'0.4rem'}}
-                  onClick={() => {
-                    onSelectResult({
-                      id: '', 
-                      title: song.title,
-                      channelTitle: song.artist
-                    });
-                  }}
-                >
-                  <PlusCircle size={14}/> 텍스트만 무대 올리기
-                </button>
+                {!song.youtubeUrl && (
+                  <button 
+                    className="btn-copy secondary" 
+                    style={{padding:'0.5rem', fontSize:'0.85rem', display:'flex', alignItems:'center', justifyContent:'center', gap:'0.4rem'}}
+                    onClick={() => {
+                      onSelectResult({
+                        id: '', 
+                        title: song.title,
+                        channelTitle: song.artist,
+                        tags: song.tags,
+                        source: platform
+                      });
+                    }}
+                  >
+                    <PlusCircle size={14}/> 텍스트만
+                  </button>
+                )}
               </div>
             </div>
           ))}

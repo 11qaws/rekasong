@@ -237,6 +237,16 @@
   color: var(--text-muted);
 }
 
+.songbook-item {
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+.songbook-item:hover {
+  background: rgba(255,255,255,0.02);
+  border-color: var(--glass-border);
+  transform: translateX(4px);
+}
+
 /* Drop Zone */
 .drop-zone-placeholder,
 .drop-zone {

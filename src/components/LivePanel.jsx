@@ -278,8 +278,13 @@ export default function LivePanel({
                 title="드래그해서 순서를 변경하세요"
               >
                 <span className="queue-index" style={{cursor: 'grab'}}>☰ {i + 1}.</span>
+                {song.source === 'meloming' && <span style={{fontSize:'10px', background:'var(--eureka-emerald)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Meloming</span>}
+                {song.source === 'setlink' && <span style={{fontSize:'10px', background:'var(--eureka-azure)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Setlink</span>}
                 <span className="history-title">{song.title}</span>
                 {song.artist && <span className="history-artist"> - {song.artist}</span>}
+                {song.tags && song.tags.length > 0 && (
+                  <span style={{fontSize:'10px', color:'var(--eureka-emerald)', marginLeft:'6px'}}>#{song.tags[0]}</span>
+                )}
                 <button onClick={() => onRemoveFromQueue(song.id)} className="btn-icon btn-icon-danger" title="대기열에서 제거" style={{marginLeft: 'auto'}}>
                   <X size={16} />
                 </button>
@@ -300,8 +305,13 @@ export default function LivePanel({
           )}
           {history.map((song, i) => (
             <div key={song.id || i} className="history-item history-played">
+              {song.source === 'meloming' && <span style={{fontSize:'10px', background:'var(--eureka-emerald)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Meloming</span>}
+              {song.source === 'setlink' && <span style={{fontSize:'10px', background:'var(--eureka-azure)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Setlink</span>}
               <span className="history-title">{song.title}</span>
               {song.artist && <span className="history-artist"> - {song.artist}</span>}
+              {song.tags && song.tags.length > 0 && (
+                <span style={{fontSize:'10px', color:'var(--eureka-emerald)', marginLeft:'6px'}}>#{song.tags[0]}</span>
+              )}
               
               <div style={{marginLeft: 'auto', display: 'flex', gap: '4px'}}>
                 <button onClick={() => handleRequeueHistory(song)} className="btn-icon" title="대기열 맨 위로 다시 부르기">

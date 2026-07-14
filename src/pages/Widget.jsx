@@ -69,8 +69,15 @@ export default function Widget() {
                   />
                 </div>
               </div>
-              <div className="current-song-text">
-                {currentSong.title}
+              <div className="current-song-text" style={{display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start'}}>
+                {currentSong.source === 'meloming' && <div style={{fontSize:'12px', background:'var(--eureka-emerald)', color:'#fff', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>Meloming</div>}
+                {currentSong.source === 'setlink' && <div style={{fontSize:'12px', background:'var(--eureka-azure)', color:'#fff', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>Setlink</div>}
+                <span>{currentSong.title}</span>
+                {currentSong.tags && currentSong.tags.length > 0 && (
+                  <div style={{fontSize:'12px', color:'rgba(255,255,255,0.7)', marginTop:'2px'}}>
+                    {currentSong.tags.map(t => `#${t}`).join(' ')}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

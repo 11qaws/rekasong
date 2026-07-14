@@ -204,7 +204,9 @@ export default function Dashboard() {
       type: 'youtube',
       src: video.id,
       title: video.title,
-      artist: video.channelTitle
+      artist: video.channelTitle,
+      tags: video.tags || [],
+      source: video.source || 'youtube'
     });
     runAiExtractionStream(`/api/extract-title?id=${video.id}`);
   };
@@ -215,7 +217,9 @@ export default function Dashboard() {
       type: 'youtube',
       src: video.id,
       title: video.title,
-      artist: video.channelTitle
+      artist: video.channelTitle,
+      tags: video.tags || [],
+      source: video.source || 'youtube'
     };
     
     setSharedState(prev => {
@@ -300,7 +304,9 @@ export default function Dashboard() {
       type: stagedItem.type,
       title: stagedItem.title,
       artist: stagedItem.artist,
-      src: stagedItem.src
+      src: stagedItem.src,
+      tags: stagedItem.tags || [],
+      source: stagedItem.source || 'youtube'
     };
 
     setSharedState(prev => {
