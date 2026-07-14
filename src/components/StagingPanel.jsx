@@ -46,6 +46,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           placeholder="곡명을 입력하세요"
           autoFocus
         />
+        <p style={{fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'-0.3rem', marginBottom:'0.5rem'}}>방송 화면에 표시될 곡명과 가수명을 수정하세요.</p>
 
         <label>가수 (선택)</label>
         <input 

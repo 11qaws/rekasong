@@ -199,11 +199,13 @@
   padding: 0.5rem;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .result-item:hover {
-  background: var(--bg-deep); /* 오프화이트 배경으로 변경 */
+  background: var(--glass-border);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
 .result-thumb {
@@ -642,21 +644,25 @@ button, input {
   font-family: inherit;
 }
 
-/* Custom Scrollbar for a premium look */
+button:focus, input:focus {
+  outline: 2px solid var(--chr-vest);
+  outline-offset: 2px;
+}
+
+/* Webkit Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-deep); 
-  border-radius: 4px;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--glass-border); 
+  background: rgba(255, 255, 255, 0.2);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--chr-vest); 
+  background: rgba(255, 255, 255, 0.4);
 }
 
 /* Global Container */
@@ -795,3 +801,18 @@ button, input {
   from { background-color: var(--accent-red); transform: scale(1); }
   to { background-color: #b91c1c; transform: scale(1.05); }
 }
+input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slider:focus, .progress-slider:focus { outline: none; box-shadow: 0 0 0 2px var(--eureka-emerald); border-radius: 4px; }
+
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+.history-item.active { animation: fadeIn 0.3s ease-out; }
+.panel-title { position: sticky; top: -1px; z-index: 10; background: var(--bg-deep); padding: 0.5rem; margin-top: -0.5rem; border-radius: 8px 8px 0 0; }
+.drop-zone { transition: all 0.2s; } .drop-zone:hover { border-color: var(--eureka-emerald); background: rgba(16, 185, 129, 0.05); }
+.btn-copy { transition: all 0.3s; } .btn-copy:hover { box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); transform: translateY(-1px); }
+
+
+.search-input-wrapper { position: relative; flex: 1; display: flex; align-items: center; }
+.search-icon { position: absolute; left: 12px; color: var(--text-muted); }
+.search-input { padding-left: 36px !important; }
+.glass-card { border: 1px solid rgba(255, 255, 255, 0.08); }
+
