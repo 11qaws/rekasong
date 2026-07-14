@@ -1,13 +1,14 @@
 import React from 'react';
+import { Play, Loader2, Sparkles, X, ListPlus } from 'lucide-react';
 import YouTube from 'react-youtube';
-import { Play } from 'lucide-react';
 
-export default function StagingPanel({ stagedItem, onAliasChange, onGoLive }) {
+export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage }) {
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
         <div className="empty-state">
-          왼쪽에서 곡을 검색하거나 파일을 드롭하여<br/>미리듣기 및 곡명을 확인하세요.
+          <span style={{fontSize:'2rem', display:'block', marginBottom:'0.5rem', animation: 'bounceX 2s infinite'}}>👈</span>
+          왼쪽에서 노래를 검색하거나 파일을 드롭하세요.
         </div>
       </div>
     );
@@ -17,37 +18,36 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive }) {
 
   return (
     <div className="panel staging-panel glass-card">
-      <h2 className="panel-title">사전 검토 (Preview)</h2>
-      
-      <div className="preview-player">
-        {type === 'youtube' && (
-          <div className="youtube-preview-wrapper">
-            <YouTube 
-              videoId={src} 
-              opts={{ 
-                width: '100%', 
-                height: '180', 
-                playerVars: { autoplay: 1, controls: 1 } 
-              }} 
-            />
-          </div>
-        )}
-        {type === 'local' && (
-          <audio controls src={src} className="local-audio-preview" autoPlay />
-        )}
+      <div className="panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+        <span><span className="step-number">2</span> 정보 확인 및 송출</span>
+        <button onClick={onClearStaged} className="btn-icon btn-icon-danger" title="비우기 (취소)" style={{fontSize:'0.85rem'}}>
+          <X size={16} /> 비우기
+        </button>
       </div>
-
+      
       <div className="staging-form">
-        <label>곡명 (위젯에 표시될 이름)</label>
+        <label style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+          표시될 곡명
+          {isAiLoading ? (
+            <span className="ai-status" style={{fontSize:'0.75rem', fontWeight:'normal'}}>
+              <Loader2 className="spinner" size={12} /> AI 추출 중...
+            </span>
+          ) : aiStatusMessage ? (
+            <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--eureka-emerald)'}}>
+              <Sparkles size={12} /> {aiStatusMessage}
+            </span>
+          ) : null}
+        </label>
         <input 
           type="text" 
           value={title} 
           onChange={(e) => onAliasChange('title', e.target.value)} 
           className="glass-input"
           placeholder="곡명을 입력하세요"
+          autoFocus
         />
 
-        <label>아티스트 (선택)</label>
+        <label>가수 (선택)</label>
         <input 
           type="text" 
           value={artist} 
@@ -56,9 +56,42 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive }) {
           placeholder="가수명을 입력하세요"
         />
 
-        <button className="btn-primary go-live-btn" onClick={onGoLive}>
-          <Play size={18} /> 방송 송출 (위젯 적용)
-        </button>
+        <div style={{display:'flex', gap:'0.5rem', width: '100%', marginTop:'0.5rem'}}>
+          <button className="btn-primary go-live-btn" onClick={() => onGoLive(false)} style={{flex: 1, padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}}>
+            {hasCurrentSong ? (
+              <><ListPlus size={20} /> 대기열에 추가</>
+            ) : (
+              <><Play size={20} /> 즉시 재생 (방송 송출)</>
+            )}
+          </button>
+          {hasCurrentSong && (
+            <button className="btn-primary go-live-btn" onClick={() => onGoLive(true)} style={{flex: 1, backgroundColor: 'var(--accent-red)', padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}} title="대기열 1순위로 새치기">
+              <><Play size={20} /> 바로 다음 곡으로 (새치기)</>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="preview-player" style={{ position: 'relative', marginTop: '1rem' }}>
+        {type === 'youtube' && (
+          <div className="youtube-preview-wrapper">
+            <YouTube 
+              videoId={src} 
+              opts={{ 
+                width: '100%', 
+                height: '180', 
+                playerVars: { 
+                  autoplay: 0, 
+                  controls: 1,
+                  origin: window.location.origin
+                } 
+              }} 
+            />
+          </div>
+        )}
+        {type === 'local' && (
+          <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
+        )}
       </div>
     </div>
   );

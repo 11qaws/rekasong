@@ -11,71 +11,99 @@
 .current-song-area {
   position: absolute;
   top: 60px;
-  left: 60px;
-  max-width: 1200px;
+  top: 15px; /* Extremely tight to the top */
+  left: 30px;
+  z-index: 10;
+  max-width: 65vw;
 }
 
 .current-song-title {
   font-family: var(--font-main);
-  font-weight: 800;
-  font-size: 80px;
-  color: var(--text-main);
-  text-transform: uppercase;
-  letter-spacing: -2px;
+  font-weight: 900; /* Max bold */
+  font-size: 130px; /* Massive size matching the 1920x1080 scale */
+  color: #ffffff;
+  letter-spacing: -3px;
+  -webkit-text-stroke: 1px rgba(255,255,255,0.2);
   text-shadow: 
-    0 0 10px rgba(0, 255, 157, 0.6),   /* Eureka Emerald glow */
-    0 0 25px rgba(0, 229, 255, 0.4),   /* Eureka Cyan glow */
-    4px 4px 0px rgba(0, 0, 0, 0.8);
-  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.9);
+    0 10px 25px rgba(0, 0, 0, 0.6),
+    0 4px 10px rgba(0, 0, 0, 0.4),
+    0 0 20px rgba(16, 255, 203, 0.3); /* Subtle emerald glow */
 }
 
-/* Setlist Panel - Right */
+/* Setlist Ribbon */
 .setlist-area {
   position: absolute;
-  top: 100px;
-  right: 60px;
-  width: 320px;
+  top: 40px; /* Slightly below the top */
+  right: 50px;
+  z-index: 10;
 }
 
-.setlist-panel {
-  padding: 30px 20px;
-  border-radius: 20px;
-  border: 1.5px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 
-    0 8px 32px 0 rgba(0, 0, 0, 0.5),
-    inset 0 0 20px rgba(0, 229, 255, 0.1);
+.setlist-wrapper {
+  position: relative;
+  width: 340px; /* 1920x1080 비율에 맞춘 넓은 리본 */
+  height: calc(100vh - 80px); /* 화면 길이에 맞춘 고정 높이 */
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 25, 38, 0.6); /* 투명한 인디고 베이스를 통일해서 깔아줌 */
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 60px), 0 100%); /* 배경이 V컷 밖으로 튀어나오지 않게 자름 */
+}
+
+.setlist-body {
+  width: 100%;
+  flex: 1; /* 남은 공간을 모두 채움 (꼬리 부분을 밀어냄) */
+  background: transparent; /* Wrapper에서 배경을 깔았으므로 여기선 제거 */
+  border-top: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-left: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-right: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-bottom: none;
+  padding: 30px 30px 10px 30px;
+  box-sizing: border-box;
+  overflow: hidden; /* 곡이 너무 많아지면 넘치지 않도록 자름 */
+}
+
+.setlist-tail {
+  flex-shrink: 0;
+  display: block;
+  width: 340px;
+  height: 70px; /* 깊은 V컷 복원 */
+  margin-top: 0; /* 틈새 제거용 꼼수 마진 삭제 (오버랩 방지) */
+  background: transparent;
 }
 
 .setlist-header {
   font-family: var(--font-cursive);
   font-size: 42px;
   text-align: center;
-  color: var(--star-warm);
+  color: rgba(255, 255, 255, 1);
   margin-bottom: 24px;
   letter-spacing: 4px;
-  text-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
-  border-bottom: 1px solid rgba(0, 255, 157, 0.3); /* Subtle emerald border */
-  padding-bottom: 10px;
+  padding-bottom: 8px;
+  /* User requested gradient line */
+  border-bottom: 2px solid transparent;
+  border-image: linear-gradient(90deg, transparent, var(--eureka-emerald), var(--star-gold), transparent) 1;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
 }
 
-.setlist-header .star {
-  color: var(--star-gold);
+.setlist-header .dot {
+  color: rgba(255, 255, 255, 0.6);
   font-size: 24px;
   vertical-align: middle;
-  filter: drop-shadow(0 0 8px var(--star-gold));
 }
 
 .setlist-items {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  align-items: flex-start; /* 캡쳐 원본대로 좌측 정렬 */
 }
 
 .setlist-item {
-  font-family: var(--font-cursive);
-  font-size: 28px;
-  color: rgba(255, 255, 255, 0.8);
-  padding: 4px 8px;
+  font-family: 'Nanum Pen Script', 'Caveat', cursive;
+  font-size: 24px; /* 더 크고 뚜렷하게 */
+  color: rgba(255, 255, 255, 0.7);
+  position: relative;
+  padding-left: 5px;
+  transition: all 0.3s ease;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -83,19 +111,16 @@
 }
 
 .setlist-item.current {
-  color: var(--eureka-emerald);
+  color: #ffffff;
   font-weight: bold;
-  text-shadow: 
-    0 0 10px rgba(0, 255, 157, 0.8),
-    0 0 20px rgba(0, 229, 255, 0.4);
-  transform: scale(1.05);
-  transform-origin: left center;
+  background: transparent; /* Remove old background gradient */
+  border: none;
+  /* Re-use the signature emerald color for the current song */
+  text-shadow: 0 0 8px var(--eureka-emerald);
 }
 
 .setlist-item.past {
   color: rgba(255, 255, 255, 0.3);
-  text-decoration: line-through;
-  text-decoration-color: rgba(255, 255, 255, 0.2);
 }
 
 .star-particles {

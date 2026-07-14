@@ -42,15 +42,20 @@ export async function onRequest(context) {
 
 다음 절차에 따라 엄격하게 분석해:
 1. 입력된 정보(텍스트 + 오디오 멜로디)를 종합하여 곡을 추론해.
-2. 【歌ってみた】, Cover, 커버, MV, M/V, 오리지널 곡, Official, inst, instrumental, MR 등 곡의 본질(Title)과 상관없는 접두사, 접미사, 확장자는 **무조건 완벽하게 제거**해!
-3. 잘 모르겠거나 애매한 정보가 있다면 구글 검색(Google Search)을 적극 활용해 실제 공식 곡명이 무엇인지 찾아봐.
+2. 【歌ってみた】, Cover, 커버, MV, M/V, 오리지널 곡, Official, inst, instrumental, MR, off vocal, 노래방 등 곡의 본질(Title)과 상관없는 접두사, 접미사, 확장자는 **무조건 완벽하게 제거**해! (예: 可愛くてごめん (Instrumental) -> 可愛くてごめん)
+3. 곡명 외의 모든 부가 정보(애니메이션 이름, 오프닝/엔딩 표기, 노래방 번호, KY KARAOKE, TJ 등)를 완벽하게 제거해. (예: 아이돌 "【최애의 아이】" - 요아소비 (KY.44923) / KY KARAOKE -> 아이돌)
 4. 아티스트명(우타이테, 버튜버 이름 포함), 피처링, 부가설명은 결과에서 반드시 제외해.
-5. 원본 곡명이 일본어(한자/히라가나/가타카나)인 경우, **원본 일본어를 완전히 지우고 한국 팬덤에서 가장 널리 쓰이는 한국어 번역명(또는 한국어 발음)으로만 100% 대체해.** 일본어는 1글자도 남기지 마. (예: 可愛くてごめん -> 귀여워서 미안해)
-6. 분석 과정을 'analysis' 필드에 상세히 작성하고, 위 규칙들이 모두 적용된 최종 추출 곡명을 'final_title' 필드에 작성해.
+5. 원본 파일명이 일본어(한자/히라가나/가타카나)인 경우, 원본 일본어를 완전히 지우고 한국 팬덤에서 가장 널리 쓰이는 한국어 정식 발매명(또는 통용 번역명)으로 100% 대체해. (예: 可愛くてごめん -> 귀여워서 미안해)
+6. **[검색 조건(환각 방지)]** 인공지능인 너는 곡명을 안다고 착각하여 임의로 직역해버리는 치명적인 버그가 있어. 네 지식을 절대 맹신하지 마! 아래 객관적 기준 중 하나라도 해당하면 **무조건 구글(나무위키) 검색을 실행**해서 팩트체크해:
+   - 제목이 일반 명사나 문장형이라 직역될 위험이 있는 경우 (예: 小さきもの -> 작은 것(X) 작은 존재(O))
+   - 원어 발음 그대로 읽지 않고 의미를 번역해야 하는 모든 일본어 곡
+   - 띄어쓰기나 부제 등 한국 팬덤 내 정확한 통용 표기법에 대해 0.1%라도 확신이 없는 경우
+   (단, '아이돌(アイドル)', 'KICK BACK'처럼 번역이 필요 없거나 원어 발음 그대로 한국에서도 쓰이는 초유명 곡은 검색 생략 가능)
+7. 반드시 분석 과정을 'analysis' 필드에 상세히 작성하여 추론한 뒤, 최종 추출 곡명만을 'final_title' 필드에 작성해.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
-  "analysis": "어떤 부분이 단서인지, 구글 검색 결과는 무엇인지, 멜로디는 어떠한지 논리적 추론 과정",
+  "analysis": "입력 데이터에서 아티스트, 노래방 번호, 애니메이션 이름 등을 식별하고 제거하는 논리적 추론 과정",
   "final_title": "최종 추출된 순수 곡명 단 하나"
 }`;
 
@@ -67,20 +72,18 @@ export async function onRequest(context) {
 
       await sendEvent("한국어 번역명 매칭 중...");
 
-      const aiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      const aiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
             parts: contentsParts
           }],
-          tools: [{
-            googleSearch: {}
-          }],
           generationConfig: {
             temperature: 0.1,
             responseMimeType: "application/json"
-          }
+          },
+          tools: [{ googleSearch: {} }]
         })
       });
 

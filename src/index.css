@@ -1,25 +1,39 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Nanum+Pen+Script&display=swap');
 
 :root {
-  /* Eureka Signature Palette (오로라 & 유레카 에디션) */
-  --bg-deep: #090e17; /* Deepest space navy */
-  --bg-mid: #132238;
+  /* Eureka Signature Palette (Bright & Magical) */
+  --bg-deep: #F8F9FA; /* 깨끗한 오프화이트 (배경) */
+  --bg-mid: #FFFFFF; /* 순수한 화이트 (패널) */
   --bg-widget: transparent; /* OBS Widget should be transparent */
   
-  /* 유레카 시그니처 컬러: 눈동자와 머리끝의 네온 에메랄드/시안 */
-  --eureka-emerald: #00FF9D;
-  --eureka-cyan: #00E5FF;
-  --star-gold: #FFD700;
-  --star-warm: #FFE5D9;
+  /* Eureka Signature Theme (Clean Color Blocking) */
+  --bg-deep: #E6ECEC; /* 조끼 색상 기반의 아주 밝고 단정한 틸 그레이 배경 */
+  --bg-mid: #FFFFFF; /* 순백색 패널 (셔츠) */
+  --bg-widget: transparent;
   
-  --glass-bg: rgba(17, 34, 64, 0.4);
-  --glass-border: rgba(255, 255, 255, 0.2);
-  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --text-main: #2C3E50; /* 짙은 네이비 텍스트 (가독성 최고) */
+  --text-muted: #64748B; /* 세련된 그레이 */
+
+  /* Eureka Character Palette (차분한 톤으로 억제) */
+  --chr-hat: #3A444C; /* 모자/망토 다크 네이비 */
+  --chr-hair: #F2D98D; /* 금발 (포인트 컬러) */
+  --chr-vest: #457B7B; /* 청록색 조끼 (메인 버튼/액센트) */
+  --chr-silver: #DDE3E9; /* 은장식 (테두리용) */
   
-  --text-main: #FFFFFF;
-  --text-dim: rgba(255, 255, 255, 0.5);
+  /* 시그니처 형광 액센트 (위젯/하이라이트 전용) */
+  --eureka-emerald: #10FFCB; /* 눈동자 색깔 기반 네온 청록색 */
   
-  --font-main: 'Outfit', sans-serif;
+  /* 숨겨진 설정 바리에이션 (Hidden Lore Colors) & 위젯 호환성 */
+  --eureka-magenta: #FF2A6D;
+  --eureka-lemon: #FFFF66; 
+  --star-gold: var(--eureka-lemon);
+  --star-warm: #FFF0A8;
+  
+  --glass-bg: #FFFFFF;
+  --glass-border: rgba(69, 123, 123, 0.15); /* 틸 컬러 기반의 부드러운 테두리 */
+  --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.04); /* 아주 깨끗하고 옅은 그림자 */
+  
+  --font-main: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-cursive: 'Nanum Pen Script', cursive;
 }
 

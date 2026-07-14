@@ -99,13 +99,6 @@ export function publishSync(payload, room, privateKey) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch { }
 
-  if (isLocalDev()) {
-    fetch(`${window.location.origin}/api/sync`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-  }
-
   if (room && privateKey) {
     clearTimeout(ntfyTimer);
     ntfyTimer = setTimeout(async () => {

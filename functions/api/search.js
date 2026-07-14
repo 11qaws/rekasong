@@ -52,6 +52,14 @@ export async function onRequest(context) {
       }
     }
 
+    // 노래방/반주 관련 키워드가 제목에 포함된 영상을 우선 정렬
+    const keywordRegex = /(off\s*vocal|반주|inst|instrumental|mr|노래방|karaoke|tj|ky|금영|태진)/i;
+    videos.sort((a, b) => {
+      const aScore = keywordRegex.test(a.title) ? 1 : 0;
+      const bScore = keywordRegex.test(b.title) ? 1 : 0;
+      return bScore - aScore;
+    });
+
     return new Response(JSON.stringify(videos.slice(0, 10)), {
       headers: { 
         'Content-Type': 'application/json',

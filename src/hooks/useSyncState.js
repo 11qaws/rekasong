@@ -11,7 +11,8 @@ export function useSyncState() {
   const [state, setState] = useState(() => {
     try {
       const item = window.localStorage.getItem(STORAGE_KEY);
-      return item ? JSON.parse(item) : defaultState;
+      const parsed = item ? JSON.parse(item) : null;
+      return parsed || defaultState;
     } catch (error) {
       console.warn('Error reading localStorage', error);
       return defaultState;
