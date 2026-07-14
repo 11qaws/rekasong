@@ -3,8 +3,14 @@ import { useState, useEffect } from 'react';
 const STORAGE_KEY = 'karaoke_app_state';
 
 const defaultState = {
-  currentSong: null, // { id: '...', title: '...' }
-  queue: [] // Array of { id: '...', title: '...' }
+  queue: [],
+  history: [],
+  currentSong: null,
+  volume: 100,
+  isMuted: false,
+  melomingChannelId: '',
+  setlinkPublicId: '',
+  activeIntegrationTab: 'youtube'
 };
 
 export function useSyncState() {

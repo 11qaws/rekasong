@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Loader2, Sparkles, X, ListPlus } from 'lucide-react';
+import { Play, Loader2, Sparkles, X, ListPlus, Music, User } from 'lucide-react';
 import YouTube from 'react-youtube';
 
 export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage }) {
@@ -15,6 +15,12 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
   }
 
   const { type, src, title, artist } = stagedItem;
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      onGoLive(false);
+    }
+  };
 
   return (
     <div className="panel staging-panel glass-card">
@@ -34,28 +40,36 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             </span>
           ) : aiStatusMessage ? (
             <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--eureka-emerald)'}}>
-              <Sparkles size={12} /> {aiStatusMessage}
+              <Sparkles size={12} className="sparkles-anim" /> {aiStatusMessage}
             </span>
           ) : null}
         </label>
-        <input 
-          type="text" 
-          value={title} 
-          onChange={(e) => onAliasChange('title', e.target.value)} 
-          className="glass-input"
-          placeholder="곡명을 입력하세요"
-          autoFocus
-        />
+        <div className="search-input-wrapper">
+          <Music className="search-icon" size={16} style={{top: '12px'}}/>
+          <input 
+            type="text" 
+            value={title} 
+            onChange={(e) => onAliasChange('title', e.target.value)} 
+            onKeyDown={handleKeyDown}
+            className="glass-input search-input"
+            placeholder="곡명을 입력하세요"
+            autoFocus
+          />
+        </div>
         <p style={{fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'-0.3rem', marginBottom:'0.5rem'}}>방송 화면에 표시될 곡명과 가수명을 수정하세요.</p>
 
         <label>가수 (선택)</label>
-        <input 
-          type="text" 
-          value={artist} 
-          onChange={(e) => onAliasChange('artist', e.target.value)} 
-          className="glass-input"
-          placeholder="가수명을 입력하세요"
-        />
+        <div className="search-input-wrapper">
+          <User className="search-icon" size={16} style={{top: '12px'}}/>
+          <input 
+            type="text" 
+            value={artist} 
+            onChange={(e) => onAliasChange('artist', e.target.value)} 
+            onKeyDown={handleKeyDown}
+            className="glass-input search-input"
+            placeholder="가수명을 입력하세요"
+          />
+        </div>
 
         <div style={{display:'flex', gap:'0.5rem', width: '100%', marginTop:'0.5rem'}}>
           <button className="btn-primary go-live-btn" onClick={() => onGoLive(false)} style={{flex: 1, padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}}>

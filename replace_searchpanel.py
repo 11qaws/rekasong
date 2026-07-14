@@ -1,4 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import os
+
+file_path = "src/components/SearchPanel.jsx"
+
+new_content = """import React, { useState, useMemo } from 'react';
 import { Search, Music, UploadCloud, Loader2, RefreshCw, PlusCircle, AlertCircle, Link } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
@@ -33,7 +37,7 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
     e.preventDefault();
     if (!query.trim()) return;
 
-    const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
+    const ytRegex = /(?:youtube\\.com\\/(?:[^\\/]+\\/.+\\/|(?:v|e(?:mbed)?)\\/|.*[?&]v=)|youtu\\.be\\/)([^"&?\\/\\s]{11})/i;
     const match = query.match(ytRegex);
     if (match) {
       const videoId = match[1];
@@ -79,7 +83,7 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
     } else {
       // Extract ID from URL if user pastes the full URL
       let finalId = id.trim();
-      const urlMatch = finalId.match(/setlink\.jp\/public\/([^/?#]+)/);
+      const urlMatch = finalId.match(/setlink\\.jp\\/public\\/([^/?#]+)/);
       if (urlMatch) finalId = urlMatch[1];
       setSharedState(prev => ({ ...prev, setlinkPublicId: finalId }));
     }
@@ -378,3 +382,9 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
     </div>
   );
 }
+"""
+
+with open(file_path, "w", encoding="utf-8") as f:
+    f.write(new_content)
+
+print("SearchPanel.jsx replaced.")

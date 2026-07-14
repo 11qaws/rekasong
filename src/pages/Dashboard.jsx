@@ -325,7 +325,9 @@ export default function Dashboard() {
         <SearchPanel 
           onSelectResult={handleSelectSearchResult} 
           onQuickPlay={handleQuickPlay}
-          onLocalFileDrop={handleLocalFileDrop} 
+          onLocalFileDrop={handleLocalFileDrop}
+          melomingChannelId={state?.melomingChannelId}
+          setSharedState={setSharedState}
         />
         <StagingPanel 
           stagedItem={stagedItem}

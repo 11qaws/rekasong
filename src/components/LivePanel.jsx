@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert } from 'lucide-react';
+import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert } from 'lucide-react';
 
 export default function LivePanel({ 
   room, publicKeyB64, history, queue, currentSong, 
@@ -142,9 +142,9 @@ export default function LivePanel({
                 <button onClick={onTogglePlay} className="btn-icon" title={isPlaying ? "일시정지" : "재생"}>
                   {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                 </button>
-                <div className="volume-control">
-                  <button onClick={toggleMute} className="btn-icon btn-icon-volume" title={isMuted ? "음소거 해제" : "음소거"}>
-                    {isMuted ? <VolumeX size={16} color="var(--accent-red)"/> : <Volume2 size={16} color="var(--text-muted)" />}
+                <div className="volume-control" style={{display:'flex', alignItems:'center', gap:'0.5rem'}}>
+                  <button onClick={toggleMute} className="btn-icon" style={{padding: '0.2rem'}} title={isMuted ? "음소거 해제" : "음소거"}>
+                    {isMuted ? <VolumeX size={16} /> : (volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />)}
                   </button>
                   <input 
                     type="range" 
@@ -175,7 +175,10 @@ export default function LivePanel({
               </div>
             </div>
           ) : (
-            <div className="empty-state">재생 중인 곡이 없습니다.</div>
+            <div className="empty-state" style={{padding:'3rem 1rem'}}>
+              <span style={{fontSize:'2rem', display:'block', marginBottom:'1rem', opacity: 0.5}}>🎵</span>
+              재생 중인 곡이 없습니다.
+            </div>
           )}
         </div>
 
@@ -198,7 +201,12 @@ export default function LivePanel({
           )}
         </div>
         <div className="history-list">
-          {queue.length === 0 && <div className="empty-state">대기 중인 곡이 없습니다.</div>}
+          {queue.length === 0 && (
+            <div className="empty-state" style={{padding:'2rem 1rem'}}>
+              <span style={{fontSize:'1.5rem', display:'block', marginBottom:'0.5rem', opacity: 0.5}}>🎤</span>
+              <span style={{opacity: 0.7}}>대기 중인 곡이 없습니다.</span>
+            </div>
+          )}
           {queue.map((song, i) => (
             <div 
               key={song.id || i} 
@@ -223,7 +231,12 @@ export default function LivePanel({
           <ListMusic size={16}/> 이전 재생 곡 <span style={{fontSize:'0.8rem', color:'var(--text-muted)'}}>({history.length}곡)</span>
         </h3>
         <div className="history-list">
-          {history.length === 0 && <div className="empty-state">아직 재생된 곡이 없습니다.</div>}
+          {history.length === 0 && (
+            <div className="empty-state" style={{padding:'2rem 1rem'}}>
+              <span style={{fontSize:'1.5rem', display:'block', marginBottom:'0.5rem', opacity: 0.5}}>💿</span>
+              <span style={{opacity: 0.7}}>아직 재생된 곡이 없습니다.</span>
+            </div>
+          )}
           {history.map((song, i) => (
             <div key={song.id || i} className="history-item history-played">
               <span className="history-title">{song.title}</span>

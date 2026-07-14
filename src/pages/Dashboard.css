@@ -816,3 +816,19 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .search-input { padding-left: 36px !important; }
 .glass-card { border: 1px solid rgba(255, 255, 255, 0.08); }
 
+
+.tab-btn { background: none; border: none; padding: 0.5rem 1rem; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 0.5rem; font-weight: 500; transition: all 0.2s; position: relative; }
+.tab-btn:hover { color: var(--text-main); }
+.tab-btn.active { color: var(--eureka-emerald); }
+.tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--eureka-emerald); }
+
+
+@media (max-width: 1200px) { .dashboard-container.staging-active .dashboard-grid { grid-template-columns: 1fr; height: auto; } .dashboard-grid { grid-template-columns: 1fr; height: auto; } .panel { min-height: 500px; } }
+
+
+@keyframes sparklePop { 0% { transform: scale(0.5) rotate(0deg); opacity: 0; } 50% { transform: scale(1.5) rotate(15deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); opacity: 1; } }
+.sparkles-anim { animation: sparklePop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
