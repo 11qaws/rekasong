@@ -68,6 +68,10 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
         alert('오류: 오디오 파일(MP3 등)만 지원됩니다.');
         return;
       }
+      if (file.size > 50 * 1024 * 1024) {
+        alert('오류: 50MB 이하의 오디오 파일만 업로드할 수 있습니다.');
+        return;
+      }
       onLocalFileDrop(file);
     }
   };
@@ -118,7 +122,12 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
         {results.map((v) => (
           <div key={v.id} className="result-item" style={{position:'relative'}}>
             <div style={{display:'flex', width:'100%', cursor:'pointer'}} onClick={() => onSelectResult(v)}>
-              <img src={v.thumbnail} alt="thumbnail" className="result-thumb" />
+              <img 
+                src={v.thumbnail || 'https://via.placeholder.com/120x68/333/fff?text=No+Image'} 
+                alt="thumbnail" 
+                className="result-thumb" 
+                onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/120x68/333/fff?text=No+Image'; }}
+              />
               <div className="result-info">
                 <div className="result-title">{v.title}</div>
                 <div className="result-meta">{v.channelTitle} • {v.durationText}</div>

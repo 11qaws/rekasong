@@ -42,7 +42,7 @@ export default function Widget() {
             exit={{ opacity: 0 }}
             transition={{ duration: 1.5 }}
             className="widget-bg-blur"
-            style={{ backgroundImage: `url(https://img.youtube.com/vi/${currentSong.src}/maxresdefault.jpg)` }}
+            style={{ backgroundImage: currentSong.type === 'youtube' ? `url(https://img.youtube.com/vi/${currentSong.src}/maxresdefault.jpg)` : 'url(https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=1920&auto=format&fit=crop)' }}
           />
         )}
       </AnimatePresence>
@@ -59,13 +59,16 @@ export default function Widget() {
               exit={{ opacity: 0, y: -20, filter: 'blur(10px)' }}
               transition={{ duration: 0.6, ease: 'easeOut' }}
             >
-              {currentSong.type === 'youtube' && (
-                <div className="album-art-container">
-                  <div className="vinyl-record">
-                    <img src={`https://img.youtube.com/vi/${currentSong.src}/mqdefault.jpg`} alt="Album Art" className="album-art-img" />
-                  </div>
+              <div className="album-art-container">
+                <div className="vinyl-record">
+                  <img 
+                    src={currentSong.type === 'youtube' ? `https://img.youtube.com/vi/${currentSong.src}/mqdefault.jpg` : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=200&auto=format&fit=crop'} 
+                    alt="Album Art" 
+                    className="album-art-img" 
+                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=200&auto=format&fit=crop'; }}
+                  />
                 </div>
-              )}
+              </div>
               <div className="current-song-text">
                 {currentSong.title}
               </div>

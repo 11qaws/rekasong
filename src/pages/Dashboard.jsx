@@ -20,7 +20,8 @@ export default function Dashboard() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem('rekasong_volume');
-    return saved !== null ? parseInt(saved, 10) : 100;
+    const parsed = parseInt(saved, 10);
+    return !isNaN(parsed) ? parsed : 100;
   });
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -54,6 +55,15 @@ export default function Dashboard() {
       setLocalAudioSrc(null);
     }
   }, [state?.currentSong]);
+
+  // Clean up ObjectURLs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (localAudioSrc && localAudioSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(localAudioSrc);
+      }
+    };
+  }, [localAudioSrc]);
 
   useEffect(() => {
     let interval;
@@ -439,6 +449,13 @@ export default function Dashboard() {
             opts={{ width: '200', height: '112', playerVars: { autoplay: 1 } }} 
             onReady={onLivePlayerReady}
             onEnd={onLivePlayerEnd}
+            onError={(e) => {
+              console.error("YouTube Player Error:", e.data);
+              showToast("유튜브 영상을 재생할 수 없습니다. 다음 곡으로 넘어갑니다.", "error");
+              setTimeout(() => {
+                handlePlayNext();
+              }, 2000);
+            }}
           />
         )}
         {localAudioSrc && (

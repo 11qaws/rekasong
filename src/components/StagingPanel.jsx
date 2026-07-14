@@ -72,7 +72,12 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         </div>
 
         <div style={{display:'flex', gap:'0.5rem', width: '100%', marginTop:'0.5rem'}}>
-          <button className="btn-primary go-live-btn" onClick={() => onGoLive(false)} style={{flex: 1, padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}}>
+          <button 
+            className="btn-primary go-live-btn" 
+            onClick={() => onGoLive(false)} 
+            style={{flex: 1, padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}}
+            disabled={!title.trim()}
+          >
             {hasCurrentSong ? (
               <><ListPlus size={20} /> 대기열에 추가</>
             ) : (
@@ -80,7 +85,13 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             )}
           </button>
           {hasCurrentSong && (
-            <button className="btn-primary go-live-btn" onClick={() => onGoLive(true)} style={{flex: 1, backgroundColor: 'var(--accent-red)', padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}} title="대기열 1순위로 새치기">
+            <button 
+              className="btn-primary go-live-btn" 
+              onClick={() => onGoLive(true)} 
+              style={{flex: 1, backgroundColor: title.trim() ? 'var(--accent-red)' : '#E9ECEF', padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}} 
+              title="대기열 1순위로 새치기"
+              disabled={!title.trim()}
+            >
               <><Play size={20} /> 바로 다음 곡으로 (새치기)</>
             </button>
           )}
