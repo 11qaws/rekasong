@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Nanum+Pen+Script&display=swap');
+
+:root {
+  /* Eureka Signature Palette (오로라 & 유레카 에디션) */
+  --bg-deep: #090e17; /* Deepest space navy */
+  --bg-mid: #132238;
+  --bg-widget: transparent; /* OBS Widget should be transparent */
+  
+  /* 유레카 시그니처 컬러: 눈동자와 머리끝의 네온 에메랄드/시안 */
+  --eureka-emerald: #00FF9D;
+  --eureka-cyan: #00E5FF;
+  --star-gold: #FFD700;
+  --star-warm: #FFE5D9;
+  
+  --glass-bg: rgba(17, 34, 64, 0.4);
+  --glass-border: rgba(255, 255, 255, 0.2);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  
+  --text-main: #FFFFFF;
+  --text-dim: rgba(255, 255, 255, 0.5);
+  
+  --font-main: 'Outfit', sans-serif;
+  --font-cursive: 'Nanum Pen Script', cursive;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-main);
+  color: var(--text-main);
+  background-color: var(--bg-deep); /* Default for dashboard */
+  overflow: hidden; /* Prevent scrollbars in OBS */
+}
+
+/* Specific body style for OBS Widget */
+body.widget-mode {
+  background-color: transparent !important;
+}
+
+/* Glassmorphism Panel utility */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--text-dim);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-cyan);
+}

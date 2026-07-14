@@ -1,0 +1,147 @@
+.widget-container {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  /* Uncomment to test background visibility during dev */
+  /* background: url('https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=1920&auto=format&fit=crop') center/cover; */
+}
+
+/* Current Song - Top Left */
+.current-song-area {
+  position: absolute;
+  top: 60px;
+  left: 60px;
+  max-width: 1200px;
+}
+
+.current-song-title {
+  font-family: var(--font-main);
+  font-weight: 800;
+  font-size: 80px;
+  color: var(--text-main);
+  text-transform: uppercase;
+  letter-spacing: -2px;
+  text-shadow: 
+    0 0 10px rgba(0, 255, 157, 0.6),   /* Eureka Emerald glow */
+    0 0 25px rgba(0, 229, 255, 0.4),   /* Eureka Cyan glow */
+    4px 4px 0px rgba(0, 0, 0, 0.8);
+  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.9);
+}
+
+/* Setlist Panel - Right */
+.setlist-area {
+  position: absolute;
+  top: 100px;
+  right: 60px;
+  width: 320px;
+}
+
+.setlist-panel {
+  padding: 30px 20px;
+  border-radius: 20px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 
+    0 8px 32px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 20px rgba(0, 229, 255, 0.1);
+}
+
+.setlist-header {
+  font-family: var(--font-cursive);
+  font-size: 42px;
+  text-align: center;
+  color: var(--star-warm);
+  margin-bottom: 24px;
+  letter-spacing: 4px;
+  text-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+  border-bottom: 1px solid rgba(0, 255, 157, 0.3); /* Subtle emerald border */
+  padding-bottom: 10px;
+}
+
+.setlist-header .star {
+  color: var(--star-gold);
+  font-size: 24px;
+  vertical-align: middle;
+  filter: drop-shadow(0 0 8px var(--star-gold));
+}
+
+.setlist-items {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.setlist-item {
+  font-family: var(--font-cursive);
+  font-size: 28px;
+  color: rgba(255, 255, 255, 0.8);
+  padding: 4px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.3s ease;
+}
+
+.setlist-item.current {
+  color: var(--eureka-emerald);
+  font-weight: bold;
+  text-shadow: 
+    0 0 10px rgba(0, 255, 157, 0.8),
+    0 0 20px rgba(0, 229, 255, 0.4);
+  transform: scale(1.05);
+  transform-origin: left center;
+}
+
+.setlist-item.past {
+  color: rgba(255, 255, 255, 0.3);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.2);
+}
+
+.star-particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.star-particle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 0 10px 2px rgba(0, 255, 157, 0.6); /* Emerald starlight */
+  opacity: 0;
+  animation: twinkle 4s infinite ease-in-out;
+}
+
+.s1 {
+  top: 20%;
+  left: 10%;
+  animation-delay: 0s;
+}
+
+.s2 {
+  top: 50%;
+  left: 80%;
+  animation-delay: 1.5s;
+  width: 4px;
+  height: 4px;
+}
+
+.s3 {
+  top: 80%;
+  left: 30%;
+  animation-delay: 3s;
+  width: 2px;
+  height: 2px;
+}
+
+@keyframes twinkle {
+  0% { opacity: 0; transform: scale(0.5); }
+  50% { opacity: 1; transform: scale(1.2); }
+  100% { opacity: 0; transform: scale(0.5); }
+}
