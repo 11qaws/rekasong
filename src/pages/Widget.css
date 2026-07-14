@@ -210,3 +210,5 @@
   50% { opacity: 1; transform: scale(1.2); }
   100% { opacity: 0; transform: scale(0.5); }
 }
+.widget-bg-blur { position: absolute; top: -10%; left: -10%; width: 120%; height: 120%; background-size: cover; background-position: center; filter: blur(60px) saturate(1.5); z-index: 1; pointer-events: none; mix-blend-mode: screen; }
+

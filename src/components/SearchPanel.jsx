@@ -168,11 +168,13 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
       <div 
         className="drop-zone-placeholder"
         onClick={() => document.querySelector('.hidden-file-input').click()}
-        style={{ cursor: 'pointer' }}
+        style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
         title="클릭하여 파일 선택"
       >
-        <UploadCloud size={32} />
-        <p>MR 파일 (MP3)을 여기에 드래그하거나<br/>클릭해서 추가하세요</p>
+        <UploadCloud size={32} style={{ color: 'var(--eureka-emerald)', marginBottom: '10px' }} />
+        <p style={{ margin: 0, fontWeight: 500 }}>로컬 파일(MP3) 추가하기</p>
+        <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
+        <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
         <input type="file" accept="audio/*" onChange={handleFileSelect} className="hidden-file-input" />
       </div>
     </>

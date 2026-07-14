@@ -32,6 +32,21 @@ export default function Widget() {
         <div className="star-particle s3"></div>
       </div>
 
+      {/* Album Art Background Blur */}
+      <AnimatePresence>
+        {currentSong?.type === 'youtube' && (
+          <motion.div
+            key={`bg-${currentSong.id}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.3 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.5 }}
+            className="widget-bg-blur"
+            style={{ backgroundImage: `url(https://img.youtube.com/vi/${currentSong.src}/maxresdefault.jpg)` }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* 1. Current Song (Top Left) */}
       {(!type || type === 'current') && (
         <div className="current-song-area">

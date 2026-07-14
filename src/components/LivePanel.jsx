@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert, Repeat } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 export default function LivePanel({ 
   room, publicKeyB64, history, queue, currentSong, 
@@ -259,25 +260,32 @@ export default function LivePanel({
               <span style={{opacity: 0.7}}>대기 중인 곡이 없습니다.</span>
             </div>
           )}
-          {queue.map((song, i) => (
-            <div 
-              key={song.id || i} 
-              className={`history-item queue-item draggable ${dragOverIndex === i ? 'drag-over' : ''}`}
-              draggable
-              onDragStart={(e) => handleDragStart(e, i)}
-              onDragOver={(e) => handleDragOver(e, i)}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, i)}
-              title="드래그해서 순서를 변경하세요"
-            >
-              <span className="queue-index" style={{cursor: 'grab'}}>☰ {i + 1}.</span>
-              <span className="history-title">{song.title}</span>
-              {song.artist && <span className="history-artist"> - {song.artist}</span>}
-              <button onClick={() => onRemoveFromQueue(song.id)} className="btn-icon btn-icon-danger" title="대기열에서 제거" style={{marginLeft: 'auto'}}>
-                <X size={16} />
-              </button>
-            </div>
-          ))}
+          <AnimatePresence>
+            {queue.map((song, i) => (
+              <motion.div 
+                key={song.id || i}
+                layout
+                initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, x: 20 }}
+                transition={{ duration: 0.2 }}
+                className={`history-item queue-item draggable ${dragOverIndex === i ? 'drag-over' : ''}`}
+                draggable
+                onDragStart={(e) => handleDragStart(e, i)}
+                onDragOver={(e) => handleDragOver(e, i)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, i)}
+                title="드래그해서 순서를 변경하세요"
+              >
+                <span className="queue-index" style={{cursor: 'grab'}}>☰ {i + 1}.</span>
+                <span className="history-title">{song.title}</span>
+                {song.artist && <span className="history-artist"> - {song.artist}</span>}
+                <button onClick={() => onRemoveFromQueue(song.id)} className="btn-icon btn-icon-danger" title="대기열에서 제거" style={{marginLeft: 'auto'}}>
+                  <X size={16} />
+                </button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
 
         <h3 className="section-title" style={{marginTop: '1rem'}}>
