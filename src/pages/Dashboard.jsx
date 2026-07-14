@@ -311,7 +311,21 @@ export default function Dashboard() {
   };
 
   const onLivePlayerEnd = (event) => {
-    handlePlayNext();
+    // window.autoPlayNextToggle or state.autoPlayNext
+    if (state?.autoPlayNext || window.autoPlayNextToggle) {
+      handlePlayNext();
+    } else {
+      setIsPlaying(false);
+      setSharedState(prev => {
+        const current = prev.currentSong;
+        const history = current ? [...(prev.history || []), current] : prev.history || [];
+        return {
+          ...prev,
+          currentSong: null,
+          history
+        };
+      });
+    }
   };
 
   return (
@@ -326,7 +340,7 @@ export default function Dashboard() {
           onSelectResult={handleSelectSearchResult} 
           onQuickPlay={handleQuickPlay}
           onLocalFileDrop={handleLocalFileDrop}
-          melomingChannelId={state?.melomingChannelId}
+          sharedState={state || {}}
           setSharedState={setSharedState}
         />
         <StagingPanel 

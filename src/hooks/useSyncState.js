@@ -10,7 +10,8 @@ const defaultState = {
   isMuted: false,
   melomingChannelId: '',
   setlinkPublicId: '',
-  activeIntegrationTab: 'youtube'
+  activeIntegrationTab: 'youtube',
+  autoPlayNext: false
 };
 
 export function useSyncState() {

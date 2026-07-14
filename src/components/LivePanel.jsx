@@ -186,19 +186,33 @@ export default function LivePanel({
           <h3 className="section-title" style={{margin:0}}>
             <ListMusic size={16}/> 다음 곡 대기열 <span style={{fontSize:'0.8rem', color:'var(--text-muted)'}}>({queue.length}곡)</span>
           </h3>
-          {queue.length > 0 && (
-            <button 
-              onClick={() => {
-                if (window.confirm("대기열을 모두 비우시겠습니까?")) {
-                  setSharedState(prev => ({...prev, queue: []}));
-                }
-              }} 
-              className="btn-icon btn-icon-danger" 
-              style={{fontSize:'0.75rem'}}
-            >
-              <Trash2 size={14}/> 전체 비우기
-            </button>
-          )}
+          <div style={{display:'flex', gap:'0.8rem', alignItems:'center'}}>
+            <label style={{display:'flex', alignItems:'center', gap:'0.3rem', fontSize:'0.8rem', color:'var(--text-muted)', cursor:'pointer'}}>
+              <input 
+                type="checkbox" 
+                checked={setSharedState ? (window.autoPlayNextToggle || false) : false} 
+                onChange={(e) => {
+                  window.autoPlayNextToggle = e.target.checked;
+                  setSharedState(prev => ({...prev, autoPlayNext: e.target.checked}));
+                }} 
+              />
+              자동 다음 곡
+            </label>
+            {queue.length > 0 && (
+              <button 
+                onClick={() => {
+                  if (window.confirm("대기열을 모두 비우시겠습니까?")) {
+                    setSharedState(prev => ({...prev, queue: []}));
+                  }
+                }} 
+                className="btn-icon btn-icon-danger" 
+                style={{fontSize:'0.75rem'}}
+              >
+                <Trash2 size={14}/> 전체 비우기
+              </button>
+            )}
+          </div>
+
         </div>
         <div className="history-list">
           {queue.length === 0 && (
