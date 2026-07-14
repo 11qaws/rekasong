@@ -7,6 +7,7 @@ import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 import SearchPanel from '../components/SearchPanel';
 import StagingPanel from '../components/StagingPanel';
 import LivePanel from '../components/LivePanel';
+import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
 
 export default function Dashboard() {
@@ -82,6 +83,16 @@ export default function Dashboard() {
   };
 
   const [stagedItem, setStagedItem] = useState(null);
+  
+  // Toast notifications
+  const [toasts, setToasts] = useState([]);
+  const showToast = (message, type = 'info') => {
+    const id = Date.now().toString();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  };
   
   const [room] = useState(() => getOrCreateRoom());
   const [signingKeys, setSigningKeys] = useState(null);
@@ -174,11 +185,13 @@ export default function Dashboard() {
     setSharedState(prev => {
       if (!prev.currentSong) {
         playAudioForSong(newSong);
+        showToast('바로 재생을 시작합니다.', 'success');
         return { ...prev, currentSong: newSong };
       }
-      return { ...prev, queue: [...(prev.queue || []), newSong] };
+      const q = prev.queue || [];
+      showToast('대기열 끝에 곡이 예약되었습니다.', 'info');
+      return { ...prev, queue: [...q, newSong] };
     });
-    // 백그라운드로 AI 돌려서 나중에 큐에 있는 제목 업데이트 하는건 생략 (우선 즉각 반영)
   };
 
   const handleLocalFileDrop = (file) => {
@@ -258,10 +271,12 @@ export default function Dashboard() {
       // If nothing is playing, play immediately
       if (!prev.currentSong) {
         playAudioForSong(newSong);
+        showToast('새 곡의 재생을 시작합니다.', 'success');
         return { ...prev, currentSong: newSong };
       }
       // Otherwise add to queue
       const q = prev.queue || [];
+      showToast(insertAtTop ? '대기열 최상단에 곡이 예약되었습니다.' : '대기열 끝에 곡이 예약되었습니다.', 'info');
       return {
         ...prev,
         queue: insertAtTop ? [newSong, ...q] : [...q, newSong]
@@ -336,40 +351,58 @@ export default function Dashboard() {
       </header>
 
       <div className="dashboard-grid">
-        <SearchPanel 
-          onSelectResult={handleSelectSearchResult} 
-          onQuickPlay={handleQuickPlay}
-          onLocalFileDrop={handleLocalFileDrop}
-          sharedState={state || {}}
-          setSharedState={setSharedState}
-        />
-        <StagingPanel 
-          stagedItem={stagedItem}
-          onAliasChange={handleAliasChange}
-          onGoLive={handleGoLive}
-          onClearStaged={() => setStagedItem(null)}
-          hasCurrentSong={!!state?.currentSong}
-          isAiLoading={isAiLoading}
-          aiStatusMessage={aiStatusMessage}
-        />
-        <LivePanel 
-          room={room}
-          publicKeyB64={signingKeys?.publicKeyB64}
-          history={state?.history || []}
-          queue={state?.queue || []}
-          currentSong={state?.currentSong}
-          onSkip={handlePlayNext}
-          onRemoveFromQueue={handleRemoveFromQueue}
-          // 새롭게 추가되는 Audio Control 및 History 제어용 Props
-          isPlaying={isPlaying}
-          onTogglePlay={() => setIsPlaying(!isPlaying)}
-          volume={volume}
-          onVolumeChange={setVolume}
-          currentTime={currentTime}
-          duration={duration}
-          onSeek={handleSeek}
-          setSharedState={setSharedState}
-        />
+        <ErrorBoundary>
+          <SearchPanel 
+            onSelectResult={handleSelectSearchResult} 
+            onQuickPlay={handleQuickPlay}
+            onLocalFileDrop={handleLocalFileDrop}
+            sharedState={state || {}}
+            setSharedState={setSharedState}
+            showToast={showToast}
+          />
+        </ErrorBoundary>
+        <ErrorBoundary>
+          <StagingPanel 
+            stagedItem={stagedItem}
+            onAliasChange={handleAliasChange}
+            onGoLive={handleGoLive}
+            onClearStaged={() => setStagedItem(null)}
+            hasCurrentSong={!!state?.currentSong}
+            isAiLoading={isAiLoading}
+            aiStatusMessage={aiStatusMessage}
+            showToast={showToast}
+          />
+        </ErrorBoundary>
+        <ErrorBoundary>
+          <LivePanel 
+            room={room}
+            publicKeyB64={signingKeys?.publicKeyB64}
+            history={state?.history || []}
+            queue={state?.queue || []}
+            currentSong={state?.currentSong}
+            onSkip={handlePlayNext}
+            onRemoveFromQueue={handleRemoveFromQueue}
+            // 새롭게 추가되는 Audio Control 및 History 제어용 Props
+            isPlaying={isPlaying}
+            onTogglePlay={() => setIsPlaying(!isPlaying)}
+            volume={volume}
+            onVolumeChange={setVolume}
+            currentTime={currentTime}
+            duration={duration}
+            onSeek={handleSeek}
+            setSharedState={setSharedState}
+            showToast={showToast}
+          />
+        </ErrorBoundary>
+      </div>
+
+      {/* Toast Notifications Container */}
+      <div className="toast-container">
+        {toasts.map(t => (
+          <div key={t.id} className={`toast toast-${t.type}`}>
+            {t.message}
+          </div>
+        ))}
       </div>
 
       {/* Hidden Live Players */}

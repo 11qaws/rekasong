@@ -866,3 +866,13 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 
 @media (max-width: 768px) { .dashboard-container { padding: 0.5rem; } .dashboard-header .logo { font-size: 1.5rem; } .panel { padding: 1rem; min-height: 400px; } .search-input { font-size: 0.9rem; } .btn-primary { padding: 0.6rem 1rem; font-size: 0.9rem; } }
 .queue-item.draggable.drag-over { border-top: 2px solid var(--eureka-emerald); transform: translateY(2px); }
+
+/* Toast Notifications */
+.toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
+.toast { background: var(--glass-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--glass-border); padding: 12px 20px; border-radius: 8px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 4px 15px rgba(0,0,0,0.3); animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+@keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Dashboard Subtle BG Animation */
+.dashboard-container { position: relative; overflow: hidden; }
+.dashboard-container::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle at center, rgba(16, 185, 129, 0.03) 0%, transparent 60%); z-index: -1; animation: bgSpin 30s linear infinite; pointer-events: none; }
+@keyframes bgSpin { 100% { transform: rotate(360deg); } }

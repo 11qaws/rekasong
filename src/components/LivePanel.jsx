@@ -4,7 +4,7 @@ import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX
 export default function LivePanel({ 
   room, publicKeyB64, history, queue, currentSong, 
   onSkip, onRemoveFromQueue, isPlaying, onTogglePlay, 
-  volume, onVolumeChange, currentTime, duration, onSeek, setSharedState 
+  volume, onVolumeChange, currentTime, duration, onSeek, setSharedState, showToast 
 }) {
   const widgetUrl = `${window.location.origin}${window.location.pathname}#/widget?room=${room}&key=${encodeURIComponent(publicKeyB64)}`;
 
@@ -128,6 +128,10 @@ export default function LivePanel({
             <button onClick={() => copyWidgetUrl('current')} className="btn-copy secondary">현재곡 복사</button>
             <button onClick={() => copyWidgetUrl('setlist')} className="btn-copy secondary">셋리스트 복사</button>
           </div>
+          <div style={{fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem', marginBottom: '1rem'}}>
+            💡 OBS <strong>[브라우저 소스]</strong>를 추가하고 복사한 주소를 URL에 붙여넣으세요.<br/>
+            (권장 해상도: 너비 400, 높이 600)
+          </div>
           <div className="widget-preview-wrapper">
             <div className="preview-label">위젯 미리보기</div>
             <iframe 
@@ -181,6 +185,7 @@ export default function LivePanel({
                       ...prev,
                       queue: [...(prev.queue || []), reqSong]
                     }));
+                    if (showToast) showToast('현재 곡이 대기열 끝에 다시 예약되었습니다.', 'success');
                   }} 
                   className="btn-icon" 
                   title="현재 곡을 대기열 끝에 다시 추가"
