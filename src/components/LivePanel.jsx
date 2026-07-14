@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert } from 'lucide-react';
+import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert, Repeat } from 'lucide-react';
 
 export default function LivePanel({ 
   room, publicKeyB64, history, queue, currentSong, 
@@ -16,12 +16,21 @@ export default function LivePanel({
   };
 
   // 대기열 Drag & Drop
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+
   const handleDragStart = (e, index) => {
     e.dataTransfer.setData('queueIndex', index);
   };
-  const handleDragOver = (e) => e.preventDefault();
+  const handleDragOver = (e, index) => {
+    e.preventDefault();
+    if (dragOverIndex !== index) setDragOverIndex(index);
+  };
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
+  };
   const handleDrop = (e, dropIndex) => {
     e.preventDefault();
+    setDragOverIndex(null);
     const dragIndex = parseInt(e.dataTransfer.getData('queueIndex'), 10);
     if (dragIndex === dropIndex || isNaN(dragIndex)) return;
     
@@ -138,7 +147,15 @@ export default function LivePanel({
               <span className="history-title">{currentSong.title}</span>
               {currentSong.artist && <span className="history-artist"> - {currentSong.artist}</span>}
               
-              <div className="audio-controls">
+              <div className="visualizer-container">
+                <div className={`visualizer-bar ${isPlaying ? 'playing' : ''}`}></div>
+                <div className={`visualizer-bar ${isPlaying ? 'playing' : ''}`}></div>
+                <div className={`visualizer-bar ${isPlaying ? 'playing' : ''}`}></div>
+                <div className={`visualizer-bar ${isPlaying ? 'playing' : ''}`}></div>
+                <div className={`visualizer-bar ${isPlaying ? 'playing' : ''}`}></div>
+              </div>
+              
+              <div className="audio-controls" style={{marginTop:'10px'}}>
                 <button onClick={onTogglePlay} className="btn-icon" title={isPlaying ? "일시정지" : "재생"}>
                   {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                 </button>
@@ -156,6 +173,19 @@ export default function LivePanel({
                 </div>
                 <button onClick={onSkip} className="btn-icon btn-icon-skip" title="다음 곡으로 스킵">
                   <SkipForward size={16} /> 스킵
+                </button>
+                <button 
+                  onClick={() => {
+                    const reqSong = { ...currentSong, id: Date.now().toString() };
+                    setSharedState(prev => ({
+                      ...prev,
+                      queue: [...(prev.queue || []), reqSong]
+                    }));
+                  }} 
+                  className="btn-icon" 
+                  title="현재 곡을 대기열 끝에 다시 추가"
+                >
+                  <Repeat size={16} /> 다시 예약
                 </button>
               </div>
 
@@ -224,10 +254,11 @@ export default function LivePanel({
           {queue.map((song, i) => (
             <div 
               key={song.id || i} 
-              className="history-item queue-item draggable"
+              className={`history-item queue-item draggable ${dragOverIndex === i ? 'drag-over' : ''}`}
               draggable
               onDragStart={(e) => handleDragStart(e, i)}
-              onDragOver={handleDragOver}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, i)}
               title="드래그해서 순서를 변경하세요"
             >
