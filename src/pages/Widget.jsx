@@ -43,9 +43,17 @@ export default function Widget() {
               animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
               exit={{ opacity: 0, y: -20, filter: 'blur(10px)' }}
               transition={{ duration: 0.6, ease: 'easeOut' }}
-              className="current-song-title"
             >
-              {currentSong.title}
+              {currentSong.type === 'youtube' && (
+                <div className="album-art-container">
+                  <div className="vinyl-record">
+                    <img src={`https://img.youtube.com/vi/${currentSong.src}/mqdefault.jpg`} alt="Album Art" className="album-art-img" />
+                  </div>
+                </div>
+              )}
+              <div className="current-song-text">
+                {currentSong.title}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -72,15 +80,17 @@ export default function Widget() {
                   const isPast = queue.findIndex(s => s.id === currentSong?.id) > index;
                   
                   return (
-                    <motion.div
-                      key={song.id}
-                      layout
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      transition={{ duration: 0.4 }}
-                      className={`setlist-item ${isCurrent ? 'current' : ''} ${isPast ? 'past' : ''}`}
-                    >
+                      <motion.div
+                        key={song.id}
+                        layout
+                        layoutId={`song-${song.id}`}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={{ duration: 0.4 }}
+                        className={`setlist-item ${isCurrent ? 'current' : ''} ${isPast ? 'past' : ''}`}
+                      >
+                      {isCurrent && <span style={{marginRight:'8px', color:'var(--eureka-emerald)', fontSize:'18px'}}>▶</span>}
                       {song.title}
                     </motion.div>
                   );

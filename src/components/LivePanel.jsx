@@ -144,7 +144,10 @@ export default function LivePanel({
       </details>
 
       <div className="history-section">
-        <h3 className="section-title" style={{margin:0, marginBottom:'0.5rem'}}><ListMusic size={16}/> 현재 재생 중 (Now Playing)</h3>
+        <h3 className="section-title" style={{margin:0, marginBottom:'0.5rem', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+          <span><ListMusic size={16}/> 현재 재생 중 (Now Playing)</span>
+          <span style={{fontSize:'0.7rem', color:'var(--text-muted)', fontWeight:'normal'}}>단축키: 스페이스바(재생/일시정지), Ctrl+오른쪽방향키(다음곡)</span>
+        </h3>
         <div>
           {currentSong ? (
             <div className="history-item active">

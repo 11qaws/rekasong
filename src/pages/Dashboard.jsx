@@ -18,7 +18,10 @@ export default function Dashboard() {
   
   // Audio Controls
   const [isPlaying, setIsPlaying] = useState(true);
-  const [volume, setVolume] = useState(100);
+  const [volume, setVolume] = useState(() => {
+    const saved = localStorage.getItem('rekasong_volume');
+    return saved !== null ? parseInt(saved, 10) : 100;
+  });
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const ytPlayerRef = useRef(null);
@@ -28,6 +31,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) ytPlayerRef.current.setVolume(volume);
     if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+    localStorage.setItem('rekasong_volume', volume);
   }, [volume]);
 
   // Sync play/pause to players
@@ -110,6 +114,28 @@ export default function Dashboard() {
       publishSync(payload, room, signingKeys.privateKey);
     }
   }, [state, room, signingKeys]);
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      // Ignore if typing in an input or textarea
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (state.currentSong) {
+          setIsPlaying(prev => !prev);
+          showToast(isPlaying ? '일시정지' : '재생', 'info');
+        }
+      } else if (e.ctrlKey && e.code === 'ArrowRight') {
+        e.preventDefault();
+        handlePlayNext();
+        showToast('다음 곡으로 스킵', 'info');
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [state.currentSong, isPlaying]);
 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiStatusMessage, setAiStatusMessage] = useState('');
