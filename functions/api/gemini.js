@@ -14,6 +14,10 @@ export function isFallbackGeminiKey(apiKey) {
 
 export function normalizeSongTitle(value) {
   const rawTitle = String(value || '').replace(/\s+/g, ' ').trim();
+  // Official MV titles often place a Roman alias after the performer label:
+  // Japanese title / PERFORMER - Roman title [Official Music Video].
+  const mvRomanAlias = rawTitle.match(/(?:[「『][^」』]+[」』]|[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}][^/／]{0,120})\s*[/／]\s*[^-–—]{0,100}\s*[-–—]\s*([A-Za-z0-9][A-Za-z0-9\s!'’&+.,:;?/_-]*?)(?=\s*(?:[【〖\[]?\s*(?:official|music\s*video|m\/?v)\b|$))/iu);
+  if (mvRomanAlias) return mvRomanAlias[1].replace(/\s+/g, ' ').trim();
   // Many karaoke uploads use “Japanese title (Roman title) - artist”. The
   // parenthesised Roman form is a useful catalog title, not performer metadata.
   // Prefer it before generic cleanup so the model receives a standalone title.
