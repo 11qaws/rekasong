@@ -14,23 +14,59 @@ const defaultState = {
   autoPlayNext: false
 };
 
+const isPlayableSong = (song) =>
+  song &&
+  typeof song === 'object' &&
+  typeof song.id === 'string' &&
+  typeof song.title === 'string' &&
+  (song.type === 'youtube' || song.type === 'local') &&
+  typeof song.src === 'string' &&
+  song.src.length > 0;
+
+const normaliseState = (candidate, { fromStorage = false } = {}) => {
+  const source = candidate && typeof candidate === 'object' ? candidate : {};
+  const keepSong = (song) => isPlayableSong(song) && !(fromStorage && song.type === 'local');
+  const volume = Number(source.volume);
+
+  return {
+    ...defaultState,
+    ...source,
+    queue: Array.isArray(source.queue) ? source.queue.filter(keepSong) : [],
+    history: Array.isArray(source.history) ? source.history.filter(keepSong) : [],
+    currentSong: keepSong(source.currentSong) ? source.currentSong : null,
+    volume: Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : defaultState.volume,
+    isMuted: Boolean(source.isMuted),
+    melomingChannelId: typeof source.melomingChannelId === 'string' ? source.melomingChannelId : '',
+    setlinkPublicId: typeof source.setlinkPublicId === 'string' ? source.setlinkPublicId : '',
+    activeIntegrationTab: ['youtube', 'meloming', 'setlink'].includes(source.activeIntegrationTab)
+      ? source.activeIntegrationTab
+      : defaultState.activeIntegrationTab,
+    autoPlayNext: Boolean(source.autoPlayNext)
+  };
+};
+
+const readStoredState = () => {
+  try {
+    const item = window.localStorage.getItem(STORAGE_KEY);
+    return item ? normaliseState(JSON.parse(item), { fromStorage: true }) : defaultState;
+  } catch (error) {
+    console.warn('Error reading localStorage', error);
+    return defaultState;
+  }
+};
+
 export function useSyncState() {
-  const [state, setState] = useState(() => {
-    try {
-      const item = window.localStorage.getItem(STORAGE_KEY);
-      const parsed = item ? JSON.parse(item) : null;
-      return parsed || defaultState;
-    } catch (error) {
-      console.warn('Error reading localStorage', error);
-      return defaultState;
-    }
-  });
+  const [state, setState] = useState(readStoredState);
 
   // Sync from other tabs
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === STORAGE_KEY && e.newValue) {
-        setState(JSON.parse(e.newValue));
+        try {
+          setState(normaliseState(JSON.parse(e.newValue), { fromStorage: true }));
+        } catch (error) {
+          console.warn('Error reading synced localStorage state', error);
+        }
       }
     };
     window.addEventListener('storage', handleStorageChange);
@@ -40,23 +76,12 @@ export function useSyncState() {
   // Set and sync to other tabs
   const setSharedState = (newStateOrUpdater) => {
     setState((prevState) => {
-      const nextState = typeof newStateOrUpdater === 'function' ? newStateOrUpdater(prevState) : newStateOrUpdater;
+      const candidate = typeof newStateOrUpdater === 'function' ? newStateOrUpdater(prevState) : newStateOrUpdater;
+      const nextState = normaliseState(candidate);
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
-      // Dispatch storage event manually for the same tab (useful if needed, though usually used cross-tab)
-      window.dispatchEvent(new Event('local-storage-sync'));
       return nextState;
     });
   };
-
-  // Listen to manual dispatches from the same tab
-  useEffect(() => {
-    const handleLocalSync = () => {
-      const item = window.localStorage.getItem(STORAGE_KEY);
-      if (item) setState(JSON.parse(item));
-    };
-    window.addEventListener('local-storage-sync', handleLocalSync);
-    return () => window.removeEventListener('local-storage-sync', handleLocalSync);
-  }, []);
 
   return [state, setSharedState];
 }

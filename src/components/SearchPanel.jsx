@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Search, Music, UploadCloud, Loader2, RefreshCw, PlusCircle, AlertCircle, Link } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 
@@ -11,7 +11,10 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef(null);
+  const searchAbortRef = useRef(null);
   
   // Integration Onboarding States
   const [tempMeloId, setTempMeloId] = useState('');
@@ -24,56 +27,95 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
   const melo = useMeloming(melomingChannelId);
   const setlink = useSetlink(setlinkPublicId);
 
+  useEffect(() => () => {
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+  }, []);
+
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setSharedState(prev => ({ ...prev, activeIntegrationTab: tab }));
   };
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  const extractYoutubeId = (value) => {
+    const ytRegex = /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i;
+    const match = value.match(ytRegex);
+    return match?.[1] || (/^[\w-]{11}$/.test(value) ? value : null);
+  };
 
-    const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
-    const match = query.match(ytRegex);
-    if (match) {
-      const videoId = match[1];
+  const searchYoutube = async (rawQuery, songMeta = {}) => {
+    const searchQuery = rawQuery.trim();
+    if (!searchQuery) return;
+
+    const videoId = extractYoutubeId(searchQuery);
+    if (videoId) {
       onSelectResult({
         id: videoId,
-        title: 'URL 직접 입력 영상 (분석 중...)',
-        channelTitle: '알 수 없음'
+        title: songMeta.title || 'URL 직접 입력 영상 (분석 중...)',
+        channelTitle: songMeta.artist || '알 수 없음',
+        tags: songMeta.tags || [],
+        source: songMeta.source || 'youtube'
       });
       setQuery('');
       return;
     }
 
     setIsSearching(true);
+    setError('');
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch('/api/search?q=' + encodeURIComponent(searchQuery), { signal: controller.signal });
       if (!response.ok) throw new Error('Network error');
       const data = await response.json();
+      if (!Array.isArray(data)) throw new Error('Invalid search response');
       setResults(data);
-      setError(false);
     } catch (error) {
       console.error(error);
-      setError(true);
+      setError(
+        error.name === 'AbortError'
+          ? '검색 응답이 늦습니다. 잠시 후 다시 시도하거나 YouTube URL을 직접 붙여넣으세요.'
+          : '검색 서버와 통신할 수 없습니다. 잠시 후 다시 시도하거나 YouTube URL을 직접 붙여넣으세요.'
+      );
     } finally {
-      setIsSearching(false);
+      clearTimeout(timeoutId);
+      if (searchAbortRef.current === controller) {
+        searchAbortRef.current = null;
+        setIsSearching(false);
+      }
     }
   };
 
-  const handleFileSelect = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0];
-      if (!file.type.startsWith('audio/')) {
-        alert('오류: 오디오 파일(MP3 등)만 지원됩니다.');
-        return;
-      }
-      if (file.size > 50 * 1024 * 1024) {
-        alert('오류: 50MB 이하의 오디오 파일만 업로드할 수 있습니다.');
-        return;
-      }
-      onLocalFileDrop(file);
+  const handleSearch = (e) => {
+    e.preventDefault();
+    searchYoutube(query);
+  };
+
+  const handleSongbookSearch = (song, platform) => {
+    const searchQuery = song.youtubeUrl || `${song.artist || ''} ${song.title}`.trim();
+    setQuery(searchQuery);
+    handleTabChange('youtube');
+    searchYoutube(searchQuery, { ...song, source: platform });
+  };
+
+  const addLocalFile = (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('audio/')) {
+      alert('오류: 오디오 파일(MP3 등)만 지원됩니다.');
+      return;
     }
+    if (file.size > 50 * 1024 * 1024) {
+      alert('오류: 50MB 이하의 오디오 파일만 업로드할 수 있습니다.');
+      return;
+    }
+    onLocalFileDrop(file);
+  };
+
+  const handleFileSelect = (e) => {
+    addLocalFile(e.target.files?.[0]);
+    e.target.value = '';
   };
 
   const handleIntegrationConnect = (platform, id) => {
@@ -166,8 +208,7 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
         {error && (
           <div className="empty-state" style={{padding:'2rem 1rem', color:'var(--accent-red)'}}>
             <span style={{fontSize:'1.5rem', display:'block', marginBottom:'0.5rem'}}>⚠️</span>
-            검색 서버와 통신할 수 없습니다.<br/>
-            잠시 후 다시 시도해주세요.
+            {error}
           </div>
         )}
       </div>
@@ -175,16 +216,23 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
       <div className="divider">또는 로컬 파일</div>
 
       <div 
-        className="drop-zone-placeholder"
-        onClick={() => document.querySelector('.hidden-file-input').click()}
+        className={`drop-zone-placeholder ${isDraggingFile ? 'drag-over' : ''}`}
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setIsDraggingFile(true); }}
+        onDragLeave={(e) => { if (e.currentTarget === e.target) setIsDraggingFile(false); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDraggingFile(false);
+          addLocalFile(e.dataTransfer.files?.[0]);
+        }}
         style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
-        title="클릭하여 파일 선택"
+        title="클릭하거나 파일을 끌어 놓으세요"
       >
         <UploadCloud size={32} style={{ color: 'var(--eureka-emerald)', marginBottom: '10px' }} />
         <p style={{ margin: 0, fontWeight: 500 }}>로컬 파일(MP3) 추가하기</p>
         <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
         <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
-        <input type="file" accept="audio/*" onChange={handleFileSelect} className="hidden-file-input" />
+        <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFileSelect} onClick={(e) => e.stopPropagation()} className="hidden-file-input" />
       </div>
     </>
   );
@@ -214,7 +262,7 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
       );
     }
 
-    const { songs, isLoading, error, refresh } = hookData;
+    const { songs, isLoading, error, refresh, isDemo } = hookData;
     
     // 로컬 필터링
     const filteredSongs = songs.filter(s => 
@@ -230,7 +278,7 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
       <div className="songbook-list" style={{display:'flex', flexDirection:'column', flex:1}}>
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:'0.5rem', borderBottom:'1px solid var(--glass-border)', marginBottom:'1rem'}}>
           <div style={{fontSize:'0.85rem', color: platform === 'meloming' ? 'var(--eureka-emerald)' : 'var(--eureka-azure)'}}>
-            ✅ <strong>{isConnected}</strong> 연동됨 ({songs.length}곡)
+            {isDemo ? '🧪 데모 데이터 (실제 연동 전)' : <>✅ <strong>{isConnected}</strong> 연동됨 ({songs.length}곡)</>}
           </div>
           <div style={{display:'flex', gap:'0.5rem'}}>
             <button onClick={refresh} className="btn-icon" title="새로고침">
@@ -244,6 +292,12 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
           <div className="empty-state" style={{color:'var(--accent-red)', padding:'1rem'}}>
             <AlertCircle size={24} style={{margin:'0 auto 0.5rem'}}/>
             {error}
+          </div>
+        )}
+
+        {isDemo && (
+          <div className="empty-state" style={{padding:'0.75rem 1rem', marginBottom:'1rem', border:'1px solid rgba(245, 158, 11, 0.45)', color:'#fbbf24'}}>
+            실제 {platform === 'meloming' ? '멜로밍' : 'Setlink'} 계정이나 신청곡을 불러오지 않습니다. 현재는 화면 흐름을 확인하는 데모 목록입니다.
           </div>
         )}
 
@@ -292,41 +346,10 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
                 <button 
                   className="btn-primary" 
                   style={{padding:'0.5rem 1rem', fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'0.4rem', flexShrink: 0}}
-                  onClick={() => {
-                    if (song.youtubeUrl) {
-                      onSelectResult({
-                        id: song.youtubeUrl, 
-                        title: song.title,
-                        channelTitle: song.artist,
-                        src: song.youtubeUrl,
-                        tags: song.tags,
-                        source: platform
-                      });
-                    } else {
-                      setQuery(`${song.artist} ${song.title}`);
-                      handleTabChange('youtube');
-                    }
-                  }}
+                  onClick={() => handleSongbookSearch(song, platform)}
                 >
                   {song.youtubeUrl ? <><Music size={14}/>준비</> : <><Search size={14}/>MR 찾기</>}
                 </button>
-                {!song.youtubeUrl && (
-                  <button 
-                    className="btn-copy secondary" 
-                    style={{padding:'0.5rem', fontSize:'0.85rem', display:'flex', alignItems:'center', justifyContent:'center', gap:'0.4rem'}}
-                    onClick={() => {
-                      onSelectResult({
-                        id: '', 
-                        title: song.title,
-                        channelTitle: song.artist,
-                        tags: song.tags,
-                        source: platform
-                      });
-                    }}
-                  >
-                    <PlusCircle size={14}/> 텍스트만
-                  </button>
-                )}
               </div>
             </div>
           ))}
@@ -343,6 +366,7 @@ export default function SearchPanel({ onSelectResult, onQuickPlay, onLocalFileDr
   return (
     <div className="panel search-panel glass-card" style={{display:'flex', flexDirection:'column'}}>
       <div className="panel-title" style={{paddingBottom: 0}}>
+        <h2 className="panel-heading"><span className="step-number">1</span> 노래 찾기</h2>
         <div className="tabs" style={{display:'flex', gap:'0.5rem', borderBottom:'1px solid var(--glass-border)'}}>
           <button 
             className={`tab-btn ${activeTab === 'youtube' ? 'active' : ''}`}

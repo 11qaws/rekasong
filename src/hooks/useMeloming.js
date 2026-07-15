@@ -51,5 +51,5 @@ export function useMeloming(channelId) {
     fetchSongs();
   }, [fetchSongs, channelId]);
 
-  return { songs, isLoading, error, refresh: fetchSongs };
+  return { songs, isLoading, error, refresh: fetchSongs, isDemo: true };
 }

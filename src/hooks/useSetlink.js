@@ -63,5 +63,5 @@ export function useSetlink(publicId) {
     fetchSongs();
   }, [fetchSongs]);
 
-  return { songs, isLoading, error, refresh: fetchSongs };
+  return { songs, isLoading, error, refresh: fetchSongs, isDemo: true };
 }

@@ -26,7 +26,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
     <div className="panel staging-panel glass-card">
       <div className="panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
         <span>
-          <span className="step-number">2</span> 정보 확인 및 송출 
+          <span className="step-number">2</span> 곡 정보 확인
           {stagedItem.source === 'meloming' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-emerald)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Meloming</span>}
           {stagedItem.source === 'setlink' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-azure)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Setlink</span>}
         </span>

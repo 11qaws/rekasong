@@ -44,17 +44,18 @@
   display: inline-block;
 }
 
-/* 금발 라인 근처에 꽂힌 X자 헤어핀 디테일 */
+/* 금발·은색 헤어핀 모티브. 문자 장식 대신 도형을 써서 오류 기호로 읽히지 않게 한다. */
 .logo::after {
-  content: '✖✖';
+  content: '';
   position: absolute;
-  right: -55px;
-  bottom: 8px;
-  color: var(--chr-hat); /* 짙은 네이비 핀 */
-  font-size: 1.3rem;
-  letter-spacing: -2px;
-  transform: rotate(15deg);
-  text-shadow: 1px 1px 0 var(--chr-hair); /* 금빛 하이라이트 */
+  right: -36px;
+  bottom: 13px;
+  width: 20px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--chr-hair);
+  box-shadow: 5px 7px 0 var(--chr-silver);
+  transform: rotate(28deg);
 }
 
 .subtitle {
@@ -849,7 +850,15 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .history-item.active { animation: fadeIn 0.3s ease-out; }
 .panel-title { position: sticky; top: -1px; z-index: 10; background: var(--bg-deep); padding: 0.5rem; margin-top: -0.5rem; border-radius: 8px 8px 0 0; }
+.panel-heading { display: flex; align-items: center; gap: 0.45rem; margin: 0 0 0.65rem; font-size: 1rem; }
 .drop-zone { transition: all 0.2s; } .drop-zone:hover { border-color: var(--eureka-emerald); background: rgba(16, 185, 129, 0.05); }
+.drop-zone-placeholder.drag-over { border-color: var(--eureka-emerald); background: rgba(16, 185, 129, 0.12); box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.22); }
+.playback-options { margin: 0 0 0.75rem; color: var(--text-muted); font-size: 0.8rem; }
+.playback-options summary { cursor: pointer; width: fit-content; }
+.playback-options > label { display: flex; align-items: flex-start; gap: 0.55rem; margin-top: 0.55rem; padding: 0.65rem 0.75rem; border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer; }
+.playback-options input { margin-top: 0.15rem; }
+.playback-options strong, .playback-options small { display: block; }
+.playback-options small { margin-top: 0.2rem; color: var(--text-muted); }
 .btn-copy { transition: all 0.3s; } .btn-copy:hover { box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); transform: translateY(-1px); }
 
 
@@ -902,12 +911,14 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-@media (max-width: 768px) { .dashboard-container { padding: 0.5rem; } .dashboard-header .logo { font-size: 1.5rem; } .panel { padding: 1rem; min-height: 400px; } .search-input { font-size: 0.9rem; } .btn-primary { padding: 0.6rem 1rem; font-size: 0.9rem; } }
+@media (max-width: 768px) { .dashboard-container { padding: 0.5rem; } .dashboard-header .logo { font-size: 1.5rem; } .logo::after { right: -26px; bottom: 7px; transform: scale(0.75) rotate(28deg); } .panel { padding: 1rem; min-height: 400px; } .search-input { font-size: 0.9rem; } .btn-primary { padding: 0.6rem 1rem; font-size: 0.9rem; } }
 .queue-item.draggable.drag-over { border-top: 2px solid var(--eureka-emerald); transform: translateY(2px); }
 
 /* Toast Notifications */
 .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
-.toast { background: var(--glass-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--glass-border); padding: 12px 20px; border-radius: 8px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 4px 15px rgba(0,0,0,0.3); animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.toast { background: var(--glass-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--glass-border); padding: 12px 20px; border-radius: 8px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 4px 15px rgba(0,0,0,0.3); animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.toast-action { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 5px 9px; background: rgba(255,255,255,0.18); color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
+.toast-action:hover, .toast-action:focus-visible { background: rgba(255,255,255,0.32); }
 @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
 /* Dashboard Subtle BG Animation */

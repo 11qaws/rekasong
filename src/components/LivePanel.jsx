@@ -1,19 +1,45 @@
 import React, { useState } from 'react';
-import { Copy, ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert, Repeat } from 'lucide-react';
+import { ListMusic, SkipForward, X, Play, Pause, Volume2, Volume1, VolumeX, Settings, Trash2, ArrowUpCircle, OctagonAlert, Repeat } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 export default function LivePanel({ 
   room, publicKeyB64, history, queue, currentSong, 
   onSkip, onRemoveFromQueue, isPlaying, onTogglePlay, 
-  volume, onVolumeChange, currentTime, duration, onSeek, setSharedState, showToast 
+  volume, onVolumeChange, currentTime, duration, onSeek, autoPlayNext, setSharedState, showToast
 }) {
   const widgetUrl = `${window.location.origin}${window.location.pathname}#/widget?room=${room}&key=${encodeURIComponent(publicKeyB64)}`;
 
-  const copyWidgetUrl = (type) => {
+  const copyText = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch {
+        // Some OBS and embedded browsers reject the Clipboard API but allow the legacy fallback.
+      }
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const didCopy = document.execCommand('copy');
+    textarea.remove();
+    if (!didCopy) throw new Error('Copy command was rejected');
+  };
+
+  const copyWidgetUrl = async (type) => {
     let url = widgetUrl;
     if (type) url += `&type=${type}`;
-    navigator.clipboard.writeText(url);
-    alert('위젯 주소가 복사되었습니다! OBS 브라우저 소스에 붙여넣으세요.');
+    try {
+      await copyText(url);
+      showToast?.('위젯 주소를 복사했습니다. OBS 브라우저 소스에 붙여넣으세요.', 'success');
+    } catch (error) {
+      console.error(error);
+      showToast?.('주소를 복사하지 못했습니다. 브라우저 권한을 확인한 뒤 다시 시도하세요.', 'error');
+    }
   };
 
   // 대기열 Drag & Drop
@@ -87,6 +113,7 @@ export default function LivePanel({
   const handlePanic = () => {
     if (panicState === 0) {
       setPanicState(1);
+      showToast?.('한 번 더 누르면 현재 곡과 대기열을 모두 멈춥니다.', 'error');
       setTimeout(() => setPanicState(0), 3000); // 3초 지나면 평상시로 리셋
     } else {
       setSharedState(prev => ({
@@ -95,13 +122,14 @@ export default function LivePanel({
         queue: []
       }));
       setPanicState(0);
+      showToast?.('현재 곡과 대기열을 모두 멈췄습니다.', 'error');
     }
   };
 
   return (
     <div className="panel live-panel glass-card">
       <h2 className="panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-        <span><span className="step-number">3</span> 실시간 송출 관리</span>
+        <span><span className="step-number">3</span> 방송 제어</span>
         <div style={{display:'flex', gap:'0.5rem', alignItems:'center'}}>
           {isPlaying && currentSong && (
             <span className="on-air-badge">🔴 ON AIR</span>
@@ -114,15 +142,15 @@ export default function LivePanel({
           <button 
             onClick={handlePanic} 
             className={`btn-icon btn-icon-danger ${panicState === 1 ? 'panic-warn' : ''}`}
-            title="비상 정지 (Panic)"
+            title={panicState === 1 ? '현재 곡과 대기열을 모두 멈춥니다' : '실수 방지를 위해 한 번 더 눌러야 합니다'}
           >
-            <OctagonAlert size={16} /> {panicState === 1 ? '정말 정지?' : '비상 정지'}
+            <OctagonAlert size={16} /> {panicState === 1 ? '현재 곡·대기열 모두 정지' : '비상 정지'}
           </button>
         </div>
       </h2>
       
       <details className="widget-settings-accordion">
-        <summary><Settings size={16} /> 위젯 설정 및 미리보기</summary>
+        <summary><Settings size={16} /> OBS 위젯 설정 (처음 한 번만)</summary>
         <div className="widget-settings-content">
           <div className="widget-links">
             <button onClick={() => copyWidgetUrl()} className="btn-copy">통합 위젯 복사</button>
@@ -216,7 +244,8 @@ export default function LivePanel({
           ) : (
             <div className="empty-state" style={{padding:'3rem 1rem'}}>
               <span style={{fontSize:'2rem', display:'block', marginBottom:'1rem', opacity: 0.5}}>🎵</span>
-              재생 중인 곡이 없습니다.
+              <strong>재생 중인 곡이 없습니다.</strong>
+              <p style={{margin:'0.6rem 0 0', fontSize:'0.85rem', color:'var(--text-muted)'}}>1단계에서 노래를 찾고, 2단계에서 재생을 시작하세요.</p>
             </div>
           )}
         </div>
@@ -226,17 +255,6 @@ export default function LivePanel({
             <ListMusic size={16}/> 다음 곡 대기열 <span style={{fontSize:'0.8rem', color:'var(--text-muted)'}}>({queue.length}곡)</span>
           </h3>
           <div style={{display:'flex', gap:'0.8rem', alignItems:'center'}}>
-            <label style={{display:'flex', alignItems:'center', gap:'0.3rem', fontSize:'0.8rem', color:'var(--text-muted)', cursor:'pointer'}}>
-              <input 
-                type="checkbox" 
-                checked={setSharedState ? (window.autoPlayNextToggle || false) : false} 
-                onChange={(e) => {
-                  window.autoPlayNextToggle = e.target.checked;
-                  setSharedState(prev => ({...prev, autoPlayNext: e.target.checked}));
-                }} 
-              />
-              자동 다음 곡
-            </label>
             {queue.length > 0 && (
               <button 
                 onClick={() => {
@@ -253,6 +271,22 @@ export default function LivePanel({
           </div>
 
         </div>
+        <details className="playback-options">
+          <summary>재생 옵션 · 자동 다음 곡 {autoPlayNext ? '켜짐' : '꺼짐'}</summary>
+          <label>
+            <input
+              type="checkbox"
+              checked={autoPlayNext}
+              onChange={(e) => {
+                setSharedState(prev => ({...prev, autoPlayNext: e.target.checked}));
+              }}
+            />
+            <span>
+              <strong>현재 곡이 끝나면 다음 곡 재생</strong>
+              <small>대기열이 비어 있으면 재생을 멈춥니다.</small>
+            </span>
+          </label>
+        </details>
         <div className="history-list">
           {queue.length === 0 && (
             <div className="empty-state" style={{padding:'2rem 1rem'}}>
