@@ -36,7 +36,7 @@ function cleanTitle(value) {
   return normalizeSongTitle(value) || '제목을 직접 확인해 주세요';
 }
 
-function isUsableSongTitle(value) {
+export function isUsableSongTitle(value) {
   const normalized = normalizeSongTitle(value)
     .replace(/^["']|["']$/g, '')
     .trim();

@@ -22,7 +22,7 @@ export function useAiTitleExtraction(setStagedItem) {
     setIsAiLoading(true);
     setAiStatusMessage('AI 분석을 준비하고 있습니다…');
 
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       if (!response.ok) throw new Error(`AI request failed: ${response.status}`);
@@ -56,7 +56,9 @@ export function useAiTitleExtraction(setStagedItem) {
                 };
               });
               setAiStatusMessage(
-                data.mode === 'fallback'
+                data.mode === 'candidate'
+                  ? (data.status || '곡명 후보를 확인 중입니다.')
+                  : data.mode === 'fallback'
                   ? '기본 제목 정리 완료 · AI 분석을 사용하려면 Gemini 키를 연결하세요.'
                   : data.mode === 'rules'
                     ? '제목 규칙 정리 완료 · 필요하면 다시 분석하세요.'

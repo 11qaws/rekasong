@@ -1,4 +1,4 @@
-import { extractSongTitle, isFallbackGeminiKey, normalizeSongTitle, selectGeminiApiKey } from './gemini.js';
+import { extractSongTitle, isFallbackGeminiKey, isUsableSongTitle, normalizeSongTitle, selectGeminiApiKey } from './gemini.js';
 
 function decodeHtmlEntities(value) {
   return String(value || '')
@@ -68,6 +68,9 @@ export async function onRequest(context) {
       await sendEvent("원본 제목 및 공식명 찾는 중...");
 
       const sourceCandidate = normalizeSongTitle(ytTitle);
+      if (isUsableSongTitle(sourceCandidate)) {
+        await sendEvent("곡명 후보를 먼저 표시하고 AI가 확인 중...", sourceCandidate, null, 'candidate');
+      }
 
       const prompt = `You resolve music metadata for a livestreamer's karaoke catalog. This catalog is strongly focused on anime songs, anime/game OSTs, Vocaloid, J-pop, utaite covers, doujin music, and VTuber music. When evidence is genuinely ambiguous, treat that subculture scope as the leading hypothesis; never override clear source evidence merely to force the bias.
 
