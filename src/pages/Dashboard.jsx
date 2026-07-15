@@ -3,6 +3,7 @@ import YouTube from 'react-youtube';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
+import { apiUrl } from '../lib/api';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
 import SearchPanel from '../components/SearchPanel';
@@ -187,7 +188,7 @@ export default function Dashboard() {
       replacedStagedItem ? '선택한 곡으로 바꾸었습니다. 2단계에서 정보를 확인하세요.' : '2단계에서 곡 정보와 재생 대상을 확인하세요.',
       'info'
     );
-    if (video.id) runAiExtractionStream(`/api/extract-title?id=${video.id}`, {}, stagingId);
+    if (video.id) runAiExtractionStream(apiUrl(`/api/extract-title?id=${video.id}`), {}, stagingId);
   };
 
   const handleLocalFileDrop = (file) => {
@@ -220,7 +221,7 @@ export default function Dashboard() {
           });
         }
         
-        runAiExtractionStream('/api/extract-local', {
+        runAiExtractionStream(apiUrl('/api/extract-local'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: file.name, metadata })
@@ -228,7 +229,7 @@ export default function Dashboard() {
       },
       onError: (error) => {
         console.log('No ID3 tags found:', error.type);
-        runAiExtractionStream('/api/extract-local', {
+        runAiExtractionStream(apiUrl('/api/extract-local'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: file.name, metadata })

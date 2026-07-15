@@ -145,12 +145,12 @@ export async function onRequest(context) {
       },
       songs,
     }), {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' },
     });
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message || 'Setlink 목록을 가져오지 못했습니다.' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
   }
 }

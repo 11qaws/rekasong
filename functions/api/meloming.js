@@ -12,7 +12,7 @@ export async function onRequest(context) {
   try {
     channelId = parseChannelId(requestUrl.searchParams.get('channelId'));
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
   }
 
   try {
@@ -49,11 +49,11 @@ export async function onRequest(context) {
       source: { channelId: Number(channelId), name: firstData.songs?.[0]?.channel?.name || `Meloming ${channelId}` },
       songs,
       fetchedAt: new Date().toISOString(),
-    }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } });
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message || '멜로밍 목록을 가져오지 못했습니다.' }), {
       status: 502,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
   }
 }

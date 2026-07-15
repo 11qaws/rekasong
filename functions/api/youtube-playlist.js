@@ -66,11 +66,11 @@ export async function onRequest(context) {
     return new Response(JSON.stringify({
       source: { id: playlistId, url: `https://www.youtube.com/playlist?list=${playlistId}`, name: `YouTube 플레이리스트 (${songs.length}개)` },
       songs,
-    }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } });
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message || 'YouTube 플레이리스트를 가져오지 못했습니다.' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
   }
 }

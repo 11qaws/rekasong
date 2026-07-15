@@ -3,6 +3,7 @@ import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link } fro
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
+import { apiUrl } from '../lib/api';
 
 export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedState, setSharedState }) {
   const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', youtubePlaylistCatalogMeta = null, activeIntegrationTab } = sharedState;
@@ -56,7 +57,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
     setIsSearching(true);
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(query)}`));
       if (!response.ok) throw new Error('Network error');
       const data = await response.json();
       setResults(data);
@@ -97,7 +98,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     setIsSetlinkLoading(true);
     setCatalogImportError('');
     try {
-      const response = await fetch(`/api/setlink?url=${encodeURIComponent(sourceUrl)}`);
+      const response = await fetch(apiUrl(`/api/setlink?url=${encodeURIComponent(sourceUrl)}`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Setlink 공개 목록을 가져오지 못했습니다.');
       if (!Array.isArray(data.songs) || data.songs.length === 0) {
@@ -123,7 +124,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     setIsPlaylistLoading(true);
     setPlaylistImportError('');
     try {
-      const response = await fetch(`/api/youtube-playlist?url=${encodeURIComponent(sourceUrl)}`);
+      const response = await fetch(apiUrl(`/api/youtube-playlist?url=${encodeURIComponent(sourceUrl)}`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'YouTube 플레이리스트를 가져오지 못했습니다.');
       if (!Array.isArray(data.songs) || data.songs.length === 0) throw new Error('플레이리스트에 가져올 영상이 없습니다.');

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiUrl } from '../lib/api';
 
 export function useMeloming(channelId) {
   const [songs, setSongs] = useState([]);
@@ -17,7 +18,7 @@ export function useMeloming(channelId) {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/meloming?channelId=${encodeURIComponent(channelId)}`);
+      const response = await fetch(apiUrl(`/api/meloming?channelId=${encodeURIComponent(channelId)}`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || '멜로밍 노래책을 가져오지 못했습니다.');
       setSongs(Array.isArray(data.songs) ? data.songs : []);
