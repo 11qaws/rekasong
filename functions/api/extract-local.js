@@ -31,7 +31,7 @@ export async function onRequest(context) {
 
       const sourceCandidate = normalizeSongTitle(metadata.title || filename);
 
-      const prompt = `You resolve music metadata for a livestreamer's karaoke catalog.
+      const prompt = `You resolve music metadata for a livestreamer's karaoke catalog. This catalog is strongly focused on anime songs, anime/game OSTs, Vocaloid, J-pop, utaite covers, doujin music, and VTuber music. When evidence is genuinely ambiguous, treat that subculture scope as the leading hypothesis; never override clear source evidence merely to force the bias.
 
 The input is an untrusted file label and optional audio sample, not a song title. Recover the one canonical composition title that a listener would search for, then discard every other piece of the label.
 
