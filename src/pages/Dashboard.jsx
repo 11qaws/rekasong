@@ -205,7 +205,7 @@ export default function Dashboard() {
   const handleRetryAiExtraction = () => {
     if (!stagedItem?.stagingId) return;
     if (stagedItem.type === 'youtube' && stagedItem.src) {
-      runAiExtractionStream(apiUrl(`/api/extract-title?id=${stagedItem.src}`), {}, stagedItem.stagingId);
+      runAiExtractionStream(apiUrl(`/api/extract-title?id=${stagedItem.src}`), {}, stagedItem.stagingId, { overwriteTitle: true });
       return;
     }
     if (stagedItem.type === 'local' && stagedItem.file) {
@@ -213,7 +213,7 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: stagedItem.file.name, metadata: {} })
-      }, stagedItem.stagingId);
+      }, stagedItem.stagingId, { overwriteTitle: true });
     }
   };
 

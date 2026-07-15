@@ -13,7 +13,7 @@ export function useAiTitleExtraction(setStagedItem) {
 
   useEffect(() => () => requestRef.current.controller?.abort(), []);
 
-  const runAiExtractionStream = useCallback(async (url, options = {}, stagingId) => {
+  const runAiExtractionStream = useCallback(async (url, options = {}, stagingId, { overwriteTitle = false } = {}) => {
     requestRef.current.controller?.abort();
     const requestId = requestRef.current.id + 1;
     const controller = new AbortController();
@@ -48,12 +48,18 @@ export function useAiTitleExtraction(setStagedItem) {
             const data = JSON.parse(line.slice(6));
             if (typeof data.title === 'string' && data.title.trim()) {
               setStagedItem(prev => {
-                if (!prev || prev.stagingId !== stagingId || prev.isTitleEdited) return prev;
-                return { ...prev, title: data.title.trim() };
+                if (!prev || prev.stagingId !== stagingId || (!overwriteTitle && prev.isTitleEdited)) return prev;
+                return {
+                  ...prev,
+                  title: data.title.trim(),
+                  ...(overwriteTitle ? { isTitleEdited: false } : {})
+                };
               });
               setAiStatusMessage(
                 data.mode === 'fallback'
                   ? '기본 제목 정리 완료 · AI 분석을 사용하려면 Gemini 키를 연결하세요.'
+                  : data.mode === 'rules'
+                    ? '제목 규칙 정리 완료 · 필요하면 다시 분석하세요.'
                   : 'AI 제목 정리 완료'
               );
             } else if (data.error || data.status === 'error') {
