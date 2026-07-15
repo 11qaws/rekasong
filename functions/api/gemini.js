@@ -14,6 +14,13 @@ export function isFallbackGeminiKey(apiKey) {
 
 export function normalizeSongTitle(value) {
   const rawTitle = String(value || '').replace(/\s+/g, ' ').trim();
+  // Many karaoke uploads use “Japanese title (Roman title) - artist”. The
+  // parenthesised Roman form is a useful catalog title, not performer metadata.
+  // Prefer it before generic cleanup so the model receives a standalone title.
+  const japaneseRomanAlias = rawTitle.match(/^\s*([^()]{1,160}?)\s*\(\s*([A-Za-z0-9][A-Za-z0-9\s!'’&+.,:;?/_-]*[A-Za-z0-9!?])\s*\)\s*(?=(?:[-|｜—–]\s*|$))/);
+  if (japaneseRomanAlias && /[\u3040-\u30ff\u3400-\u9fff]/.test(japaneseRomanAlias[1])) {
+    return japaneseRomanAlias[2].replace(/\s+/g, ' ').trim();
+  }
   // Japanese MV uploads commonly use the dependable form: Artist MV「Song title」metadata.
   // Prefer that quoted title only when it immediately follows an MV marker, so quoted anime
   // names in ordinary video titles are not accidentally selected.
@@ -34,6 +41,23 @@ export function normalizeSongTitle(value) {
 
 function cleanTitle(value) {
   return normalizeSongTitle(value) || '제목을 직접 확인해 주세요';
+}
+
+const hasJapaneseScript = (value) => /[\u3040-\u30ff\u3400-\u9fff]/.test(String(value || ''));
+const isStandaloneCatalogTitle = (value) => {
+  const title = String(value || '').trim();
+  return Boolean(title) && title.length <= 120 && !/\s[-|｜—–]\s/.test(title);
+};
+
+function chooseCatalogTitle(modelTitle, fallbackTitle) {
+  const model = cleanTitle(modelTitle);
+  const fallback = cleanTitle(fallbackTitle);
+  // A clean Roman/Hangul candidate extracted from the source is stronger than
+  // a model response that merely echoes the original Japanese script.
+  if (hasJapaneseScript(model) && !hasJapaneseScript(fallback) && isStandaloneCatalogTitle(fallback)) {
+    return fallback;
+  }
+  return model;
 }
 
 export function isUsableSongTitle(value) {
@@ -148,7 +172,7 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
   // A malformed structured response must not leave the streamer without a title.
   // The source title is still normalized by the same safety rules in that case.
   return {
-    title: cleanTitle(useModelTitle ? modelTitle : fallbackTitle).replace(/^["']|["']$/g, ''),
+    title: chooseCatalogTitle(useModelTitle ? modelTitle : fallbackTitle, fallbackTitle).replace(/^["']|["']$/g, ''),
     mode: useModelTitle ? 'ai' : 'rules'
   };
 }

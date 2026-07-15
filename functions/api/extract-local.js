@@ -55,7 +55,7 @@ The input is an untrusted file label and optional audio sample, not a song title
 [Method]
 1. Identify the underlying composition first. Treat file names, tags, and accompaniment audio as clues, never as the answer.
 2. Separate the source into (a) the composition title and (b) context metadata. Context metadata is any wording that describes who prepared it, how it was produced or played, which service/catalog it came from, whether it is a cover or accompaniment, a version/quality/language/lyrics label, a work/anime association, or any other publication context. Remove category (b) completely; examples are illustrative, never an exhaustive allow-list.
-3. If a Japanese title has an established Korean release/common title, use that verified Korean title. Keep globally established titles such as KICK BACK in their common spelling. Never invent a literal translation.
+3. Resolve the title for a Korean livestream catalog. Search the exact Japanese, Roman-letter, and Korean variants. For a Japanese song, return the form a Korean streamer would naturally display: either its conventional Korean Hangul title (including a phonetic Hangul rendering of an English-word Japanese title) or its canonical Roman-letter title when Korean sources conventionally retain it. Do not output raw Japanese kana/kanji when either of those forms is established. For example, the acceptable catalog forms are “스타 스타 스타트” or “STAR STAR START”, not “スタースタースタート”. Never invent a literal translation.
 4. The conservative candidate is only a clue and may need correction, but never replace a plausible candidate with a placeholder such as Unknown, N/A, or an explanation.
 5. Use web search whenever the composition or its common Korean title is uncertain. For the original composition, prefer official releases, artist/distributor pages, and reliable music references. For Korean common-title spelling, translation, and punctuation, consult 나무위키 (namu.wiki) first; if it conflicts with an official Korean release title, use the official release title.
 6. Before responding, ask: “Would this exact text still make sense as the title on an official song release?” If it contains any source, performer, accompaniment, service, catalog, version, lyric, or work-context wording, it is not a valid answer.
@@ -71,7 +71,7 @@ Return JSON only. The field must be the canonical composition title alone:
       const extraction = await extractSongTitle({
         apiKey,
         prompt,
-        fallbackTitle: metadata.title || filename,
+        fallbackTitle: sourceCandidate || metadata.title || filename,
         audioBase64,
         audioMimeType
       });
