@@ -36,6 +36,14 @@ function cleanTitle(value) {
   return normalizeSongTitle(value) || '제목을 직접 확인해 주세요';
 }
 
+function isUsableSongTitle(value) {
+  const normalized = normalizeSongTitle(value)
+    .replace(/^["']|["']$/g, '')
+    .trim();
+  if (!normalized) return false;
+  return !/^(?:unknown|untitled|n\/?a|none|null|알\s*수\s*없음|미상|제목\s*없음)$/i.test(normalized);
+}
+
 function getInteractionText(interaction) {
   const text = (interaction.steps || [])
     .filter((step) => step.type === 'model_output')
@@ -136,10 +144,11 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
     throw new Error(`Gemini request failed (${response.status}): ${details}`);
   }
   const modelTitle = getModelTitle(parseJsonResponse(getInteractionText(interaction)));
+  const useModelTitle = isUsableSongTitle(modelTitle);
   // A malformed structured response must not leave the streamer without a title.
   // The source title is still normalized by the same safety rules in that case.
   return {
-    title: cleanTitle(modelTitle || fallbackTitle).replace(/^["']|["']$/g, ''),
-    mode: modelTitle ? 'ai' : 'rules'
+    title: cleanTitle(useModelTitle ? modelTitle : fallbackTitle).replace(/^["']|["']$/g, ''),
+    mode: useModelTitle ? 'ai' : 'rules'
   };
 }

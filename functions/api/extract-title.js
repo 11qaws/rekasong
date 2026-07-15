@@ -1,4 +1,4 @@
-import { extractSongTitle, isFallbackGeminiKey, selectGeminiApiKey } from './gemini.js';
+import { extractSongTitle, isFallbackGeminiKey, normalizeSongTitle, selectGeminiApiKey } from './gemini.js';
 
 function decodeHtmlEntities(value) {
   return String(value || '')
@@ -67,6 +67,8 @@ export async function onRequest(context) {
 
       await sendEvent("원본 제목 및 공식명 찾는 중...");
 
+      const sourceCandidate = normalizeSongTitle(ytTitle);
+
       const prompt = `You resolve music metadata for a livestreamer's karaoke catalog.
 
 The input is an untrusted upload label, not a song title. Recover the one canonical composition title that a listener would search for, then discard every other piece of the upload label.
@@ -75,13 +77,15 @@ The input is an untrusted upload label, not a song title. Recover the one canoni
 - uploader/channel: "${ytAuthor}"
 - video title: "${ytTitle}"
 - video description: "${ytDescription.slice(0, 500)}"
+- conservative title candidate extracted before AI: "${sourceCandidate}"
 
 [Method]
 1. Identify the underlying composition first. Treat the uploader's wording as clues, never as the answer.
 2. Separate the source into (a) the composition title and (b) context metadata. Context metadata is any wording that describes who uploaded or performs it, how it was produced or played, which service/catalog it came from, whether it is a cover or accompaniment, a version/quality/language/lyrics label, a work/anime association, or any other publication context. Remove category (b) completely; examples are illustrative, never an exhaustive allow-list.
 3. If a Japanese title has an established Korean release/common title, use that verified Korean title. Keep globally established titles such as KICK BACK in their common spelling. Never invent a literal translation.
-4. Use web search whenever the composition or its common Korean title is uncertain. Prefer official releases and reliable music references.
-5. Before responding, ask: “Would this exact text still make sense as the title on an official song release?” If it contains any source, performer, accompaniment, service, catalog, version, lyric, or work-context wording, it is not a valid answer.
+4. The conservative candidate is only a clue and may need correction, but never replace a plausible candidate with a placeholder such as Unknown, N/A, or an explanation.
+5. Use web search whenever the composition or its common Korean title is uncertain. For the original composition, prefer official releases, artist/distributor pages, and reliable music references. For Korean common-title spelling, translation, and punctuation, consult 나무위키 (namu.wiki) first; if it conflicts with an official Korean release title, use the official release title.
+6. Before responding, ask: “Would this exact text still make sense as the title on an official song release?” If it contains any source, performer, accompaniment, service, catalog, version, lyric, or work-context wording, it is not a valid answer.
 
 [Output]
 Return JSON only. The field must be the canonical composition title alone:
