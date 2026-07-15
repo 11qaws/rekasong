@@ -690,13 +690,15 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                     다른 MR 찾기
                   </button>
                 )}
-                <button
-                  className="songbook-file-action"
-                  onClick={() => chooseSongbookUpload(song, platform)}
-                  title="파일은 이번 방송에서만 사용합니다"
-                >
-                  <FileUp size={14} /> 내 파일
-                </button>
+                {platform !== 'youtube-playlist' && (
+                  <button
+                    className="songbook-file-action"
+                    onClick={() => chooseSongbookUpload(song, platform)}
+                    title="파일은 이번 방송에서만 사용합니다"
+                  >
+                    <FileUp size={14} /> 내 파일
+                  </button>
+                )}
               </div>
             </div>
             );
