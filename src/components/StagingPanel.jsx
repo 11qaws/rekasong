@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Play, Loader2, Sparkles, X, ListPlus, Music, User, CheckCircle2 } from 'lucide-react';
+import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music, User, CheckCircle2 } from 'lucide-react';
 import YouTube from 'react-youtube';
 
 export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction }) {
@@ -40,8 +40,8 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           {stagedItem.source === 'meloming' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-emerald)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Meloming</span>}
           {stagedItem.source === 'setlink' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-azure)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Setlink</span>}
         </span>
-        <button onClick={onClearStaged} className="btn-icon btn-icon-danger" title="비우기 (취소)" style={{fontSize:'0.85rem'}}>
-          <X size={16} /> 비우기
+        <button onClick={onClearStaged} className="btn-icon" title="다른 곡 검색" style={{fontSize:'0.85rem'}}>
+          <ArrowLeft size={16} /> 다른 곡 찾기
         </button>
       </div>
 

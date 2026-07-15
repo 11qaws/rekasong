@@ -443,19 +443,28 @@ export default function Dashboard() {
 
       <div className="dashboard-grid">
         <div className="workflow-column">
-          <motion.div layout className="workflow-search">
-        <ErrorBoundary>
-          <SearchPanel 
-            onSelectResult={handleSelectSearchResult} 
-            onLocalFileDrop={handleLocalFileDrop}
-            sharedState={state || {}}
-            setSharedState={setSharedState}
-            showToast={showToast}
-          />
-        </ErrorBoundary>
-          </motion.div>
-          <AnimatePresence initial={false}>
-            {stagedItem && (
+          <AnimatePresence initial={false} mode="popLayout">
+            {!stagedItem ? (
+              <motion.div
+                key="search"
+                layout
+                initial={{ opacity: 0, height: 0, y: -12 }}
+                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -12 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+                className="workflow-search"
+              >
+                <ErrorBoundary>
+                  <SearchPanel
+                    onSelectResult={handleSelectSearchResult}
+                    onLocalFileDrop={handleLocalFileDrop}
+                    sharedState={state || {}}
+                    setSharedState={setSharedState}
+                    showToast={showToast}
+                  />
+                </ErrorBoundary>
+              </motion.div>
+            ) : (
               <motion.div
                 key="staging"
                 layout
@@ -477,7 +486,7 @@ export default function Dashboard() {
                   onRetryAiExtraction={handleRetryAiExtraction}
                   showToast={showToast}
           />
-        </ErrorBoundary>
+                </ErrorBoundary>
               </motion.div>
             )}
           </AnimatePresence>
