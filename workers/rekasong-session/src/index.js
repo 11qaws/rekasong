@@ -2,7 +2,6 @@ const SESSION_GRACE_MS = 2 * 60 * 1000;
 const SESSION_INITIAL_GRACE_MS = 30 * 60 * 1000;
 const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
-const MAX_PRELOAD_SONGS = 5;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -48,34 +47,6 @@ const displayState = (candidate) => {
     currentSong: displaySong(source.currentSong),
     history: Array.isArray(source.history) ? source.history.map(displaySong).filter(Boolean).slice(-100) : []
   };
-};
-
-const preloadSong = (candidate) => {
-  if (!candidate || candidate.type !== 'youtube' || !candidate.id || !candidate.src) return null;
-  return {
-    id: String(candidate.id),
-    type: 'youtube',
-    src: String(candidate.src),
-    status: 'preparing',
-    detail: { phase: '대기 중', position: 0 }
-  };
-};
-
-const preloadDetail = (candidate) => {
-  const source = candidate && typeof candidate === 'object' ? candidate : {};
-  const position = Number(source.position);
-  return {
-    phase: String(source.phase || '').slice(0, 48),
-    position: Number.isFinite(position) ? Math.max(0, Math.round(position * 10) / 10) : 0
-  };
-};
-
-const preloadSongs = (candidates) => {
-  const seen = new Set();
-  return (Array.isArray(candidates) ? candidates : [])
-    .map(preloadSong)
-    .filter((song) => song && !seen.has(song.id) && seen.add(song.id))
-    .slice(0, MAX_PRELOAD_SONGS);
 };
 
 const mediaResponse = (object) => {
@@ -161,7 +132,6 @@ export class SessionRoom {
       displayHash: await hashToken(displayToken),
       assets: {},
       transport: { status: 'idle', song: null, sessionId: null, position: 0, volume: 100 },
-      preloads: [],
       display: { currentSong: null, history: [] },
       endedAt: null,
       cleanupAt: null
@@ -222,7 +192,6 @@ export class SessionRoom {
     this.send(server, {
       type: 'snapshot',
       transport: session.transport,
-      preloads: Array.isArray(session.preloads) ? session.preloads : [],
       display: session.display || { currentSong: null, history: [] },
       session: { room: session.room, status: session.status }
     });
@@ -267,14 +236,6 @@ export class SessionRoom {
       return;
     }
 
-    if (command.type === 'preload') {
-      session.preloads = preloadSongs(command.songs);
-      await this.ctx.storage.put('session', session);
-      this.broadcast({ type: 'command', command: { ...command, songs: session.preloads } }, 'player');
-      this.send(socket, { type: 'command_ack', commandId: command.commandId });
-      return;
-    }
-
     const nextTransport = { ...session.transport };
     if (command.type === 'load') {
       nextTransport.song = command.song || null;
@@ -309,20 +270,6 @@ export class SessionRoom {
   async handlePlayerEvent(session, message) {
     const event = message.event || {};
     if (!event.type) return;
-
-    if (event.type === 'preload_status') {
-      const allowed = new Set(['preparing', 'ready', 'failed']);
-      const songId = String(event.songId || '');
-      const preloads = Array.isArray(session.preloads) ? session.preloads : [];
-      if (preloads.some((song) => song.id === songId) && allowed.has(event.status)) {
-        session.preloads = preloads.map((song) => song.id === songId
-          ? { ...song, status: event.status, detail: preloadDetail(event.detail) }
-          : song);
-        await this.ctx.storage.put('session', session);
-        this.broadcast({ type: 'preload_state', preloads: session.preloads }, 'control');
-      }
-      return;
-    }
 
     if (event.sessionId && session.transport.sessionId && event.sessionId !== session.transport.sessionId) return;
 

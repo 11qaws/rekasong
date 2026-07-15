@@ -21,17 +21,6 @@
   overflow: hidden;
 }
 
-/* A warm pool renders several react-youtube wrapper elements. Stack them in
-   the same in-viewport box instead of allowing every slot after the first to
-   overflow outside the 200px player viewport. */
-.on-air-player > div,
-.on-air-player > div > iframe {
-  position: absolute !important;
-  inset: 0;
-  width: 200px !important;
-  height: 200px !important;
-}
-
 /* Current Song - Top Left */
 .current-song-area {
   position: absolute;

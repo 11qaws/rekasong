@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { ArrowUpCircle, CircleCheck, Clock3, GripVertical, ListMusic, LoaderCircle, Play, Trash2, X } from 'lucide-react';
+import { ArrowUpCircle, GripVertical, ListMusic, Play, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
-export default function QueuePanel({ queue, history, preparationBySongId = {}, onPlayQueueItem, onRemoveFromQueue, autoPlayNext, setSharedState }) {
+export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFromQueue, autoPlayNext, setSharedState }) {
   const [dragOverIndex, setDragOverIndex] = useState(null);
 
   const moveQueueItem = (event, dropIndex) => {
@@ -36,27 +36,7 @@ export default function QueuePanel({ queue, history, preparationBySongId = {}, o
           <div className="queue-empty">다음에 부를 곡이 없습니다.</div>
         ) : (
           <AnimatePresence initial={false}>
-            {queue.map((song, index) => {
-              const preparationItem = song.type === 'youtube' ? preparationBySongId[song.id] : null;
-              const preparation = preparationItem?.status || (song.type === 'youtube' ? 'queued' : null);
-              const readiness = preparation === 'ready'
-                ? { label: '준비됨', icon: CircleCheck }
-                : preparation === 'preparing'
-                  ? { label: '준비 중', icon: LoaderCircle }
-                  : preparation === 'failed'
-                    ? { label: '준비 실패', icon: Clock3 }
-                    : { label: '대기', icon: Clock3 };
-              const ReadinessIcon = readiness.icon;
-              const probeTime = preparation === 'preparing' && Number.isFinite(preparationItem?.detail?.position)
-                ? ` ${preparationItem.detail.position.toFixed(1)}초`
-                : '';
-              const readinessLabel = preparation === 'preparing'
-                ? `${preparationItem?.detail?.phase || '준비 중'}${probeTime}`
-                : readiness.label;
-              const readinessTitle = preparation === 'queued'
-                ? '풀에 들어오면 준비를 시작합니다.'
-                : `${preparationItem?.detail?.phase || '상태를 기다리는 중'}${preparation === 'preparing' ? ` · ${preparationItem?.detail?.position?.toFixed?.(1) || '0.0'}초` : ''}`;
-              return (
+            {queue.map((song, index) => (
               <motion.div
                 key={song.id || index}
                 layout
@@ -72,12 +52,10 @@ export default function QueuePanel({ queue, history, preparationBySongId = {}, o
               >
                 <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                 <strong>{song.title}</strong>
-                {song.type === 'youtube' && <span className={`queue-readiness is-${preparation}`} title={readinessTitle}><ReadinessIcon size={13} /> {readinessLabel}</span>}
                 <button type="button" onClick={() => onPlayQueueItem(song.id)} className="queue-play-action" title="이 곡을 바로 현재 재생으로 가져오기"><Play size={14} /> 바로 재생</button>
                 <button type="button" onClick={() => onRemoveFromQueue(song.id)} className="btn-icon btn-icon-danger" title="대기열에서 제거"><X size={15} /></button>
               </motion.div>
-              );
-            })}
+            ))}
           </AnimatePresence>
         )}
       </div>
