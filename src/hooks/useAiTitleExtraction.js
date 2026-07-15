@@ -27,7 +27,6 @@ export function useAiTitleExtraction(setStagedItem) {
     setIsAiLoading(true);
     setAiStatusMessage('AI 분석을 준비하고 있습니다…');
 
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       await readTitleEventStream(url, options, {
         signal: controller.signal,
@@ -67,7 +66,6 @@ export function useAiTitleExtraction(setStagedItem) {
         setAiStatusMessage('AI 분석에 실패했습니다. 직접 수정할 수 있어요.');
       }
     } finally {
-      clearTimeout(timeoutId);
       if (requestRef.current.id === requestId) {
         requestRef.current = { id: requestId, controller: null };
         setIsAiLoading(false);
