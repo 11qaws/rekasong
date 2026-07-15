@@ -10,9 +10,10 @@
 .on-air-player,
 .on-air-player-idle {
   position: fixed;
-  width: 1px;
-  height: 1px;
-  inset: 0;
+  width: 200px;
+  height: 200px;
+  top: -220px;
+  left: -220px;
   opacity: 0;
   pointer-events: none;
   overflow: hidden;

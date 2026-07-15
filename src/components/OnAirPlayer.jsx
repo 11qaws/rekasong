@@ -171,7 +171,11 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
         <YouTube
           key={transport.sessionId}
           videoId={transport.song.src}
-          opts={{ width: '1', height: '1', playerVars: { autoplay: 1, controls: 0, origin: window.location.origin } }}
+          // YouTube requires an embedded player viewport of at least 200×200.
+          // The wrapper is kept outside the OBS canvas in Widget.css, so this
+          // remains an audio-only browser source without shrinking the player
+          // into an unsupported 1px iframe.
+          opts={{ width: '200', height: '200', playerVars: { autoplay: 1, controls: 0, origin: window.location.origin } }}
           onReady={onYoutubeReady}
           onStateChange={onYoutubeState}
           onError={(event) => sendEvent({ type: 'error', message: `YouTube 재생 오류 (${event.data})` })}
