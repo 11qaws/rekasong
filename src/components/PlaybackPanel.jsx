@@ -4,6 +4,7 @@ import { AlertOctagon, Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Re
 export default function PlaybackPanel({
   currentSong,
   isPlaying,
+  isPreparing = false,
   onTogglePlay,
   onSkip,
   volume,
@@ -114,7 +115,7 @@ export default function PlaybackPanel({
       <div className="playback-panel-header">
         <div className="playback-heading"><ListMusic size={17} /> 현재 재생</div>
         <div className="playback-header-actions">
-          {currentSong && <span className={`on-air-badge ${isPlaying ? '' : 'is-paused'}`}>{isPlaying ? '● ON AIR' : 'Ⅱ 일시정지'}</span>}
+          {currentSong && <span className={`on-air-badge ${isPreparing ? 'is-preparing' : isPlaying ? '' : 'is-paused'}`}>{isPreparing ? '준비 중' : isPlaying ? '● ON AIR' : 'Ⅱ 일시정지'}</span>}
           <button type="button" onClick={() => setIsObsSetupOpen(true)} className="btn-icon" title="OBS 연결 설정" aria-label="OBS 연결 설정">
             <Settings size={16} />
           </button>

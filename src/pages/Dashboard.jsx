@@ -14,6 +14,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
+const PRELOAD_POOL_SIZE = 5;
 
 const toDisplaySong = (song) => {
   if (!song?.id || !song?.title) return null;
@@ -42,6 +43,7 @@ export default function Dashboard() {
   const onAirDisplayToken = onAir.session?.displayToken;
   const onAirConnectionState = onAir.connectionState;
   const sendOnAirCommand = onAir.sendCommand;
+  const isCurrentPreparing = useOnAirPlayer && onAir.transport?.status === 'loading';
   
   const [activeVideoId, setActiveVideoId] = useState('');
   const [localAudioSrc, setLocalAudioSrc] = useState(null);
@@ -55,6 +57,7 @@ export default function Dashboard() {
   });
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [preloadStates, setPreloadStates] = useState([]);
   const ytPlayerRef = useRef(null);
   const audioRef = useRef(null);
   const videoRef = useRef(null);
@@ -63,6 +66,7 @@ export default function Dashboard() {
   const activeSongIdRef = useRef(null);
   const reportedMediaIssueRef = useRef(null);
   const reportedDelayRef = useRef(null);
+  const sentPreloadSignatureRef = useRef('');
 
   // Sync volume to players
   useEffect(() => {
@@ -211,6 +215,30 @@ export default function Dashboard() {
       // The player/session reconnect path will publish the latest display state.
     }
   }, [currentSong, history, onAirDisplayToken, onAirConnectionState, sendOnAirCommand, useOnAirPlayer]);
+
+  const preloadCandidates = useMemo(() => (state?.queue || [])
+    .filter((song) => song?.type === 'youtube' && song?.id && song?.src)
+    .slice(0, PRELOAD_POOL_SIZE), [state?.queue]);
+  const preloadSignature = preloadCandidates.map((song) => `${song.id}:${song.src}`).join('|');
+  const preparationBySongId = useMemo(() => Object.fromEntries(preloadStates.map((song) => [song.id, song.status])), [preloadStates]);
+
+  useEffect(() => {
+    if (!useOnAirPlayer || onAirConnectionState !== 'connected') return;
+    if (sentPreloadSignatureRef.current === preloadSignature) return;
+
+    try {
+      sendOnAirCommand({ type: 'preload', songs: preloadCandidates });
+      sentPreloadSignatureRef.current = preloadSignature;
+      setPreloadStates((previous) => preloadCandidates.map((song) => ({
+        id: song.id,
+        type: 'youtube',
+        src: song.src,
+        status: previous.find((item) => item.id === song.id)?.status || 'preparing'
+      })));
+    } catch {
+      // The worker persists the pool and sends it to a reconnected player.
+    }
+  }, [onAirConnectionState, sendOnAirCommand, preloadCandidates, preloadSignature, useOnAirPlayer]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -663,6 +691,9 @@ export default function Dashboard() {
 
   togglePlaybackRef.current = handleTogglePlayback;
   onAirEventHandlerRef.current = (payload) => {
+    if ((payload.type === 'snapshot' || payload.type === 'preload_state') && Array.isArray(payload.preloads)) {
+      setPreloadStates(payload.preloads);
+    }
     if (payload.type === 'snapshot' || payload.type === 'transport') {
       const remoteTransport = payload.transport || {};
       if (remoteTransport.song?.id) {
@@ -711,6 +742,7 @@ export default function Dashboard() {
             currentSong={state?.currentSong}
             onSkip={handlePlayNext}
             isPlaying={isPlaying}
+            isPreparing={isCurrentPreparing}
             onTogglePlay={handleTogglePlayback}
             volume={volume}
             onVolumeChange={handleVolumeChange}
@@ -733,6 +765,7 @@ export default function Dashboard() {
             <QueuePanel
               queue={state?.queue || []}
               history={state?.history || []}
+              preparationBySongId={preparationBySongId}
               onPlayQueueItem={handlePlayQueuedSong}
               onRemoveFromQueue={handleRemoveFromQueue}
               autoPlayNext={Boolean(state?.autoPlayNext)}
