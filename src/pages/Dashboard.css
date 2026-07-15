@@ -254,6 +254,7 @@
 }
 .songbook-copy { flex: 1; min-width: 0; }
 .songbook-title { overflow: hidden; color: var(--text-main); font-size: 1rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.songbook-title.is-pending { color: var(--text-muted); font-weight: 650; }
 .songbook-artist { overflow: hidden; margin-top: 0.16rem; color: var(--text-muted); font-size: 0.82rem; text-overflow: ellipsis; white-space: nowrap; }
 .songbook-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 .songbook-tags span { padding: 0.1rem 0.5rem; border-radius: 10px; background: var(--chr-hat); color: #fff; font-size: 0.65rem; }

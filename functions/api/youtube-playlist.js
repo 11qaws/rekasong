@@ -10,6 +10,7 @@ function parsePlaylistId(value) {
 
 function textValue(value) {
   if (!value) return '';
+  if (typeof value.content === 'string') return value.content;
   if (value.simpleText) return value.simpleText;
   return (value.runs || []).map((run) => run.text || '').join('');
 }
@@ -25,7 +26,21 @@ function collectVideos(node, output = []) {
       youtubeUrl: `https://www.youtube.com/watch?v=${video.videoId}`,
       sourceId: video.videoId,
       source: 'youtube-playlist',
-      mrVerified: false,
+      mrVerified: true,
+    });
+  }
+  if (node.lockupViewModel?.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' && /^[A-Za-z0-9_-]{11}$/.test(node.lockupViewModel.contentId || '')) {
+    const video = node.lockupViewModel;
+    const metadata = video.metadata?.lockupMetadataViewModel;
+    const artistParts = metadata?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts || [];
+    output.push({
+      id: `youtube-playlist-${video.contentId}`,
+      title: textValue(metadata?.title),
+      artist: artistParts.map((part) => textValue(part.text)).filter(Boolean).join(' · '),
+      youtubeUrl: `https://www.youtube.com/watch?v=${video.contentId}`,
+      sourceId: video.contentId,
+      source: 'youtube-playlist',
+      mrVerified: true,
     });
   }
   Object.values(node).forEach((child) => collectVideos(child, output));
@@ -58,8 +73,7 @@ export async function onRequest(context) {
     if (!match) throw new Error('플레이리스트가 비공개이거나 목록을 읽을 수 없습니다.');
     const initialData = JSON.parse(match[1]);
     const playlistRenderer = findPlaylistRenderer(initialData);
-    if (!playlistRenderer) throw new Error('플레이리스트가 비공개이거나 목록을 읽을 수 없습니다.');
-    const allSongs = collectVideos(playlistRenderer);
+    const allSongs = collectVideos(playlistRenderer || initialData);
     const songs = allSongs.filter((song, index, list) => list.findIndex((item) => item.sourceId === song.sourceId) === index).slice(0, 500);
     if (!songs.length) throw new Error('플레이리스트에 가져올 수 있는 영상이 없습니다.');
 

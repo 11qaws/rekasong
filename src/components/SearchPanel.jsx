@@ -7,6 +7,37 @@ import { apiUrl } from '../lib/api';
 
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
 
+async function readYoutubeTitle(videoId, signal) {
+  const response = await fetch(apiUrl(`/api/extract-title?id=${encodeURIComponent(videoId)}`), { signal });
+  if (!response.ok || !response.body) throw new Error(`AI title request failed: ${response.status}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let resolvedTitle = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (typeof data.title === 'string' && data.title.trim()) resolvedTitle = data.title.trim();
+      } catch {
+        // Ignore a partial SSE frame; the next one completes it.
+      }
+    }
+  }
+
+  if (!resolvedTitle) throw new Error('AI title was not returned');
+  return resolvedTitle;
+}
+
 export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedState, setSharedState }) {
   const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', youtubePlaylistCatalogMeta = null, songbookMrCache = {}, activeIntegrationTab } = sharedState;
   
@@ -31,12 +62,15 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [isSetlinkLoading, setIsSetlinkLoading] = useState(false);
   const [playlistImportError, setPlaylistImportError] = useState('');
   const [isPlaylistLoading, setIsPlaylistLoading] = useState(false);
+  const [playlistTitleProgress, setPlaylistTitleProgress] = useState({ total: 0, completed: 0, active: false });
+  const [playlistImportRun, setPlaylistImportRun] = useState(0);
 
   // Local search queries for songbooks
   const [meloSearch, setMeloSearch] = useState('');
   const [playlistSearch, setPlaylistSearch] = useState('');
   const [setlinkSearch, setSetlinkSearch] = useState('');
   const fileInputRef = useRef(null);
+  const playlistTitleAbortRef = useRef(null);
   
   const melo = useMeloming(melomingChannelId);
   const setlink = useSetlink(setlinkCatalog);
@@ -95,6 +129,98 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
     return () => { cancelled = true; };
   }, [activeTab, melomingChannelId, melo.songs, setlink.songs, setlinkCatalog.length, playlist.songs, youtubePlaylistCatalog.length]);
+
+  const playlistFingerprint = youtubePlaylistCatalog.map((song) => song.sourceId || song.id).join('|');
+
+  useEffect(() => {
+    playlistTitleAbortRef.current?.abort();
+    if (!youtubePlaylistCatalog.length) {
+      setPlaylistTitleProgress({ total: 0, completed: 0, active: false });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    playlistTitleAbortRef.current = controller;
+    const sourceSongs = youtubePlaylistCatalog.map((song) => ({ ...song }));
+
+    const updatePlaylistSong = (sourceId, patch) => {
+      setSharedStateRef.current((previous) => ({
+        ...previous,
+        youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((song) => (
+          song.sourceId === sourceId ? { ...song, ...patch } : song
+        ))
+      }));
+    };
+
+    const resolveTitles = async () => {
+      const knownTitles = new Map();
+      const unresolved = [];
+      sourceSongs.forEach((song) => {
+        if (song.titleStatus === 'ready' && song.title?.trim()) knownTitles.set(song.sourceId, song.title.trim());
+        else unresolved.push(song);
+      });
+
+      for (let index = 0; index < unresolved.length; index += 100) {
+        const batch = unresolved.slice(index, index + 100);
+        const response = await fetch(apiUrl('/api/title-cache'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({ operation: 'lookup', kind: 'youtube', ids: batch.map((song) => song.sourceId) })
+        });
+        if (!response.ok) continue;
+        const data = await response.json();
+        Object.entries(data.entries || {}).forEach(([sourceId, cached]) => {
+          if (cached?.title) knownTitles.set(sourceId, cached.title);
+        });
+      }
+
+      if (controller.signal.aborted) return;
+
+      const pending = sourceSongs.filter((song) => !knownTitles.has(song.sourceId));
+      const completedFromCache = sourceSongs.length - pending.length;
+      setSharedStateRef.current((previous) => ({
+        ...previous,
+        youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((song) => {
+          const title = knownTitles.get(song.sourceId);
+          return title
+            ? { ...song, title, titleStatus: 'ready' }
+            : { ...song, rawTitle: song.rawTitle || song.title, title: '', titleStatus: 'pending' };
+        })
+      }));
+      setPlaylistTitleProgress({ total: sourceSongs.length, completed: completedFromCache, active: pending.length > 0 });
+
+      let completed = completedFromCache;
+      let nextIndex = 0;
+      const worker = async () => {
+        while (!controller.signal.aborted) {
+          const song = pending[nextIndex++];
+          if (!song) return;
+          try {
+            const title = await readYoutubeTitle(song.sourceId, controller.signal);
+            if (!controller.signal.aborted) updatePlaylistSong(song.sourceId, { title, titleStatus: 'ready' });
+          } catch (error) {
+            if (error.name !== 'AbortError' && !controller.signal.aborted) {
+              updatePlaylistSong(song.sourceId, { title: '', titleStatus: 'error' });
+            }
+          } finally {
+            if (!controller.signal.aborted) {
+              completed += 1;
+              setPlaylistTitleProgress({ total: sourceSongs.length, completed, active: completed < sourceSongs.length });
+            }
+          }
+        }
+      };
+
+      await Promise.all(Array.from({ length: Math.min(2, pending.length) }, worker));
+    };
+
+    resolveTitles().catch(() => {
+      if (!controller.signal.aborted) setPlaylistTitleProgress({ total: sourceSongs.length, completed: 0, active: false });
+    });
+
+    return () => controller.abort();
+  }, [playlistFingerprint, playlistImportRun]);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
@@ -174,10 +300,10 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     onSelectResult(video);
   };
 
-  const stageSongbookMr = (song, platform, mrId, mrVerified = false) => {
+  const stageSongbookMr = (song, platform, mrId, mrVerified = false, cachedTitle = '') => {
     onSelectResult({
       id: mrId,
-      title: song.title,
+      title: cachedTitle || song.title,
       channelTitle: song.artist,
       src: mrId,
       tags: song.tags,
@@ -211,7 +337,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
   const selectSongbookSong = async (song, platform, youtubeId, cachedMr) => {
     if (cachedMr?.mrId) {
-      stageSongbookMr(song, platform, cachedMr.mrId, true);
+      stageSongbookMr(song, platform, cachedMr.mrId, true, cachedMr.title);
       return;
     }
 
@@ -229,7 +355,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             [songbookCacheKey(platform, song.id)]: cacheEntry
           }
         }));
-        stageSongbookMr(song, platform, cacheEntry.mrId, true);
+        stageSongbookMr(song, platform, cacheEntry.mrId, true, cacheEntry.title);
         return;
       }
     } catch {
@@ -237,7 +363,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     }
 
     if (youtubeId) {
-      stageSongbookMr(song, platform, youtubeId, Boolean(song.mrVerified));
+      stageSongbookMr(song, platform, youtubeId, platform === 'youtube-playlist' || Boolean(song.mrVerified));
       return;
     }
     startSongbookMrSearch(song, platform);
@@ -286,8 +412,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'YouTube 플레이리스트를 가져오지 못했습니다.');
       if (!Array.isArray(data.songs) || data.songs.length === 0) throw new Error('플레이리스트에 가져올 영상이 없습니다.');
-      setSharedState((previous) => ({ ...previous, youtubePlaylistSourceUrl: sourceUrl, youtubePlaylistCatalog: data.songs, youtubePlaylistCatalogMeta: data.source || null }));
+      setSharedState((previous) => ({
+        ...previous,
+        youtubePlaylistSourceUrl: sourceUrl,
+        youtubePlaylistCatalog: data.songs.map((song) => ({ ...song, rawTitle: song.title, title: '', titleStatus: 'pending' })),
+        youtubePlaylistCatalogMeta: data.source || null
+      }));
       setTempPlaylistUrl(sourceUrl);
+      setPlaylistImportRun((run) => run + 1);
     } catch (importError) {
       setPlaylistImportError(importError.message || 'YouTube 플레이리스트를 가져오지 못했습니다.');
     } finally {
@@ -437,8 +569,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     const { songs, isLoading, error, refresh } = hookData;
     
     // 로컬 필터링
-    const filteredSongs = songs.filter(s => 
-      s.title.toLowerCase().includes(localSearch.toLowerCase()) || 
+    const filteredSongs = songs.filter(s =>
+      (s.title || s.rawTitle || '').toLowerCase().includes(localSearch.toLowerCase()) ||
       (s.artist && s.artist.toLowerCase().includes(localSearch.toLowerCase())) ||
       (s.tags && s.tags.join(' ').toLowerCase().includes(localSearch.toLowerCase()))
     );
@@ -458,6 +590,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:'0.5rem', borderBottom:'1px solid var(--glass-border)', marginBottom:'1rem'}}>
           <div style={{fontSize:'0.85rem', color: platform === 'meloming' ? 'var(--eureka-emerald)' : 'var(--eureka-azure)'}}>
             ✅ <strong>{platform === 'setlink' ? (setlinkCatalogMeta?.name || 'Setlink') : platform === 'youtube-playlist' ? (youtubePlaylistCatalogMeta?.name || 'YouTube 플레이리스트') : (hookData.source?.name || `멜로밍 ${isConnected}`)}</strong> 가져옴 ({songs.length}곡)
+            {platform === 'youtube-playlist' && playlistTitleProgress.total > 0 && (
+              <span style={{marginLeft:'0.5rem', color: playlistTitleProgress.active ? 'var(--eureka-azure)' : 'var(--eureka-emerald)'}}>
+                · AI 곡명 정리 {playlistTitleProgress.completed}/{playlistTitleProgress.total}
+              </span>
+            )}
           </div>
           <div style={{display:'flex', gap:'0.5rem'}}>
             {platform === 'setlink' && setlinkSourceUrl && <button onClick={() => handleSetlinkImport(setlinkSourceUrl)} className="btn-icon" title="공개 목록 새로고침"><RefreshCw size={14} className={isSetlinkLoading ? 'spinner' : ''} /></button>}
@@ -509,14 +646,22 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             const cacheKey = songbookCacheKey(platform, song.id);
             const cachedMr = songbookMrCache[cacheKey];
             const isCheckingCache = cacheLookupKeys[cacheKey];
-            const hasLinkedMr = Boolean(cachedMr?.mrId);
+            const hasLinkedMr = Boolean(cachedMr?.mrId || youtubeId);
             const hasSongbookMr = Boolean(youtubeId);
             const hasMrCandidate = hasLinkedMr || hasSongbookMr;
+            const isTitleReady = platform !== 'youtube-playlist' || song.titleStatus === 'ready';
+            const displayTitle = isTitleReady ? song.title : song.titleStatus === 'error' ? 'AI 곡명 정리 실패' : 'AI 곡명 정리 중…';
+            const pendingActionLabel = song.titleStatus === 'error' ? '정리 실패' : '곡명 정리 중';
             const primaryActionLabel = hasMrCandidate ? 'MR 확인' : 'MR 찾기';
+            const mrStateLabel = hasLinkedMr
+              ? '연결된 MR 있음'
+              : isCheckingCache
+                ? 'MR 연결 확인 중'
+                : 'MR 연결 없음';
             return (
             <div key={song.id} className="result-item songbook-item">
               <div className="songbook-copy">
-                <div className="songbook-title">{song.title}</div>
+                <div className={`songbook-title ${isTitleReady ? '' : 'is-pending'}`}>{displayTitle}</div>
                 <div className="songbook-artist">{song.artist}</div>
                 {song.tags && song.tags.length > 0 && (
                   <div className="songbook-tags">
@@ -526,17 +671,18 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                   </div>
                 )}
                 <div className={`songbook-mr-state ${hasLinkedMr ? 'is-linked' : ''}`}>
-                  {hasLinkedMr ? '연결된 MR 있음' : isCheckingCache ? 'MR 연결 확인 중' : hasSongbookMr ? '노래책 MR 후보 있음' : 'MR 연결 없음'}
+                  {mrStateLabel}
                 </div>
               </div>
               <div className="songbook-actions">
                 <button 
                   className="btn-primary songbook-action-primary"
                   onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
+                  disabled={!isTitleReady}
                 >
-                  {hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>}
+                  {isTitleReady ? (hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>) : pendingActionLabel}
                 </button>
-                {hasMrCandidate && (
+                {hasMrCandidate && isTitleReady && (
                   <button
                     className="btn-secondary songbook-action-secondary"
                     onClick={() => startSongbookMrSearch(song, platform)}
