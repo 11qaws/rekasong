@@ -956,6 +956,19 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .ai-title-copy { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
 .ai-title-copy strong { font-size: 0.82rem; color: var(--text-main); }
 .ai-title-copy span { color: var(--text-muted); font-size: 0.74rem; line-height: 1.35; }
+.ai-phase-track { display: flex; align-items: center; gap: 0.34rem; margin-top: 0.15rem; overflow: hidden; }
+.ai-phase-track span { display: inline-flex; align-items: center; gap: 0.18rem; color: var(--text-muted); font-size: 0.64rem; white-space: nowrap; opacity: 0.55; }
+.ai-phase-track span:not(:last-child)::after { content: ''; width: 8px; height: 1px; margin-left: 0.16rem; background: currentColor; opacity: 0.45; }
+.ai-phase-track b { display: grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 50%; font-size: 0.55rem; }
+.ai-phase-track .active { color: var(--eureka-emerald); opacity: 1; font-weight: 800; }
+.ai-phase-track .active b { border-color: var(--eureka-emerald); background: var(--eureka-emerald); color: var(--bg-deep); box-shadow: 0 0 0 3px rgba(16,255,203,0.12); }
+.ai-phase-track .done { color: var(--eureka-emerald); opacity: 0.82; }
+.ai-phase-track .done b { background: currentColor; color: var(--bg-deep); }
+.ai-analysis-badge { display: inline-flex; align-items: center; gap: 0.28rem; flex: 0 0 auto; padding: 0.35rem 0.45rem; border: 1px solid rgba(16,255,203,0.46); border-radius: 999px; background: rgba(16,255,203,0.13); color: var(--eureka-emerald); font-size: 0.7rem; font-weight: 800; letter-spacing: -0.02em; }
+.ai-analysis-badge i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: aiAnalysisDot 1.05s ease-in-out infinite; }
+.ai-analysis-badge i:nth-of-type(2) { animation-delay: 0.15s; }
+.ai-analysis-badge i:nth-of-type(3) { animation-delay: 0.3s; }
+@keyframes aiAnalysisDot { 0%, 100% { opacity: 0.24; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .ai-retry-button { flex: 0 0 auto; border: 1px solid var(--glass-border); border-radius: 6px; padding: 0.4rem 0.55rem; background: var(--bg-mid); color: var(--text-main); font: inherit; font-size: 0.72rem; cursor: pointer; }
 .ai-retry-button:hover, .ai-retry-button:focus-visible { border-color: var(--eureka-emerald); color: var(--eureka-emerald); }
 .panel-title, .panel-heading, .section-title { min-width: 0; }

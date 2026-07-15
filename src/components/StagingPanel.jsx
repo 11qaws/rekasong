@@ -22,6 +22,15 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
 
   const { type, src, title, artist } = stagedItem;
   const hasPlayableMr = type === 'local' ? Boolean(src) : type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(src || '');
+  const analysisPhase = (() => {
+    if (!isAiLoading) return 0;
+    if (/한국어|번역|매칭/.test(aiStatusMessage)) return 3;
+    if (/원본|기본 규칙|음원과 메타데이터/.test(aiStatusMessage)) return 2;
+    return 1;
+  })();
+  const analysisSteps = type === 'local'
+    ? ['파일 확인', '원곡 분리', '이름 매칭']
+    : ['영상 확인', '원곡 분리', '이름 매칭'];
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
@@ -46,8 +55,26 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         <div className="ai-title-icon"><Sparkles size={18} /></div>
         <div className="ai-title-copy">
           <strong>AI 곡명 정리</strong>
-          <span>{isAiLoading ? 'YouTube 제목과 설명에서 원곡명을 추출하고 있습니다.' : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.')}</span>
+          <span>{isAiLoading ? (aiStatusMessage || '영상 정보에서 부를 곡명을 찾고 있어요.') : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.')}</span>
+          {isAiLoading && (
+            <div className="ai-phase-track" aria-label={`AI 분석 ${analysisPhase}단계 진행 중`}>
+              {analysisSteps.map((step, index) => {
+                const phase = index + 1;
+                const state = phase < analysisPhase ? 'done' : phase === analysisPhase ? 'active' : '';
+                return <span key={step} className={state}><b>{phase}</b>{step}</span>;
+              })}
+            </div>
+          )}
         </div>
+        {isAiLoading && (
+          <div className="ai-analysis-badge" role="status" aria-label="AI 곡명 분석 중">
+            <Loader2 size={13} className="spinner" />
+            <span>분석 중</span>
+            <i aria-hidden="true" />
+            <i aria-hidden="true" />
+            <i aria-hidden="true" />
+          </div>
+        )}
         {!isAiLoading && onRetryAiExtraction && (
           <button type="button" className="ai-retry-button" onClick={onRetryAiExtraction}>다시 분석</button>
         )}
@@ -56,11 +83,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
       <div className="staging-form">
         <label style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
           표시될 곡명
-          {isAiLoading ? (
-            <span className="ai-status" style={{fontSize:'0.75rem', fontWeight:'normal'}}>
-              <Loader2 className="spinner" size={12} /> AI 추출 중...
-            </span>
-          ) : aiStatusMessage ? (
+          {!isAiLoading && aiStatusMessage ? (
             <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--eureka-emerald)'}}>
               <Sparkles size={12} className="sparkles-anim" /> {aiStatusMessage}
             </span>
