@@ -403,8 +403,15 @@ export default function Dashboard() {
 
     const cacheEntries = [];
     if (newSong.type === 'youtube' && newSong.src) cacheEntries.push({ kind: 'youtube', id: newSong.src, mrId: newSong.src });
-    if (newSong.source !== 'youtube' && newSong.songbookId) {
-      cacheEntries.push({ kind: `songbook:${newSong.source}`, id: newSong.songbookId, songbookId: newSong.songbookId, mrId: newSong.type === 'youtube' ? newSong.src : null });
+    if (newSong.source !== 'youtube' && newSong.songbookId && newSong.type === 'youtube' && newSong.src) {
+      cacheEntries.push({
+        kind: `songbook:${newSong.source}`,
+        id: newSong.songbookId,
+        songbookId: newSong.songbookId,
+        mrId: newSong.src,
+        mrKind: 'youtube',
+        persistent: true
+      });
     }
     if (newSong.type === 'local' && stagedItem.localCacheKey) cacheEntries.push({ kind: 'local', id: stagedItem.localCacheKey });
     if (cacheEntries.length) {
@@ -420,7 +427,9 @@ export default function Dashboard() {
           [songbookCacheKey(newSong.source, newSong.songbookId)]: {
             title: newSong.title,
             mrId: newSong.src,
+            mrKind: 'youtube',
             updatedAt: Date.now(),
+            verifiedAt: Date.now(),
             source: 'streamer-confirmed'
           }
         }

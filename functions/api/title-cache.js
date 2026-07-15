@@ -13,14 +13,14 @@ export async function getCachedTitle(env, kind, id) {
   }
 }
 
-export async function putCachedTitle(env, kind, id, title, extra = {}) {
+export async function putCachedTitle(env, kind, id, title, extra = {}, { persistent = false } = {}) {
   if (!env?.TITLE_CACHE || !id || !String(title || '').trim()) return;
   try {
     await env.TITLE_CACHE.put(titleCacheKey(kind, id), JSON.stringify({
       title: String(title).trim(),
       updatedAt: Date.now(),
       ...extra
-    }), { expirationTtl: CACHE_TTL_SECONDS });
+    }), persistent ? {} : { expirationTtl: CACHE_TTL_SECONDS });
   } catch {
     // Cache availability must never prevent a title from being used.
   }
@@ -69,8 +69,10 @@ export async function onRequest(context) {
     await Promise.all(entries.map((entry) => putCachedTitle(env, entry.kind, entry.id, title, {
       source: entry.source || 'streamer-confirmed',
       mrId: entry.mrId || null,
-      songbookId: entry.songbookId || null
-    })));
+      mrKind: entry.mrKind || null,
+      songbookId: entry.songbookId || null,
+      verifiedAt: entry.persistent && entry.mrId ? Date.now() : null
+    }, { persistent: Boolean(entry.persistent) })));
     return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid cache request' }), { status: 400, headers: { 'Content-Type': 'application/json' } });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link } from 'lucide-react';
+import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
@@ -501,55 +501,47 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             const cacheKey = songbookCacheKey(platform, song.id);
             const cachedMr = songbookMrCache[cacheKey];
             const isCheckingCache = cacheLookupKeys[cacheKey];
-            const primaryActionLabel = cachedMr?.mrId
-              ? '저장된 MR 검토'
-              : youtubeId
-                ? '노래책 MR 검토'
-                : 'MR 찾기';
+            const hasLinkedMr = Boolean(cachedMr?.mrId);
+            const hasSongbookMr = Boolean(youtubeId);
+            const hasMrCandidate = hasLinkedMr || hasSongbookMr;
+            const primaryActionLabel = hasMrCandidate ? 'MR 확인' : 'MR 찾기';
             return (
-            <div key={song.id} className="result-item songbook-item" style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0.8rem', gap:'1rem'}}>
-              <div style={{flex: 1, minWidth: 0}}>
-                <div style={{fontSize:'1rem', fontWeight:'bold', color:'var(--text-main)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{song.title}</div>
-                <div style={{fontSize:'0.85rem', color:'var(--text-muted)', marginBottom:'0.3rem', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{song.artist}</div>
+            <div key={song.id} className="result-item songbook-item">
+              <div className="songbook-copy">
+                <div className="songbook-title">{song.title}</div>
+                <div className="songbook-artist">{song.artist}</div>
                 {song.tags && song.tags.length > 0 && (
-                  <div style={{display:'flex', gap:'0.3rem', flexWrap:'wrap', marginTop:'0.2rem'}}>
+                  <div className="songbook-tags">
                     {song.tags.map(t => (
-                      <span key={t} style={{fontSize:'0.65rem', padding:'0.1rem 0.5rem', background:'var(--chr-hat)', color:'#fff', borderRadius:'10px'}}>{t}</span>
+                      <span key={t}>{t}</span>
                     ))}
                   </div>
                 )}
-                <div style={{fontSize:'0.7rem', color: cachedMr?.mrId ? 'var(--eureka-emerald)' : 'var(--text-muted)', marginTop:'0.35rem'}}>
-                  {cachedMr?.mrId ? '저장된 MR 있음' : isCheckingCache ? '저장된 MR 확인 중' : youtubeId ? '노래책 MR 확인 필요' : '저장된 MR 없음'}
+                <div className={`songbook-mr-state ${hasLinkedMr ? 'is-linked' : ''}`}>
+                  {hasLinkedMr ? '연결된 MR 있음' : isCheckingCache ? 'MR 연결 확인 중' : hasSongbookMr ? '노래책 MR 후보 있음' : 'MR 연결 없음'}
                 </div>
-                {youtubeId && (
-                  <span style={{fontSize:'0.65rem', color: song.mrVerified ? 'var(--eureka-emerald)' : 'var(--text-muted)'}}>
-                    {song.mrVerified ? 'MR 검증됨' : 'MR 재생 확인 필요'}
-                  </span>
-                )}
               </div>
-              <div style={{display: 'flex', flexDirection: 'column', gap: '0.3rem'}}>
+              <div className="songbook-actions">
                 <button 
-                  className="btn-primary" 
-                  style={{padding:'0.5rem 1rem', fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'0.4rem', flexShrink: 0}}
+                  className="btn-primary songbook-action-primary"
                   onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
                 >
-                  {cachedMr?.mrId || youtubeId ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>}
+                  {hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>}
                 </button>
-                {(cachedMr?.mrId || youtubeId) && (
+                {hasMrCandidate && (
                   <button
-                    className="btn-secondary"
-                    style={{padding:'0.4rem 0.7rem', fontSize:'0.75rem'}}
+                    className="btn-secondary songbook-action-secondary"
                     onClick={() => startSongbookMrSearch(song, platform)}
                   >
                     다른 MR 찾기
                   </button>
                 )}
                 <button
-                  className="btn-secondary"
-                  style={{padding:'0.4rem 0.7rem', fontSize:'0.75rem'}}
+                  className="songbook-file-action"
                   onClick={() => chooseSongbookUpload(song, platform)}
+                  title="파일은 이번 방송에서만 사용합니다"
                 >
-                  MR 업로드
+                  <FileUp size={14} /> 내 파일
                 </button>
               </div>
             </div>

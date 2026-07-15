@@ -1,14 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music, CheckCircle2 } from 'lucide-react';
+import React from 'react';
+import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music } from 'lucide-react';
 import YouTube from 'react-youtube';
 
 export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction }) {
-  const [isConfirmed, setIsConfirmed] = useState(false);
-
-  useEffect(() => {
-    setIsConfirmed(false);
-  }, [stagedItem?.src, stagedItem?.type]);
-
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
@@ -141,25 +135,19 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
               : stagedItem.assetError || '방송용 파일을 준비하지 못했습니다.'}
           </p>
         )}
-        {hasPlayableMr ? (
-          <button
-            type="button"
-            className={`mr-confirm-button ${isConfirmed ? 'is-confirmed' : ''}`}
-            onClick={() => setIsConfirmed((confirmed) => !confirmed)}
-            aria-pressed={isConfirmed}
-          >
-            <CheckCircle2 size={18} />
-            {isConfirmed ? 'MR 확인 완료 · 다시 확인하려면 누르세요' : '미리보기 재생 후 MR 확인 완료'}
-          </button>
-        ) : (
+        {!hasPlayableMr ? (
           <p className="mr-unavailable">재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.</p>
-        )}
+        ) : type === 'local' ? (
+          <p className="mr-cache-note">내 파일은 이번 방송에서만 사용하며, 방송이 끝나면 자동으로 정리됩니다.</p>
+        ) : stagedItem.source !== 'youtube' && stagedItem.songbookId && !stagedItem.mrVerified ? (
+          <p className="mr-cache-note">대기열에 추가하면 이 MR 연결을 노래책에 저장해 다음 방송에도 바로 사용할 수 있습니다.</p>
+        ) : null}
 
         <div className="staging-action-buttons">
           <button
             className="btn-primary go-live-btn"
             onClick={() => onGoLive(false)}
-            disabled={!title.trim() || !hasPlayableMr || !isConfirmed || !isBroadcastAssetReady}
+            disabled={!title.trim() || !hasPlayableMr || !isBroadcastAssetReady}
           >
             {hasCurrentSong ? <><ListPlus size={20} /> 대기열에 추가</> : <><Play size={20} /> 즉시 재생 (방송 송출)</>}
           </button>
@@ -168,7 +156,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
               className="btn-primary go-live-btn go-live-next"
               onClick={() => onGoLive(true)}
               title="대기열 1순위로 새치기"
-              disabled={!title.trim() || !hasPlayableMr || !isConfirmed || !isBroadcastAssetReady}
+              disabled={!title.trim() || !hasPlayableMr || !isBroadcastAssetReady}
             >
               <><Play size={20} /> 바로 다음 곡으로</>
             </button>
