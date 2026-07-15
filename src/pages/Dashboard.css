@@ -1018,9 +1018,9 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 }
 @media (max-width: 650px) {
   .staging-media-info { grid-template-columns: 1fr; }
-  .songbook-item { align-items: flex-start; flex-direction: column; }
-  .songbook-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; flex-basis: auto; }
-  .songbook-action-primary { grid-column: 1 / -1; }
+  .songbook-item { align-items: center; flex-direction: row; gap: 0.6rem; }
+  .songbook-actions { display: flex; flex: 0 0 108px; flex-direction: column; width: 108px; gap: 0.3rem; }
+  .songbook-action-primary, .songbook-action-secondary, .songbook-file-action { min-height: 31px; padding: 0.32rem 0.38rem; font-size: 0.7rem; }
 }
 
 /* Live-console-first layout: the active broadcast and queue own the screen,
