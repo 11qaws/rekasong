@@ -1018,7 +1018,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .playback-area { grid-area: playback; min-width: 0; }
 .queue-area { grid-area: queue; min-width: 0; }
 .composer-area { grid-area: composer; min-width: 0; }
-.playback-panel { height: auto; max-height: none; gap: 0.75rem; padding: 1rem 1.2rem; }
+.playback-panel { height: auto; min-height: 0; max-height: none; gap: 0.75rem; padding: 1rem 1.2rem; }
 .playback-panel-header, .queue-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .playback-heading { display: flex; align-items: center; gap: 0.45rem; font-weight: 800; color: var(--text-main); }
 .playback-heading span { color: var(--text-muted); font-size: 0.82rem; }
