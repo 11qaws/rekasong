@@ -4,38 +4,14 @@ import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
+import { readTitleEventStream } from '../lib/titleStream';
 
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
 
 async function readYoutubeTitle(videoId, signal) {
-  const response = await fetch(apiUrl(`/api/extract-title?id=${encodeURIComponent(videoId)}`), { signal });
-  if (!response.ok || !response.body) throw new Error(`AI title request failed: ${response.status}`);
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let resolvedTitle = '';
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data = JSON.parse(line.slice(6));
-        if (typeof data.title === 'string' && data.title.trim()) resolvedTitle = data.title.trim();
-      } catch {
-        // Ignore a partial SSE frame; the next one completes it.
-      }
-    }
-  }
-
-  if (!resolvedTitle) throw new Error('AI title was not returned');
-  return resolvedTitle;
+  const title = await readTitleEventStream(apiUrl(`/api/extract-title?id=${encodeURIComponent(videoId)}`), {}, { signal });
+  if (!title) throw new Error('AI title was not returned');
+  return title;
 }
 
 export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedState, setSharedState }) {
@@ -153,49 +129,18 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     };
 
     const resolveTitles = async () => {
-      const knownTitles = new Map();
-      const unresolved = [];
-      sourceSongs.forEach((song) => {
-        if (song.titleStatus === 'ready' && song.title?.trim()) knownTitles.set(song.sourceId, song.title.trim());
-        else unresolved.push(song);
-      });
-
-      for (let index = 0; index < unresolved.length; index += 100) {
-        const batch = unresolved.slice(index, index + 100);
-        try {
-          const response = await fetch(apiUrl('/api/title-cache'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
-            body: JSON.stringify({ operation: 'lookup', kind: 'youtube', ids: batch.map((song) => song.sourceId) })
-          });
-          if (!response.ok) continue;
-          const data = await response.json();
-          Object.entries(data.entries || {}).forEach(([sourceId, cached]) => {
-            if (cached?.title) knownTitles.set(sourceId, cached.title);
-          });
-        } catch (error) {
-          if (error.name === 'AbortError') throw error;
-          // A cache outage must not prevent newly imported songs from being normalized.
-        }
-      }
-
-      if (controller.signal.aborted) return;
-
-      const pending = sourceSongs.filter((song) => !knownTitles.has(song.sourceId));
-      const completedFromCache = sourceSongs.length - pending.length;
+      const pending = sourceSongs.filter((song) => !(song.titleStatus === 'ready' && song.title?.trim()));
+      const completedFromState = sourceSongs.length - pending.length;
       setSharedStateRef.current((previous) => ({
         ...previous,
         youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((song) => {
-          const title = knownTitles.get(song.sourceId);
-          return title
-            ? { ...song, title, titleStatus: 'ready' }
-            : { ...song, rawTitle: song.rawTitle || song.title, title: '', titleStatus: 'pending' };
+          if (song.titleStatus === 'ready' && song.title?.trim()) return song;
+          return { ...song, rawTitle: song.rawTitle || song.title, title: '', titleStatus: 'pending' };
         })
       }));
-      setPlaylistTitleProgress({ total: sourceSongs.length, completed: completedFromCache, active: pending.length > 0 });
+      setPlaylistTitleProgress({ total: sourceSongs.length, completed: completedFromState, active: pending.length > 0 });
 
-      let completed = completedFromCache;
+      let completed = completedFromState;
       let nextIndex = 0;
       const worker = async () => {
         while (!controller.signal.aborted) {
