@@ -62,13 +62,17 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
     const pendingKeys = songsToCheck.map((song) => songbookCacheKey(activeSongbook.platform, song.id));
     setCacheLookupKeys((previous) => ({ ...previous, ...Object.fromEntries(pendingKeys.map((key) => [key, true])) }));
-    const parameters = new URLSearchParams({
-      kind: `songbook:${activeSongbook.platform}`,
-      ids: songsToCheck.map((song) => song.id).join(',')
-    });
     let cancelled = false;
 
-    fetch(apiUrl(`/api/title-cache?${parameters.toString()}`))
+    fetch(apiUrl('/api/title-cache'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operation: 'lookup',
+        kind: `songbook:${activeSongbook.platform}`,
+        ids: songsToCheck.map((song) => song.id)
+      })
+    })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('Cache lookup failed')))
       .then((data) => {
         if (cancelled || !data.entries) return;

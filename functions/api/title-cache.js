@@ -50,6 +50,16 @@ export async function onRequest(context) {
 
   try {
     const body = await request.json();
+    if (body.operation === 'lookup') {
+      const kind = String(body.kind || '').trim();
+      const ids = [...new Set((Array.isArray(body.ids) ? body.ids : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean))].slice(0, 100);
+      const pairs = await Promise.all(ids.map(async (id) => [id, await getCachedTitle(env, kind, id)]));
+      const entries = Object.fromEntries(pairs.filter(([, cached]) => cached));
+      return new Response(JSON.stringify({ entries }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
     const title = String(body.title || '').trim();
     const entries = Array.isArray(body.entries) ? body.entries : [];
     if (!title || entries.length === 0) {
