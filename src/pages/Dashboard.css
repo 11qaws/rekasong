@@ -971,7 +971,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 @keyframes aiAnalysisDot { 0%, 100% { opacity: 0.24; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .ai-retry-button { flex: 0 0 auto; border: 1px solid var(--glass-border); border-radius: 6px; padding: 0.4rem 0.55rem; background: var(--bg-mid); color: var(--text-main); font: inherit; font-size: 0.72rem; cursor: pointer; }
 .ai-retry-button:hover, .ai-retry-button:focus-visible { border-color: var(--eureka-emerald); color: var(--eureka-emerald); }
-.staging-media-info { display: grid; grid-template-columns: minmax(250px, 0.9fr) minmax(300px, 1.1fr); align-items: start; gap: 1rem; }
+.staging-media-info { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr); align-items: start; gap: 0.8rem; }
 .staging-song-info { display: grid; gap: 0.8rem; min-width: 0; }
 .preview-player-priority { position: relative; margin: 0; }
 .staging-title-help { margin: -0.35rem 0 0; color: var(--text-muted); font-size: 0.7rem; }
