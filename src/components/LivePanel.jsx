@@ -181,7 +181,6 @@ export default function LivePanel({
           {currentSong ? (
             <div className="history-item active">
               <span className="history-title">{currentSong.title}</span>
-              {currentSong.artist && <span className="history-artist"> - {currentSong.artist}</span>}
               
               <div className="visualizer-container">
                 <div className={`visualizer-bar ${isPlaying ? 'playing' : ''}`}></div>
@@ -315,7 +314,6 @@ export default function LivePanel({
                 {song.source === 'meloming' && <span style={{fontSize:'10px', background:'var(--eureka-emerald)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Meloming</span>}
                 {song.source === 'setlink' && <span style={{fontSize:'10px', background:'var(--eureka-azure)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Setlink</span>}
                 <span className="history-title">{song.title}</span>
-                {song.artist && <span className="history-artist"> - {song.artist}</span>}
                 {song.tags && song.tags.length > 0 && (
                   <span style={{fontSize:'10px', color:'var(--eureka-emerald)', marginLeft:'6px'}}>#{song.tags[0]}</span>
                 )}
@@ -342,7 +340,6 @@ export default function LivePanel({
               {song.source === 'meloming' && <span style={{fontSize:'10px', background:'var(--eureka-emerald)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Meloming</span>}
               {song.source === 'setlink' && <span style={{fontSize:'10px', background:'var(--eureka-azure)', color:'#fff', padding:'1px 5px', borderRadius:'6px', marginRight:'6px'}}>Setlink</span>}
               <span className="history-title">{song.title}</span>
-              {song.artist && <span className="history-artist"> - {song.artist}</span>}
               {song.tags && song.tags.length > 0 && (
                 <span style={{fontSize:'10px', color:'var(--eureka-emerald)', marginLeft:'6px'}}>#{song.tags[0]}</span>
               )}

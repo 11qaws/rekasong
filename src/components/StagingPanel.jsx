@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music, User, CheckCircle2 } from 'lucide-react';
+import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music, CheckCircle2 } from 'lucide-react';
 import YouTube from 'react-youtube';
 
 export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction }) {
@@ -20,7 +20,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
     );
   }
 
-  const { type, src, title, artist } = stagedItem;
+  const { type, src, title } = stagedItem;
   const hasPlayableMr = type === 'local' ? Boolean(src) : type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(src || '');
   const analysisPhase = (() => {
     if (!isAiLoading) return 0;
@@ -120,25 +120,13 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           />
         </div>
         <p style={{fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'-0.3rem', marginBottom:'0.5rem'}}>
-          방송 화면에 표시될 곡명과 가수명을 수정하세요.
+          방송 화면에 표시될 곡명을 수정하세요.
           {stagedItem.tags && stagedItem.tags.length > 0 && (
             <span style={{marginLeft: '8px', color: 'var(--eureka-emerald)'}}>
               (태그: {stagedItem.tags.join(', ')})
             </span>
           )}
         </p>
-
-        <label>가수 (선택)</label>
-        <div className="search-input-wrapper">
-          <User className="search-icon" size={16} style={{top: '12px'}}/>
-          <input 
-            type="text" 
-            value={artist} 
-            onChange={(e) => onAliasChange('artist', e.target.value)} 
-            className="glass-input search-input"
-            placeholder="가수명을 입력하세요"
-          />
-        </div>
 
       </div>
 
