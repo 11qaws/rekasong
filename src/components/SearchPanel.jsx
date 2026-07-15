@@ -40,6 +40,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [isPlaylistLoading, setIsPlaylistLoading] = useState(false);
   const [playlistTitleProgress, setPlaylistTitleProgress] = useState({ total: 0, completed: 0, active: false });
   const [playlistImportRun, setPlaylistImportRun] = useState(0);
+  const [retryingPlaylistTitleIds, setRetryingPlaylistTitleIds] = useState(() => new Set());
 
   // Local search queries for songbooks
   const [meloSearch, setMeloSearch] = useState('');
@@ -227,6 +228,44 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0];
     if (file) handleFileSelect({ target: { files: [file] } });
+  };
+
+  const retryPlaylistTitle = async (song) => {
+    const sourceId = song.sourceId || song.id;
+    if (!sourceId || retryingPlaylistTitleIds.has(sourceId)) return;
+
+    setRetryingPlaylistTitleIds((previous) => new Set(previous).add(sourceId));
+    setSharedStateRef.current((previous) => ({
+      ...previous,
+      youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
+        catalogSong.sourceId === sourceId
+          ? { ...catalogSong, rawTitle: catalogSong.rawTitle || catalogSong.title, title: '', titleStatus: 'pending' }
+          : catalogSong
+      ))
+    }));
+
+    try {
+      const title = await readYoutubeTitle(sourceId);
+      setSharedStateRef.current((previous) => ({
+        ...previous,
+        youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
+          catalogSong.sourceId === sourceId ? { ...catalogSong, title, titleStatus: 'ready' } : catalogSong
+        ))
+      }));
+    } catch (error) {
+      setSharedStateRef.current((previous) => ({
+        ...previous,
+        youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
+          catalogSong.sourceId === sourceId ? { ...catalogSong, title: '', titleStatus: 'error' } : catalogSong
+        ))
+      }));
+    } finally {
+      setRetryingPlaylistTitleIds((previous) => {
+        const next = new Set(previous);
+        next.delete(sourceId);
+        return next;
+      });
+    }
   };
 
   const handleSearch = (e) => {
@@ -600,6 +639,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             const hasSongbookMr = Boolean(youtubeId);
             const hasMrCandidate = hasLinkedMr || hasSongbookMr;
             const isTitleReady = platform !== 'youtube-playlist' || song.titleStatus === 'ready';
+            const isTitleRetrying = retryingPlaylistTitleIds.has(song.sourceId || song.id);
+            const canRetryTitle = platform === 'youtube-playlist' && song.titleStatus === 'error';
             const displayTitle = isTitleReady ? song.title : song.titleStatus === 'error' ? 'AI 곡명 정리 실패' : 'AI 곡명 정리 중…';
             const pendingActionLabel = song.titleStatus === 'error' ? '정리 실패' : '곡명 정리 중';
             const primaryActionLabel = hasMrCandidate ? 'MR 확인' : 'MR 찾기';
@@ -625,13 +666,24 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 </div>
               </div>
               <div className="songbook-actions">
-                <button 
-                  className="btn-primary songbook-action-primary"
-                  onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
-                  disabled={!isTitleReady}
-                >
-                  {isTitleReady ? (hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>) : pendingActionLabel}
-                </button>
+                {canRetryTitle ? (
+                  <button
+                    className="songbook-retry-action"
+                    onClick={() => retryPlaylistTitle(song)}
+                    disabled={isTitleRetrying}
+                    title="이 곡만 AI 곡명 정리를 다시 시도합니다"
+                  >
+                    <RefreshCw size={13} className={isTitleRetrying ? 'spinner' : ''} /> 재분석
+                  </button>
+                ) : (
+                  <button
+                    className="btn-primary songbook-action-primary"
+                    onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
+                    disabled={!isTitleReady}
+                  >
+                    {isTitleReady ? (hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>) : pendingActionLabel}
+                  </button>
+                )}
                 {hasMrCandidate && isTitleReady && (
                   <button
                     className="btn-secondary songbook-action-secondary"
