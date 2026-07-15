@@ -31,6 +31,7 @@ export default function Dashboard() {
   const [duration, setDuration] = useState(0);
   const ytPlayerRef = useRef(null);
   const audioRef = useRef(null);
+  const videoRef = useRef(null);
   const handlePlayNextRef = useRef(null);
   const activeSongIdRef = useRef(null);
   const reportedMediaIssueRef = useRef(null);
@@ -40,6 +41,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) ytPlayerRef.current.setVolume(volume);
     if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+    if (videoRef.current) videoRef.current.volume = Math.max(0, Math.min(1, volume / 100));
     localStorage.setItem('rekasong_volume', volume);
   }, [volume]);
 
@@ -48,9 +50,11 @@ export default function Dashboard() {
     if (isPlaying) {
       if (ytPlayerRef.current && ytPlayerRef.current.playVideo) ytPlayerRef.current.playVideo();
       if (audioRef.current) audioRef.current.play().catch(()=>console.log("Play interrupted"));
+      if (videoRef.current) videoRef.current.play().catch(()=>console.log("Play interrupted"));
     } else {
       if (ytPlayerRef.current && ytPlayerRef.current.pauseVideo) ytPlayerRef.current.pauseVideo();
       if (audioRef.current) audioRef.current.pause();
+      if (videoRef.current) videoRef.current.pause();
     }
   }, [isPlaying]);
 
@@ -95,6 +99,10 @@ export default function Dashboard() {
           setCurrentTime(audioRef.current.currentTime);
           setDuration(audioRef.current.duration || 0);
         }
+        if (videoRef.current) {
+          setCurrentTime(videoRef.current.currentTime);
+          setDuration(videoRef.current.duration || 0);
+        }
       }, 1000);
     }
     return () => {
@@ -108,6 +116,9 @@ export default function Dashboard() {
     }
     if (audioRef.current) {
       audioRef.current.currentTime = time;
+    }
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
     }
     setCurrentTime(time);
   };
@@ -215,6 +226,7 @@ export default function Dashboard() {
       stagingId,
       type: 'local',
       src: url,
+      mediaType: file.type === 'video/mp4' ? 'video' : 'audio',
       title: file.name,
       artist: '',
       file: file
@@ -296,6 +308,7 @@ export default function Dashboard() {
       title: stagedItem.title,
       artist: stagedItem.artist,
       src: stagedItem.src,
+      mediaType: stagedItem.mediaType || 'audio',
       tags: stagedItem.tags || [],
       source: stagedItem.source || 'youtube'
     };
@@ -541,7 +554,18 @@ export default function Dashboard() {
             }}
           />
         )}
-        {localAudioSrc && (
+        {localAudioSrc && currentSong?.mediaType === 'video' && (
+          <video
+            ref={videoRef}
+            src={localAudioSrc}
+            autoPlay
+            playsInline
+            onEnded={() => onLivePlayerEnd(currentSong?.id)}
+            onWaiting={() => handlePlaybackDelay(currentSong?.id, '로컬 영상')}
+            onError={() => handleMediaFailure(currentSong?.id, '로컬 영상', 'MP4 재생 오류')}
+          />
+        )}
+        {localAudioSrc && currentSong?.mediaType !== 'video' && (
           <audio
             ref={audioRef}
             src={localAudioSrc}

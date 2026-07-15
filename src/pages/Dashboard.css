@@ -937,6 +937,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   height: auto;
   min-height: calc(100vh - 220px);
 }
+.local-video-preview { display: block; width: 100%; border-radius: 8px; background: #000; }
 .dashboard-container { overflow-x: hidden; overflow-y: auto; max-height: 100vh; }
 .dashboard-container.staging-active .dashboard-grid {
   grid-template-columns: minmax(0, 1.65fr) minmax(360px, 0.9fr);

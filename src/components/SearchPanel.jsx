@@ -73,11 +73,12 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const handleFileSelect = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      if (!file.type.startsWith('audio/')) {
+    const isSupportedMedia = file.type.startsWith('audio/') || file.type === 'video/mp4';
+    if (!isSupportedMedia) {
         alert('오류: 오디오 파일(MP3 등)만 지원됩니다.');
         return;
       }
-      if (file.size > 50 * 1024 * 1024) {
+    if (file.size > 200 * 1024 * 1024) {
         alert('오류: 50MB 이하의 오디오 파일만 업로드할 수 있습니다.');
         return;
       }
@@ -234,7 +235,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         <p style={{ margin: 0, fontWeight: 500 }}>로컬 파일(MP3) 추가하기</p>
         <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
         <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
-        <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFileSelect} className="hidden-file-input" />
+        <input ref={fileInputRef} type="file" accept="audio/*,video/mp4" onChange={handleFileSelect} className="hidden-file-input" />
       </div>
     </>
   );

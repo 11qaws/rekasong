@@ -155,7 +155,10 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             />
           </div>
         )}
-        {type === 'local' && (
+        {type === 'local' && stagedItem.mediaType === 'video' && (
+          <video controls src={src} className="local-video-preview" style={{width:'100%', maxHeight:'320px'}} />
+        )}
+        {type === 'local' && stagedItem.mediaType !== 'video' && (
           <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
         )}
       </div>
