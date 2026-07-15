@@ -1,6 +1,6 @@
 export const GEMINI_MODEL = 'gemini-3.5-flash';
 
-const GEMINI_GENERATE_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const FALLBACK_KEY = '__rekasong_title_fallback__';
 
 export function selectGeminiApiKey(env) {
@@ -32,11 +32,12 @@ function cleanTitle(value) {
     .trim() || '제목을 직접 확인해 주세요';
 }
 
-function getGeneratedText(data) {
-  const text = (data.candidates || [])
-    .flatMap((candidate) => candidate.content?.parts || [])
-    .filter((part) => part.text)
-    .map((part) => part.text)
+function getInteractionText(interaction) {
+  const text = (interaction.steps || [])
+    .filter((step) => step.type === 'model_output')
+    .flatMap((step) => step.content || [])
+    .filter((content) => content.type === 'text' && content.text)
+    .map((content) => content.text)
     .join('\n')
     .trim();
   if (!text) throw new Error('Empty response from Gemini');
@@ -57,33 +58,40 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
     return cleanTitle(fallbackTitle);
   }
 
-  const parts = [{ text: prompt }];
-  if (audioBase64) parts.push({ inlineData: { data: audioBase64, mimeType: audioMimeType } });
+  const input = [{ type: 'text', text: prompt }];
+  if (audioBase64) input.push({ type: 'audio', data: audioBase64, mime_type: audioMimeType });
 
-  const response = await fetch(GEMINI_GENERATE_URL, {
+  const response = await fetch(GEMINI_INTERACTIONS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey
     },
     body: JSON.stringify({
-      contents: [{ parts }],
-      tools: [{ google_search: {} }],
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: 'application/json',
-        responseJsonSchema: {
+      model: GEMINI_MODEL,
+      input,
+      tools: [{ type: 'google_search' }],
+      generation_config: { thinking_level: 'low' },
+      response_format: {
+        type: 'text',
+        mime_type: 'application/json',
+        schema: {
           type: 'object',
-          properties: { final_title: { type: 'string' } },
+          properties: {
+            final_title: {
+              type: 'string',
+              description: 'Artist, channel, MV, version, work title, and karaoke metadata removed; Korean common title only.'
+            }
+          },
           required: ['final_title']
         }
       }
     })
   });
 
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || 'Failed to fetch from Gemini');
-  const result = parseJsonResponse(getGeneratedText(data));
+  const interaction = await response.json();
+  if (!response.ok) throw new Error(interaction.error?.message || 'Failed to fetch from Gemini');
+  const result = parseJsonResponse(getInteractionText(interaction));
   const title = typeof result.final_title === 'string' ? result.final_title.trim() : '';
   if (!title) throw new Error('Gemini did not return a final_title');
   return title.replace(/^["']|["']$/g, '');
