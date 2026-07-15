@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
@@ -28,6 +28,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [meloSearch, setMeloSearch] = useState('');
   const [playlistSearch, setPlaylistSearch] = useState('');
   const [setlinkSearch, setSetlinkSearch] = useState('');
+  const fileInputRef = useRef(null);
   
   const melo = useMeloming(melomingChannelId);
   const setlink = useSetlink(setlinkCatalog);
