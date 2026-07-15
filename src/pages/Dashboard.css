@@ -1002,3 +1002,86 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 @media (max-width: 650px) {
   .staging-media-info { grid-template-columns: 1fr; }
 }
+
+/* Live-console-first layout: the active broadcast and queue own the screen,
+   while adding a song is a focused secondary composer. */
+.dashboard-header { margin-bottom: 1rem; padding: 1.15rem 2rem 1.4rem; }
+.dashboard-grid,
+.dashboard-container.staging-active .dashboard-grid {
+  grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+  grid-template-areas:
+    'playback playback'
+    'queue composer';
+  gap: 1rem;
+  align-items: start;
+}
+.playback-area { grid-area: playback; min-width: 0; }
+.queue-area { grid-area: queue; min-width: 0; }
+.composer-area { grid-area: composer; min-width: 0; }
+.playback-panel { height: auto; max-height: none; gap: 0.75rem; padding: 1rem 1.2rem; }
+.playback-panel-header, .queue-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.playback-heading { display: flex; align-items: center; gap: 0.45rem; font-weight: 800; color: var(--text-main); }
+.playback-heading span { color: var(--text-muted); font-size: 0.82rem; }
+.playback-header-actions { display: flex; align-items: center; gap: 0.5rem; }
+.on-air-badge.is-paused { color: var(--text-muted); border-color: var(--glass-border); background: var(--bg-deep); }
+.playback-now { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 1rem; }
+.playback-title-row { min-width: 0; display: flex; align-items: center; gap: 0.7rem; }
+.playback-title-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.1rem; }
+.playback-title-row .visualizer-container { margin-left: auto; }
+.visualizer-container i { display: inline-block; width: 3px; height: 9px; margin: 0 1px; border-radius: 4px; background: var(--text-muted); }
+.visualizer-container i.playing { background: var(--eureka-emerald); animation: visualizerDance 0.8s ease-in-out infinite alternate; }
+.visualizer-container i:nth-child(2) { animation-delay: 0.16s; }
+.visualizer-container i:nth-child(3) { animation-delay: 0.32s; }
+.visualizer-container i:nth-child(4) { animation-delay: 0.12s; }
+.playback-controls { display: flex; align-items: center; gap: 0.35rem; }
+.playback-controls .volume-slider { width: 110px; }
+.playback-primary { color: var(--bg-deep); background: var(--eureka-emerald); border-color: var(--eureka-emerald); }
+.playback-progress { min-width: 235px; display: flex; align-items: center; gap: 0.45rem; color: var(--text-muted); font-size: 0.72rem; }
+.playback-progress input { flex: 1; min-width: 80px; }
+.playback-idle { display: flex; align-items: center; gap: 0.45rem; min-height: 42px; padding: 0.65rem 0.8rem; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.87rem; }
+.playback-settings { margin: 0; }
+.playback-settings summary { padding: 0.45rem 0; font-size: 0.76rem; }
+.playback-settings .widget-settings-content { padding: 0.75rem 0 0; }
+.playback-settings .widget-settings-content p { margin: 0.5rem 0 0; color: var(--text-muted); font-size: 0.76rem; }
+.queue-panel { height: auto; min-height: 0; max-height: calc(100vh - 260px); gap: 0.7rem; }
+.queue-panel .playback-options { margin: 0; }
+.queue-list { display: grid; gap: 0.4rem; min-height: 104px; max-height: 300px; overflow: auto; padding-right: 0.2rem; }
+.queue-row { display: flex; align-items: center; gap: 0.5rem; min-height: 42px; padding: 0.5rem 0.6rem; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--bg-deep); }
+.queue-row.drag-over { border-top: 2px solid var(--eureka-emerald); }
+.queue-row strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.88rem; }
+.queue-grip { display: inline-flex; align-items: center; gap: 0.1rem; color: var(--text-muted); font-size: 0.74rem; cursor: grab; }
+.queue-empty { display: grid; place-items: center; min-height: 100px; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.84rem; text-align: center; }
+.history-accordion { border-top: 1px solid var(--glass-border); padding-top: 0.65rem; }
+.history-accordion summary { cursor: pointer; color: var(--text-muted); font-size: 0.82rem; }
+.history-accordion .history-list { max-height: 180px; overflow: auto; margin-top: 0.6rem; }
+.song-composer > div, .song-composer .panel { width: 100%; min-width: 0; }
+.song-composer .panel { height: auto; max-height: none; min-height: 0; }
+.composer-area .search-panel { gap: 0.8rem; }
+.composer-area .search-results .empty-state { min-height: 0; padding: 0.8rem 1rem !important; font-size: 0.82rem; }
+.composer-area .drop-zone-placeholder { display: flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 0; padding: 0.7rem 0.85rem; border-radius: 8px; }
+.composer-area .drop-zone-placeholder svg { width: 20px; height: 20px; margin: 0 !important; }
+.composer-area .drop-zone-placeholder p { margin: 0 !important; font-size: 0.8rem !important; }
+.composer-area .drop-zone-placeholder p + p { display: none; }
+.composer-area .drop-zone-placeholder .btn-secondary { padding: 0.35rem 0.55rem; font-size: 0.75rem; }
+.composer-area .divider { margin: 0.25rem 0; font-size: 0.74rem; }
+
+@media (max-width: 1100px) {
+  .dashboard-grid,
+  .dashboard-container.staging-active .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'playback' 'queue' 'composer';
+  }
+  .playback-now { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+  .playback-controls, .playback-progress { min-width: 0; }
+  .queue-panel { max-height: none; }
+  .queue-list { max-height: 230px; }
+}
+
+@media (max-width: 650px) {
+  .dashboard-header { margin: -0.5rem -0.5rem 0.75rem; padding: 0.8rem 1rem 1rem; }
+  .playback-panel { padding: 0.85rem; }
+  .playback-title-row .visualizer-container { display: none; }
+  .playback-controls .volume-slider { width: 86px; }
+  .playback-progress { width: 100%; }
+  .queue-list { max-height: 180px; }
+}

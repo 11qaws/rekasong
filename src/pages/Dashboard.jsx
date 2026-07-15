@@ -1,15 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import YouTube from 'react-youtube';
-import { AnimatePresence, motion } from 'framer-motion';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
 import { apiUrl } from '../lib/api';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
-import SearchPanel from '../components/SearchPanel';
-import StagingPanel from '../components/StagingPanel';
-import LivePanel from '../components/LivePanel';
+import PlaybackPanel from '../components/PlaybackPanel';
+import QueuePanel from '../components/QueuePanel';
+import SongComposer from '../components/SongComposer';
 import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
 
@@ -442,66 +441,13 @@ export default function Dashboard() {
       </header>
 
       <div className="dashboard-grid">
-        <div className="workflow-column">
-          <AnimatePresence initial={false} mode="popLayout">
-            {!stagedItem ? (
-              <motion.div
-                key="search"
-                layout
-                initial={{ opacity: 0, height: 0, y: -12 }}
-                animate={{ opacity: 1, height: 'auto', y: 0 }}
-                exit={{ opacity: 0, height: 0, y: -12 }}
-                transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-                className="workflow-search"
-              >
-                <ErrorBoundary>
-                  <SearchPanel
-                    onSelectResult={handleSelectSearchResult}
-                    onLocalFileDrop={handleLocalFileDrop}
-                    sharedState={state || {}}
-                    setSharedState={setSharedState}
-                    showToast={showToast}
-                  />
-                </ErrorBoundary>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="staging"
-                layout
-                initial={{ opacity: 0, height: 0, y: -18 }}
-                animate={{ opacity: 1, height: 'auto', y: 0 }}
-                exit={{ opacity: 0, height: 0, y: -18 }}
-                transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-                className="workflow-staging"
-              >
+        <div className="playback-area">
         <ErrorBoundary>
-          <StagingPanel 
-            stagedItem={stagedItem}
-            onAliasChange={handleAliasChange}
-            onGoLive={handleGoLive}
-            onClearStaged={handleClearStaged}
-            hasCurrentSong={!!state?.currentSong}
-                  isAiLoading={isAiLoading}
-                  aiStatusMessage={aiStatusMessage}
-                  onRetryAiExtraction={handleRetryAiExtraction}
-                  showToast={showToast}
-          />
-                </ErrorBoundary>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-        <motion.div layout className="live-column">
-        <ErrorBoundary>
-          <LivePanel 
+          <PlaybackPanel
             room={room}
             publicKeyB64={signingKeys?.publicKeyB64}
-            history={state?.history || []}
-            queue={state?.queue || []}
             currentSong={state?.currentSong}
             onSkip={handlePlayNext}
-            onRemoveFromQueue={handleRemoveFromQueue}
-            // 새롭게 추가되는 Audio Control 및 History 제어용 Props
             isPlaying={isPlaying}
             onTogglePlay={() => setIsPlaying(!isPlaying)}
             volume={volume}
@@ -509,12 +455,46 @@ export default function Dashboard() {
             currentTime={currentTime}
             duration={duration}
             onSeek={handleSeek}
-            autoPlayNext={Boolean(state?.autoPlayNext)}
             setSharedState={setSharedState}
             showToast={showToast}
           />
         </ErrorBoundary>
-        </motion.div>
+        </div>
+        <div className="queue-area">
+          <ErrorBoundary>
+            <QueuePanel
+              queue={state?.queue || []}
+              history={state?.history || []}
+              onRemoveFromQueue={handleRemoveFromQueue}
+              autoPlayNext={Boolean(state?.autoPlayNext)}
+              setSharedState={setSharedState}
+            />
+          </ErrorBoundary>
+        </div>
+        <div className="composer-area">
+          <ErrorBoundary>
+            <SongComposer
+              stagedItem={stagedItem}
+              searchProps={{
+                onSelectResult: handleSelectSearchResult,
+                onLocalFileDrop: handleLocalFileDrop,
+                sharedState: state || {},
+                setSharedState,
+                showToast
+              }}
+              stagingProps={{
+                onAliasChange: handleAliasChange,
+                onGoLive: handleGoLive,
+                onClearStaged: handleClearStaged,
+                hasCurrentSong: Boolean(state?.currentSong),
+                isAiLoading,
+                aiStatusMessage,
+                onRetryAiExtraction: handleRetryAiExtraction,
+                showToast
+              }}
+            />
+          </ErrorBoundary>
+        </div>
       </div>
 
       {/* Toast Notifications Container */}
