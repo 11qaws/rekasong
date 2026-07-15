@@ -176,13 +176,6 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         </button>
       </form>
 
-      <div className="search-quick-actions">
-        <button type="button" className="upload-inline-button" onClick={() => fileInputRef.current?.click()}>
-          <UploadCloud size={16} /> MR 파일 올리기
-        </button>
-        <span>검색하지 않고 파일을 올려 곡명과 가수를 확인할 수 있어요.</span>
-      </div>
-
       <div className="search-results">
         {results.map((v) => (
           <div key={v.id} className="result-item" style={{position:'relative'}}>
@@ -234,7 +227,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
       <div 
         className="drop-zone-placeholder"
-        onClick={() => document.querySelector('.hidden-file-input').click()}
+        onClick={() => fileInputRef.current?.click()}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleFileDrop}
         style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
