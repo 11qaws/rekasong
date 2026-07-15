@@ -1,9 +1,13 @@
 export async function readTitleEventStream(url, options = {}, { signal, onEvent, timeoutMs = 60000 } = {}) {
   const requestController = new AbortController();
+  let timedOut = false;
   const abortRequest = () => requestController.abort();
   if (signal?.aborted) abortRequest();
   else signal?.addEventListener('abort', abortRequest, { once: true });
-  const timeoutId = setTimeout(abortRequest, timeoutMs);
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    abortRequest();
+  }, timeoutMs);
 
   try {
     const response = await fetch(url, { ...options, signal: requestController.signal });
@@ -36,6 +40,13 @@ export async function readTitleEventStream(url, options = {}, { signal, onEvent,
     }
 
     return resolvedTitle;
+  } catch (error) {
+    if (timedOut && error?.name === 'AbortError') {
+      const timeoutError = new Error('AI title request timed out');
+      timeoutError.name = 'TimeoutError';
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
     signal?.removeEventListener('abort', abortRequest);
