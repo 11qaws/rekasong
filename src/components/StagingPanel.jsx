@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Play, Loader2, Sparkles, X, ListPlus, Music, User } from 'lucide-react';
+import { Play, Loader2, Sparkles, X, ListPlus, Music, User, CheckCircle2 } from 'lucide-react';
 import YouTube from 'react-youtube';
 
 export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction }) {
@@ -32,12 +32,6 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
     ? ['파일 확인', '원곡 분리', '이름 매칭']
     : ['영상 확인', '원곡 분리', '이름 매칭'];
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      if (hasPlayableMr && isConfirmed) onGoLive(false);
-    }
-  };
-
   return (
     <div className="panel staging-panel glass-card">
       <div className="panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
@@ -49,6 +43,31 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         <button onClick={onClearStaged} className="btn-icon btn-icon-danger" title="비우기 (취소)" style={{fontSize:'0.85rem'}}>
           <X size={16} /> 비우기
         </button>
+      </div>
+
+      <div className="preview-player preview-player-priority">
+        {type === 'youtube' && (
+          <div className="youtube-preview-wrapper">
+            <YouTube
+              videoId={src}
+              opts={{
+                width: '100%',
+                height: '180',
+                playerVars: {
+                  autoplay: 0,
+                  controls: 1,
+                  origin: window.location.origin
+                }
+              }}
+            />
+          </div>
+        )}
+        {type === 'local' && stagedItem.mediaType === 'video' && (
+          <video controls src={src} className="local-video-preview" style={{width:'100%', maxHeight:'320px'}} />
+        )}
+        {type === 'local' && stagedItem.mediaType !== 'video' && (
+          <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
+        )}
       </div>
 
       <div className="ai-title-card">
@@ -95,7 +114,6 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             type="text" 
             value={title} 
             onChange={(e) => onAliasChange('title', e.target.value)} 
-            onKeyDown={handleKeyDown}
             className="glass-input search-input"
             placeholder="곡명을 입력하세요"
             autoFocus
@@ -117,73 +135,47 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             type="text" 
             value={artist} 
             onChange={(e) => onAliasChange('artist', e.target.value)} 
-            onKeyDown={handleKeyDown}
             className="glass-input search-input"
             placeholder="가수명을 입력하세요"
           />
         </div>
 
-        <div style={{display:'flex', gap:'0.5rem', width: '100%', marginTop:'0.5rem'}}>
-          <button 
-            className="btn-primary go-live-btn" 
-            onClick={() => onGoLive(false)} 
-            style={{flex: 1, padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}}
+      </div>
+
+      <div className="staging-actions">
+        {hasPlayableMr ? (
+          <button
+            type="button"
+            className={`mr-confirm-button ${isConfirmed ? 'is-confirmed' : ''}`}
+            onClick={() => setIsConfirmed((confirmed) => !confirmed)}
+            aria-pressed={isConfirmed}
+          >
+            <CheckCircle2 size={18} />
+            {isConfirmed ? 'MR 확인 완료 · 다시 확인하려면 누르세요' : '미리보기 재생 후 MR 확인 완료'}
+          </button>
+        ) : (
+          <p className="mr-unavailable">재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.</p>
+        )}
+
+        <div className="staging-action-buttons">
+          <button
+            className="btn-primary go-live-btn"
+            onClick={() => onGoLive(false)}
             disabled={!title.trim() || !hasPlayableMr || !isConfirmed}
           >
-            {hasCurrentSong ? (
-              <><ListPlus size={20} /> 대기열에 추가</>
-            ) : (
-              <><Play size={20} /> 즉시 재생 (방송 송출)</>
-            )}
+            {hasCurrentSong ? <><ListPlus size={20} /> 대기열에 추가</> : <><Play size={20} /> 즉시 재생 (방송 송출)</>}
           </button>
           {hasCurrentSong && (
-            <button 
-              className="btn-primary go-live-btn" 
-              onClick={() => onGoLive(true)} 
-              style={{flex: 1, backgroundColor: title.trim() ? 'var(--accent-red)' : '#E9ECEF', padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}} 
+            <button
+              className="btn-primary go-live-btn go-live-next"
+              onClick={() => onGoLive(true)}
               title="대기열 1순위로 새치기"
               disabled={!title.trim() || !hasPlayableMr || !isConfirmed}
             >
-              <><Play size={20} /> 바로 다음 곡으로 (새치기)</>
+              <><Play size={20} /> 바로 다음 곡으로</>
             </button>
           )}
         </div>
-        {hasPlayableMr && (
-          <label style={{display:'flex', alignItems:'center', gap:'0.5rem', fontSize:'0.8rem', color:'var(--text-muted)', cursor:'pointer'}}>
-            <input type="checkbox" checked={isConfirmed} onChange={(event) => setIsConfirmed(event.target.checked)} />
-            미리보기에서 재생 가능한 MR임을 확인했습니다.
-          </label>
-        )}
-        {!hasPlayableMr && (
-          <p style={{margin: 0, fontSize: '0.8rem', color: 'var(--accent-red)'}}>
-            재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.
-          </p>
-        )}
-      </div>
-
-      <div className="preview-player" style={{ position: 'relative', marginTop: '1rem' }}>
-        {type === 'youtube' && (
-          <div className="youtube-preview-wrapper">
-            <YouTube 
-              videoId={src} 
-              opts={{ 
-                width: '100%', 
-                height: '180', 
-                playerVars: { 
-                  autoplay: 0, 
-                  controls: 1,
-                  origin: window.location.origin
-                } 
-              }} 
-            />
-          </div>
-        )}
-        {type === 'local' && stagedItem.mediaType === 'video' && (
-          <video controls src={src} className="local-video-preview" style={{width:'100%', maxHeight:'320px'}} />
-        )}
-        {type === 'local' && stagedItem.mediaType !== 'video' && (
-          <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
-        )}
       </div>
     </div>
   );
