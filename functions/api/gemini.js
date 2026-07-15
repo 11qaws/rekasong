@@ -58,8 +58,12 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
     return cleanTitle(fallbackTitle);
   }
 
-  const input = [{ type: 'text', text: prompt }];
-  if (audioBase64) input.push({ type: 'audio', data: audioBase64, mime_type: audioMimeType });
+  const input = audioBase64
+    ? [
+        { type: 'audio', data: audioBase64, mime_type: audioMimeType },
+        { type: 'text', text: prompt }
+      ]
+    : prompt;
 
   const response = await fetch(GEMINI_INTERACTIONS_URL, {
     method: 'POST',
