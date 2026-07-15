@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import YouTube from 'react-youtube';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
@@ -189,6 +190,21 @@ export default function Dashboard() {
       'info'
     );
     if (video.id) runAiExtractionStream(apiUrl(`/api/extract-title?id=${video.id}`), {}, stagingId);
+  };
+
+  const handleRetryAiExtraction = () => {
+    if (!stagedItem?.stagingId) return;
+    if (stagedItem.type === 'youtube' && stagedItem.src) {
+      runAiExtractionStream(apiUrl(`/api/extract-title?id=${stagedItem.src}`), {}, stagedItem.stagingId);
+      return;
+    }
+    if (stagedItem.type === 'local' && stagedItem.file) {
+      runAiExtractionStream(apiUrl('/api/extract-local'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: stagedItem.file.name, metadata: {} })
+      }, stagedItem.stagingId);
+    }
   };
 
   const handleLocalFileDrop = (file) => {
@@ -413,6 +429,8 @@ export default function Dashboard() {
       </header>
 
       <div className="dashboard-grid">
+        <div className="workflow-column">
+          <motion.div layout className="workflow-search">
         <ErrorBoundary>
           <SearchPanel 
             onSelectResult={handleSelectSearchResult} 
@@ -422,6 +440,18 @@ export default function Dashboard() {
             showToast={showToast}
           />
         </ErrorBoundary>
+          </motion.div>
+          <AnimatePresence initial={false}>
+            {stagedItem && (
+              <motion.div
+                key="staging"
+                layout
+                initial={{ opacity: 0, height: 0, y: -18 }}
+                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -18 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+                className="workflow-staging"
+              >
         <ErrorBoundary>
           <StagingPanel 
             stagedItem={stagedItem}
@@ -429,11 +459,17 @@ export default function Dashboard() {
             onGoLive={handleGoLive}
             onClearStaged={handleClearStaged}
             hasCurrentSong={!!state?.currentSong}
-            isAiLoading={isAiLoading}
-            aiStatusMessage={aiStatusMessage}
-            showToast={showToast}
+                  isAiLoading={isAiLoading}
+                  aiStatusMessage={aiStatusMessage}
+                  onRetryAiExtraction={handleRetryAiExtraction}
+                  showToast={showToast}
           />
         </ErrorBoundary>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+        <motion.div layout className="live-column">
         <ErrorBoundary>
           <LivePanel 
             room={room}
@@ -456,6 +492,7 @@ export default function Dashboard() {
             showToast={showToast}
           />
         </ErrorBoundary>
+        </motion.div>
       </div>
 
       {/* Toast Notifications Container */}

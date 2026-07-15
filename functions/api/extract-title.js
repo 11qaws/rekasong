@@ -21,7 +21,12 @@ export async function onRequest(context) {
 
       await sendEvent("유튜브 영상 정보 분석 중...");
       
-      const apiKey = selectGeminiApiKey(env);
+      let apiKey = null;
+      try {
+        apiKey = selectGeminiApiKey(env);
+      } catch {
+        // Without a Gemini secret, use deterministic title cleanup below.
+      }
 
       let ytTitle = '';
       let ytDescription = '';
@@ -89,7 +94,8 @@ export async function onRequest(context) {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
     }
   });
 }

@@ -168,6 +168,13 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         </button>
       </form>
 
+      <div className="search-quick-actions">
+        <button type="button" className="upload-inline-button" onClick={() => fileInputRef.current?.click()}>
+          <UploadCloud size={16} /> MR 파일 올리기
+        </button>
+        <span>검색하지 않고 파일을 올려 곡명과 가수를 확인할 수 있어요.</span>
+      </div>
+
       <div className="search-results">
         {results.map((v) => (
           <div key={v.id} className="result-item" style={{position:'relative'}}>
@@ -227,7 +234,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         <p style={{ margin: 0, fontWeight: 500 }}>로컬 파일(MP3) 추가하기</p>
         <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
         <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
-        <input type="file" accept="audio/*" onChange={handleFileSelect} className="hidden-file-input" />
+        <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFileSelect} className="hidden-file-input" />
       </div>
     </>
   );

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// AI 응답이 늦게 도착해도 현재 스테이징 곡과 사용자의 수동 편집을 침범하지 않게 한다.
 export function useAiTitleExtraction(setStagedItem) {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiStatusMessage, setAiStatusMessage] = useState('');
@@ -21,14 +20,9 @@ export function useAiTitleExtraction(setStagedItem) {
     requestRef.current = { id: requestId, controller };
 
     setIsAiLoading(true);
-    setAiStatusMessage('AI 분석 준비 중...');
+    setAiStatusMessage('AI 분석을 준비하고 있습니다…');
 
-    let timedOut = false;
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 15000);
-
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       if (!response.ok) throw new Error(`AI request failed: ${response.status}`);
@@ -41,7 +35,6 @@ export function useAiTitleExtraction(setStagedItem) {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -53,29 +46,27 @@ export function useAiTitleExtraction(setStagedItem) {
 
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.status === '완료') {
+            if (typeof data.title === 'string' && data.title.trim()) {
               setStagedItem(prev => {
                 if (!prev || prev.stagingId !== stagingId || prev.isTitleEdited) return prev;
-                return { ...prev, title: data.title };
+                return { ...prev, title: data.title.trim() };
               });
-              setAiStatusMessage('AI 추출 완료');
-            } else if (data.status === '에러') {
-              console.error(data.error);
-              setAiStatusMessage('AI 추출 실패 (직접 입력 가능)');
-            } else {
-              setAiStatusMessage(data.status);
+              setAiStatusMessage('AI 제목 정리 완료');
+            } else if (data.error || data.status === 'error') {
+              console.error(data.error || data.status);
+              setAiStatusMessage('AI 분석에 실패했습니다. 직접 수정할 수 있어요.');
+            } else if (data.message || data.status) {
+              setAiStatusMessage(data.message || data.status);
             }
           } catch {
-            // 분할 전송된 불완전 이벤트는 다음 청크를 기다린다.
+            // Ignore a partial SSE frame; the next frame completes it.
           }
         }
       }
     } catch (error) {
       if (requestRef.current.id === requestId && error.name !== 'AbortError') {
         console.error(error);
-        setAiStatusMessage('AI 추출 실패 (직접 입력 가능)');
-      } else if (requestRef.current.id === requestId && timedOut) {
-        setAiStatusMessage('AI 응답 지연 (직접 입력 가능)');
+        setAiStatusMessage('AI 분석에 실패했습니다. 직접 수정할 수 있어요.');
       }
     } finally {
       clearTimeout(timeoutId);

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Play, Loader2, Sparkles, X, ListPlus, Music, User } from 'lucide-react';
 import YouTube from 'react-youtube';
 
-export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage }) {
+export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction }) {
   const [isConfirmed, setIsConfirmed] = useState(false);
 
   useEffect(() => {
@@ -40,6 +40,17 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         <button onClick={onClearStaged} className="btn-icon btn-icon-danger" title="비우기 (취소)" style={{fontSize:'0.85rem'}}>
           <X size={16} /> 비우기
         </button>
+      </div>
+
+      <div className="ai-title-card">
+        <div className="ai-title-icon"><Sparkles size={18} /></div>
+        <div className="ai-title-copy">
+          <strong>AI 곡명 정리</strong>
+          <span>{isAiLoading ? 'YouTube 제목과 설명에서 원곡명을 추출하고 있습니다.' : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.')}</span>
+        </div>
+        {!isAiLoading && onRetryAiExtraction && (
+          <button type="button" className="ai-retry-button" onClick={onRetryAiExtraction}>다시 분석</button>
+        )}
       </div>
       
       <div className="staging-form">
