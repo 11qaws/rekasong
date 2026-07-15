@@ -397,12 +397,20 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const inputPlaceholder = isMeloming ? '예: 12345 (멜로밍 채널 ID)' : isPlaylist ? 'https://www.youtube.com/playlist?list=...' : 'https://setlink.jp/public/...';
       const submitImport = isMeloming ? () => handleIntegrationConnect('meloming', idValue) : isPlaylist ? () => handlePlaylistImport(tempPlaylistUrl) : () => handleSetlinkImport(tempSetlinkUrl);
       const sourceError = isPlaylist ? playlistImportError : catalogImportError;
+      const isImporting = isPlaylist ? isPlaylistLoading : !isMeloming && isSetlinkLoading;
+      const handleInputChange = isMeloming ? setIdValue : isPlaylist ? setTempPlaylistUrl : setTempSetlinkUrl;
+      const sourceName = isMeloming ? '멜로밍 노래책' : isPlaylist ? 'YouTube 플레이리스트' : 'Setlink 목록';
+      const sourceHelp = isMeloming
+        ? '멜로밍 개발자 문서의 공개 채널 ID를 사용합니다.'
+        : isPlaylist
+          ? 'YouTube 플레이리스트 주소를 붙여 넣으면 영상 목록을 노래책으로 가져옵니다.'
+          : 'Setlink 공개 페이지의 주소를 붙여넣으세요.';
       return (
         <div className="onboarding" style={{textAlign:'center', marginTop:'2rem', padding:'2rem', background:'rgba(0,0,0,0.1)', borderRadius:'12px', border:'1px solid var(--glass-border)'}}>
           {isMeloming ? <Music size={48} color="var(--eureka-emerald)" style={{margin:'0 auto 1rem'}} /> : <Link size={48} color="var(--eureka-azure)" style={{margin:'0 auto 1rem'}} />}
-          <h3 style={{marginBottom:'0.5rem', fontSize:'1.2rem', color:'var(--text-main)'}}>공개 노래책 추가</h3>
+          <h3 style={{marginBottom:'0.5rem', fontSize:'1.2rem', color:'var(--text-main)'}}>{sourceName} 추가</h3>
           <p style={{fontSize:'0.9rem', color:'var(--text-muted)', marginBottom:'1.5rem', lineHeight:'1.5'}}>
-            공개 노래책을 한 번 가져와 카탈로그에 첨부합니다.<br/>
+            목록을 한 번 가져와 카탈로그에 첨부합니다.<br/>
             목록은 자동 갱신되지 않으며, 업데이트 시 새로고침할 수 있습니다.
           </p>
           <form onSubmit={(event) => { event.preventDefault(); submitImport(); }} style={{display:'flex', gap:'0.5rem', flexDirection:'column', maxWidth:'520px', margin:'0 auto'}}>
@@ -411,14 +419,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
               placeholder={inputPlaceholder}
               className="glass-input"
               value={inputValue}
-              onChange={(event) => isMeloming ? setIdValue(event.target.value) : setTempSetlinkUrl(event.target.value)}
+              onChange={(event) => handleInputChange(event.target.value)}
               style={{textAlign:'center'}}
             />
-            <button type="submit" className="btn-primary" style={{padding:'0.8rem'}} disabled={isSetlinkLoading || !inputValue.trim()}>
-              {(isSetlinkLoading || isPlaylistLoading) && !isMeloming ? <><Loader2 className="spinner" size={16} /> 가져오는 중</> : '목록 가져오기'}
+            <button type="submit" className="btn-primary" style={{padding:'0.8rem'}} disabled={isImporting || !inputValue.trim()}>
+              {isImporting ? <><Loader2 className="spinner" size={16} /> 가져오는 중</> : '목록 가져오기'}
             </button>
             <div style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.5rem'}}>
-              {isMeloming ? '멜로밍 개발자 문서의 공개 채널 ID를 사용합니다.' : 'Setlink 공개 페이지의 주소를 붙여넣으세요.'}
+              {sourceHelp}
             </div>
           </form>
           {sourceError && <p style={{fontSize:'0.8rem', color:'var(--accent-red)'}}>{sourceError}</p>}
