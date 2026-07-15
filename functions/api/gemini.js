@@ -1,4 +1,4 @@
-export const GEMINI_MODEL = 'gemini-3.5-flash';
+export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const FALLBACK_KEY = '__rekasong_title_fallback__';
@@ -71,7 +71,6 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
       model: GEMINI_MODEL,
       input,
       tools: [{ type: 'google_search' }],
-      generation_config: { thinking_level: 'low' },
       response_format: {
         type: 'text',
         mime_type: 'application/json',
