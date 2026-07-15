@@ -1,12 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
 
+const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
+
 export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedState, setSharedState }) {
-  const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', youtubePlaylistCatalogMeta = null, activeIntegrationTab } = sharedState;
+  const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', youtubePlaylistCatalogMeta = null, songbookMrCache = {}, activeIntegrationTab } = sharedState;
   
   // Tabs: 'youtube', 'meloming', 'setlink'
   const [activeTab, setActiveTab] = useState(activeIntegrationTab || 'youtube'); 
@@ -15,6 +17,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState(false);
   const [pendingSongbookMatch, setPendingSongbookMatch] = useState(null);
+  const [songbookUploadContext, setSongbookUploadContext] = useState(null);
+  const [cacheLookupKeys, setCacheLookupKeys] = useState({});
+  const checkedSongbookCacheKeys = useRef(new Set());
+  const setSharedStateRef = useRef(setSharedState);
+  setSharedStateRef.current = setSharedState;
   
   // Integration Onboarding States
   const [tempMeloId, setTempMeloId] = useState('');
@@ -35,17 +42,64 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const setlink = useSetlink(setlinkCatalog);
   const playlist = useYoutubePlaylist(youtubePlaylistCatalog);
 
+  useEffect(() => {
+    const activeSongbook = activeTab === 'meloming'
+      ? { platform: 'meloming', songs: melo.songs, connected: Boolean(melomingChannelId) }
+      : activeTab === 'setlink'
+        ? { platform: 'setlink', songs: setlink.songs, connected: setlinkCatalog.length > 0 }
+        : activeTab === 'youtube-playlist'
+          ? { platform: 'youtube-playlist', songs: playlist.songs, connected: youtubePlaylistCatalog.length > 0 }
+          : null;
+    if (!activeSongbook?.connected || !Array.isArray(activeSongbook.songs) || activeSongbook.songs.length === 0) return;
+
+    const songsToCheck = activeSongbook.songs.slice(0, 100).filter((song) => {
+      const key = songbookCacheKey(activeSongbook.platform, song.id);
+      if (checkedSongbookCacheKeys.current.has(key)) return false;
+      checkedSongbookCacheKeys.current.add(key);
+      return true;
+    });
+    if (songsToCheck.length === 0) return;
+
+    const pendingKeys = songsToCheck.map((song) => songbookCacheKey(activeSongbook.platform, song.id));
+    setCacheLookupKeys((previous) => ({ ...previous, ...Object.fromEntries(pendingKeys.map((key) => [key, true])) }));
+    const parameters = new URLSearchParams({ kind: `songbook:${activeSongbook.platform}` });
+    songsToCheck.forEach((song) => parameters.append('id', song.id));
+    let cancelled = false;
+
+    fetch(apiUrl(`/api/title-cache?${parameters.toString()}`))
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('Cache lookup failed')))
+      .then((data) => {
+        if (cancelled || !data.entries) return;
+        const resolved = Object.fromEntries(Object.entries(data.entries)
+          .filter(([, cached]) => cached?.mrId)
+          .map(([songId, cached]) => [songbookCacheKey(activeSongbook.platform, songId), cached]));
+        if (Object.keys(resolved).length) {
+          setSharedStateRef.current((previous) => ({
+            ...previous,
+            songbookMrCache: { ...(previous.songbookMrCache || {}), ...resolved }
+          }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setCacheLookupKeys((previous) => ({ ...previous, ...Object.fromEntries(pendingKeys.map((key) => [key, false])) }));
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [activeTab, melomingChannelId, melo.songs, setlink.songs, setlinkCatalog.length, playlist.songs, youtubePlaylistCatalog.length]);
+
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setSharedState(prev => ({ ...prev, activeIntegrationTab: tab }));
   };
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  const runYoutubeSearch = async (searchQuery) => {
+    if (!searchQuery.trim()) return;
 
     const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
-    const match = query.match(ytRegex);
+    const match = searchQuery.match(ytRegex);
     if (match) {
       const videoId = match[1];
       onSelectResult({
@@ -53,13 +107,12 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         title: 'URL 직접 입력 영상 (분석 중...)',
         channelTitle: '알 수 없음'
       });
-      setQuery('');
       return;
     }
 
     setIsSearching(true);
     try {
-      const response = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(query)}`));
+      const response = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(searchQuery)}`));
       if (!response.ok) throw new Error('Network error');
       const data = await response.json();
       setResults(data);
@@ -72,7 +125,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     }
   };
 
-  const handleFileSelect = (e) => {
+  const handleFileSelect = (e, songbookContext = null) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
     const isSupportedMedia = file.type.startsWith('audio/') || file.type === 'video/mp4';
@@ -84,7 +137,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       alert('오류: 200MB 이하의 오디오/MP4 파일만 업로드할 수 있습니다.');
         return;
       }
-      onLocalFileDrop(file);
+      onLocalFileDrop(file, songbookContext);
     }
   };
 
@@ -92,6 +145,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0];
     if (file) handleFileSelect({ target: { files: [file] } });
+  };
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    runYoutubeSearch(query);
   };
 
   const selectYoutubeResult = (video) => {
@@ -110,44 +168,73 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     onSelectResult(video);
   };
 
-  const selectSongbookSong = async (song, platform, youtubeId) => {
-    if (youtubeId) {
-      onSelectResult({
-        id: youtubeId,
-        title: song.title,
-        channelTitle: song.artist,
-        src: youtubeId,
-        tags: song.tags,
-        source: platform,
-        songbookId: song.id,
-        skipAiTitleExtraction: true
-      });
+  const stageSongbookMr = (song, platform, mrId, mrVerified = false) => {
+    onSelectResult({
+      id: mrId,
+      title: song.title,
+      channelTitle: song.artist,
+      src: mrId,
+      tags: song.tags,
+      source: platform,
+      songbookId: song.id,
+      mrVerified,
+      skipAiTitleExtraction: true
+    });
+  };
+
+  const startSongbookMrSearch = (song, platform) => {
+    const tagQuery = Array.isArray(song.tags) ? song.tags.filter(Boolean).join(' ') : '';
+    const searchQuery = [song.artist, song.title, tagQuery].filter(Boolean).join(' ').trim();
+    setPendingSongbookMatch({ title: song.title, source: platform, songbookId: song.id, tags: song.tags || [] });
+    setQuery(searchQuery);
+    setResults([]);
+    handleTabChange('youtube');
+    runYoutubeSearch(searchQuery);
+  };
+
+  const chooseSongbookUpload = (song, platform) => {
+    setSongbookUploadContext({
+      title: song.title,
+      artist: song.artist || '',
+      tags: song.tags || [],
+      source: platform,
+      songbookId: song.id
+    });
+    fileInputRef.current?.click();
+  };
+
+  const selectSongbookSong = async (song, platform, youtubeId, cachedMr) => {
+    if (cachedMr?.mrId) {
+      stageSongbookMr(song, platform, cachedMr.mrId, true);
       return;
     }
 
+    // A quick row click can beat the list's batch cache request.  Resolve that
+    // race here so a confirmed MR is never hidden behind a fresh search.
     try {
       const response = await fetch(apiUrl(`/api/title-cache?kind=${encodeURIComponent(`songbook:${platform}`)}&id=${encodeURIComponent(song.id)}`));
       const data = await response.json();
       if (data.cached?.mrId) {
-        onSelectResult({
-          id: data.cached.mrId,
-          title: data.cached.title || song.title,
-          channelTitle: song.artist,
-          tags: song.tags,
-          source: platform,
-          songbookId: song.id,
-          mrVerified: true,
-          skipAiTitleExtraction: true
-        });
+        const cacheEntry = data.cached;
+        setSharedState((previous) => ({
+          ...previous,
+          songbookMrCache: {
+            ...(previous.songbookMrCache || {}),
+            [songbookCacheKey(platform, song.id)]: cacheEntry
+          }
+        }));
+        stageSongbookMr(song, platform, cacheEntry.mrId, true);
         return;
       }
     } catch {
-      // A cache miss must fall through to the normal MR search flow.
+      // A cache miss must fall through to the normal MR selection flow.
     }
 
-    setPendingSongbookMatch({ title: song.title, source: platform, songbookId: song.id, tags: song.tags || [] });
-    setQuery(`${song.artist} ${song.title}`.trim());
-    handleTabChange('youtube');
+    if (youtubeId) {
+      stageSongbookMr(song, platform, youtubeId, Boolean(song.mrVerified));
+      return;
+    }
+    startSongbookMrSearch(song, platform);
   };
 
   const handleIntegrationConnect = (platform, id) => {
@@ -292,7 +379,6 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         <p style={{ margin: 0, fontWeight: 500 }}>로컬 MR 파일(오디오/MP4) 추가하기</p>
         <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
         <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
-        <input ref={fileInputRef} type="file" accept="audio/*,video/mp4" onChange={handleFileSelect} className="hidden-file-input" />
       </div>
     </>
   );
@@ -406,6 +492,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           )}
           {displaySongs.map(song => {
             const youtubeId = getYouTubeId(song.youtubeUrl);
+            const cacheKey = songbookCacheKey(platform, song.id);
+            const cachedMr = songbookMrCache[cacheKey];
+            const isCheckingCache = cacheLookupKeys[cacheKey];
+            const primaryActionLabel = cachedMr?.mrId
+              ? '저장된 MR 검토'
+              : youtubeId
+                ? '노래책 MR 검토'
+                : 'MR 찾기';
             return (
             <div key={song.id} className="result-item songbook-item" style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0.8rem', gap:'1rem'}}>
               <div style={{flex: 1, minWidth: 0}}>
@@ -418,6 +512,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                     ))}
                   </div>
                 )}
+                <div style={{fontSize:'0.7rem', color: cachedMr?.mrId ? 'var(--eureka-emerald)' : 'var(--text-muted)', marginTop:'0.35rem'}}>
+                  {cachedMr?.mrId ? '저장된 MR 있음' : isCheckingCache ? '저장된 MR 확인 중' : youtubeId ? '노래책 MR 확인 필요' : '저장된 MR 없음'}
+                </div>
                 {youtubeId && (
                   <span style={{fontSize:'0.65rem', color: song.mrVerified ? 'var(--eureka-emerald)' : 'var(--text-muted)'}}>
                     {song.mrVerified ? 'MR 검증됨' : 'MR 재생 확인 필요'}
@@ -428,11 +525,26 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 <button 
                   className="btn-primary" 
                   style={{padding:'0.5rem 1rem', fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'0.4rem', flexShrink: 0}}
-                  onClick={() => selectSongbookSong(song, platform, youtubeId)}
+                  onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
                 >
-                  {youtubeId ? <><Music size={14}/>{song.mrVerified ? '검증된 MR 검토' : 'MR 후보 검토'}</> : <><Search size={14}/>MR 찾기</>}
+                  {cachedMr?.mrId || youtubeId ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>}
                 </button>
-                {!youtubeId && <span style={{fontSize:'0.7rem', color:'var(--text-muted)', textAlign:'center'}}>YouTube MR을 검색합니다</span>}
+                {(cachedMr?.mrId || youtubeId) && (
+                  <button
+                    className="btn-secondary"
+                    style={{padding:'0.4rem 0.7rem', fontSize:'0.75rem'}}
+                    onClick={() => startSongbookMrSearch(song, platform)}
+                  >
+                    다른 MR 찾기
+                  </button>
+                )}
+                <button
+                  className="btn-secondary"
+                  style={{padding:'0.4rem 0.7rem', fontSize:'0.75rem'}}
+                  onClick={() => chooseSongbookUpload(song, platform)}
+                >
+                  MR 업로드
+                </button>
               </div>
             </div>
             );
@@ -511,6 +623,17 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           '가져온 공개 목록에 곡이 없습니다.'
         )}
       </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="audio/*,video/mp4"
+        onChange={(event) => {
+          handleFileSelect(event, songbookUploadContext);
+          setSongbookUploadContext(null);
+          event.target.value = '';
+        }}
+        className="hidden-file-input"
+      />
     </div>
   );
 }

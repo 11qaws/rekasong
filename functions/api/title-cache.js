@@ -31,7 +31,13 @@ export async function onRequest(context) {
   if (request.method === 'GET') {
     const url = new URL(request.url);
     const kind = url.searchParams.get('kind') || '';
-    const id = url.searchParams.get('id') || '';
+    const ids = [...new Set(url.searchParams.getAll('id').map((id) => id.trim()).filter(Boolean))].slice(0, 100);
+    if (ids.length > 1) {
+      const pairs = await Promise.all(ids.map(async (id) => [id, await getCachedTitle(env, kind, id)]));
+      const entries = Object.fromEntries(pairs.filter(([, cached]) => cached));
+      return new Response(JSON.stringify({ entries }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    const id = ids[0] || '';
     const cached = await getCachedTitle(env, kind, id);
     return new Response(JSON.stringify({ cached }), { headers: { 'Content-Type': 'application/json' } });
   }

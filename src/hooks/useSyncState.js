@@ -15,6 +15,9 @@ const defaultState = {
   youtubePlaylistCatalog: [],
   youtubePlaylistSourceUrl: '',
   youtubePlaylistCatalogMeta: null,
+  // Streamer-confirmed songbook → MR mappings.  This mirrors the durable
+  // cache so the songbook can immediately show which songs are ready to use.
+  songbookMrCache: {},
   activeIntegrationTab: 'youtube',
   autoPlayNext: false
 };
@@ -53,6 +56,9 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     youtubePlaylistCatalog: Array.isArray(source.youtubePlaylistCatalog) ? source.youtubePlaylistCatalog : [],
     youtubePlaylistSourceUrl: typeof source.youtubePlaylistSourceUrl === 'string' ? source.youtubePlaylistSourceUrl : '',
     youtubePlaylistCatalogMeta: source.youtubePlaylistCatalogMeta && typeof source.youtubePlaylistCatalogMeta === 'object' ? source.youtubePlaylistCatalogMeta : null,
+    songbookMrCache: source.songbookMrCache && typeof source.songbookMrCache === 'object' && !Array.isArray(source.songbookMrCache)
+      ? source.songbookMrCache
+      : {},
     activeIntegrationTab: ['youtube', 'meloming', 'setlink', 'youtube-playlist'].includes(source.activeIntegrationTab)
       ? source.activeIntegrationTab
       : defaultState.activeIntegrationTab,

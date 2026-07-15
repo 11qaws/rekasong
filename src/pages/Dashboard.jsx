@@ -13,6 +13,8 @@ import SongComposer from '../components/SongComposer';
 import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
 
+const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
+
 export default function Dashboard() {
   const [state, setSharedState] = useSyncState();
   const currentSong = state?.currentSong;
@@ -243,7 +245,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleLocalFileDrop = (file) => {
+  const handleLocalFileDrop = (file, songbookContext = null) => {
     cancelAiExtraction();
     const url = URL.createObjectURL(file);
     const stagingId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -252,8 +254,12 @@ export default function Dashboard() {
       type: 'local',
       src: url,
       mediaType: file.type === 'video/mp4' ? 'video' : 'audio',
-      title: file.name,
-      artist: '',
+      title: songbookContext?.title || file.name,
+      artist: songbookContext?.artist || '',
+      tags: songbookContext?.tags || [],
+      source: songbookContext?.source || 'local',
+      songbookId: songbookContext?.songbookId || null,
+      skipAiTitleExtraction: Boolean(songbookContext),
       file: file,
       localCacheKey: `${file.name}:${file.size}:${file.lastModified}`,
       assetStatus: useOnAirPlayer ? 'uploading' : 'local',
@@ -281,7 +287,7 @@ export default function Dashboard() {
     // Try parsing tags for better alias
     jsmediatags.read(file, {
       onSuccess: (tag) => {
-        if (tag.tags.title) {
+        if (tag.tags.title && !songbookContext) {
           metadata = tag.tags;
           setStagedItem(prev => {
             if (!prev || prev.stagingId !== stagingId) return prev;
@@ -293,6 +299,10 @@ export default function Dashboard() {
           });
         }
         
+        if (songbookContext) {
+          setAiStatus('노래책에 등록된 곡명을 그대로 사용합니다.');
+          return;
+        }
         runAiExtractionStream(apiUrl('/api/extract-local'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -301,6 +311,10 @@ export default function Dashboard() {
       },
       onError: (error) => {
         console.log('No ID3 tags found:', error.type);
+        if (songbookContext) {
+          setAiStatus('노래책에 등록된 곡명을 그대로 사용합니다.');
+          return;
+        }
         runAiExtractionStream(apiUrl('/api/extract-local'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -401,18 +415,33 @@ export default function Dashboard() {
       }).catch(() => {});
     }
 
+    const confirmedSongbookMr = newSong.type === 'youtube' && newSong.source !== 'youtube' && newSong.songbookId
+      ? {
+          [songbookCacheKey(newSong.source, newSong.songbookId)]: {
+            title: newSong.title,
+            mrId: newSong.src,
+            updatedAt: Date.now(),
+            source: 'streamer-confirmed'
+          }
+        }
+      : null;
+
     setSharedState(prev => {
+      const songbookMrCache = confirmedSongbookMr
+        ? { ...(prev.songbookMrCache || {}), ...confirmedSongbookMr }
+        : prev.songbookMrCache;
       // If nothing is playing, play immediately
       if (!prev.currentSong) {
         playAudioForSong(newSong);
         showToast('새 곡의 재생을 시작합니다.', 'success');
-        return { ...prev, currentSong: newSong };
+        return { ...prev, songbookMrCache, currentSong: newSong };
       }
       // Otherwise add to queue
       const q = prev.queue || [];
       showToast(insertAtTop ? '대기열 최상단에 곡이 예약되었습니다.' : '대기열 끝에 곡이 예약되었습니다.', 'info');
       return {
         ...prev,
+        songbookMrCache,
         queue: insertAtTop ? [newSong, ...q] : [...q, newSong]
       };
     });
