@@ -52,7 +52,22 @@ const displayState = (candidate) => {
 
 const preloadSong = (candidate) => {
   if (!candidate || candidate.type !== 'youtube' || !candidate.id || !candidate.src) return null;
-  return { id: String(candidate.id), type: 'youtube', src: String(candidate.src), status: 'preparing' };
+  return {
+    id: String(candidate.id),
+    type: 'youtube',
+    src: String(candidate.src),
+    status: 'preparing',
+    detail: { phase: '대기 중', position: 0 }
+  };
+};
+
+const preloadDetail = (candidate) => {
+  const source = candidate && typeof candidate === 'object' ? candidate : {};
+  const position = Number(source.position);
+  return {
+    phase: String(source.phase || '').slice(0, 48),
+    position: Number.isFinite(position) ? Math.max(0, Math.round(position * 10) / 10) : 0
+  };
 };
 
 const preloadSongs = (candidates) => {
@@ -300,7 +315,9 @@ export class SessionRoom {
       const songId = String(event.songId || '');
       const preloads = Array.isArray(session.preloads) ? session.preloads : [];
       if (preloads.some((song) => song.id === songId) && allowed.has(event.status)) {
-        session.preloads = preloads.map((song) => song.id === songId ? { ...song, status: event.status } : song);
+        session.preloads = preloads.map((song) => song.id === songId
+          ? { ...song, status: event.status, detail: preloadDetail(event.detail) }
+          : song);
         await this.ctx.storage.put('session', session);
         this.broadcast({ type: 'preload_state', preloads: session.preloads }, 'control');
       }

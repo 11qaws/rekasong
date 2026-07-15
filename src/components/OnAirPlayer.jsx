@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import YouTube from 'react-youtube';
 
-const PREPARED_AT_SECONDS = 0.08;
+const PREPARED_AT_SECONDS = 1.5;
+const PREPARED_STABLE_FOR_MS = 650;
+const PREPARED_MIN_ADVANCE_SECONDS = 0.45;
 const PREPARE_TIMEOUT_MS = 90_000;
 
 const websocketUrl = (baseUrl, path) => {
@@ -63,10 +65,10 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     }
   };
 
-  const reportPreloadStatus = (slotId, status) => {
+  const reportPreloadStatus = (slotId, status, detail = {}) => {
     const slot = slotRefs.current.get(slotId);
     if (!slot?.song?.id) return;
-    sendEvent({ type: 'preload_status', songId: slot.song.id, status, sessionId: undefined });
+    sendEvent({ type: 'preload_status', songId: slot.song.id, status, detail, sessionId: undefined });
   };
 
   const updateActiveStatus = (type, position, duration) => {
@@ -85,6 +87,9 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     if (prepTimersRef.current.has(slotId)) return;
 
     const startedAt = Date.now();
+    let timelineCandidateAt = 0;
+    let timelineCandidatePosition = 0;
+    let lastProbeReportedAt = 0;
     const timer = window.setInterval(() => {
       const slot = slotRefs.current.get(slotId);
       const player = playerRefs.current.get(slotId);
@@ -94,29 +99,50 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
       }
 
       const position = Number(player.getCurrentTime?.() || 0);
+      const now = Date.now();
+      if (purpose === 'standby' && now - lastProbeReportedAt >= 1000) {
+        lastProbeReportedAt = now;
+        reportPreloadStatus(slotId, 'preparing', { phase: '곡 시간 확인', position });
+      }
       if (position >= PREPARED_AT_SECONDS) {
+        if (!timelineCandidateAt) {
+          timelineCandidateAt = now;
+          timelineCandidatePosition = position;
+          return;
+        }
+        if (now - timelineCandidateAt < PREPARED_STABLE_FOR_MS || position - timelineCandidatePosition < PREPARED_MIN_ADVANCE_SECONDS) return;
+
         clearPreparationWatch(slotId);
         if (purpose === 'standby') {
           player.pauseVideo?.();
           player.seekTo?.(0, true);
           setSlot(slotId, { ...slot, mode: 'ready', prepared: true });
-          reportPreloadStatus(slotId, 'ready');
+          reportPreloadStatus(slotId, 'ready', { phase: '곡 시간 확인 완료', position });
           return;
         }
 
+        // The direct-play fallback uses the same verification, then rewinds to
+        // the beginning before opening the output volume. This keeps the song
+        // intro intact while a not-yet-prepared item remains silent.
+        player.pauseVideo?.();
+        player.seekTo?.(0, true);
         player.unMute?.();
         player.setVolume?.(Math.max(0, Math.min(100, Number(transportRef.current.volume) || 0)));
         setSlot(slotId, { ...slot, prepared: true });
-        updateActiveStatus('playing', position, Number(player.getDuration?.() || 0));
+        player.playVideo?.();
+        updateActiveStatus('playing', 0, Number(player.getDuration?.() || 0));
         return;
       }
 
-      if (Date.now() - startedAt >= PREPARE_TIMEOUT_MS) {
+      timelineCandidateAt = 0;
+      timelineCandidatePosition = 0;
+
+      if (now - startedAt >= PREPARE_TIMEOUT_MS) {
         clearPreparationWatch(slotId);
         if (purpose === 'standby') {
           player.pauseVideo?.();
           setSlot(slotId, { ...slot, mode: 'failed', prepared: false });
-          reportPreloadStatus(slotId, 'failed');
+          reportPreloadStatus(slotId, 'failed', { phase: '90초 동안 곡 시간 없음', position });
         } else {
           player.pauseVideo?.();
           sendEvent({ type: 'error', message: '곡 재생 준비 시간이 초과되었습니다.' });
@@ -323,7 +349,7 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
       event.target.mute?.();
       event.target.setVolume?.(0);
       event.target.playVideo?.();
-      reportPreloadStatus(slotId, 'preparing');
+      reportPreloadStatus(slotId, 'preparing', { phase: 'iframe 준비됨', position: 0 });
     }
   };
 
@@ -332,6 +358,9 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     if (!slot) return;
 
     if (slot.mode === 'preparing') {
+      const position = Number(event.target.getCurrentTime?.() || 0);
+      const phase = { 0: '종료 신호', 1: '재생 신호', 2: '일시정지 신호', 3: '버퍼링 신호' }[event.data] || `상태 ${event.data}`;
+      reportPreloadStatus(slotId, 'preparing', { phase, position });
       if (event.data === 1) startPreparationWatch(slotId, 'standby');
       return;
     }
@@ -358,7 +387,7 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     if (!slot) return;
     if (slot.mode === 'preparing') {
       setSlot(slotId, { ...slot, mode: 'failed', prepared: false });
-      reportPreloadStatus(slotId, 'failed');
+      reportPreloadStatus(slotId, 'failed', { phase: `YouTube 오류 ${event.data}`, position: 0 });
       return;
     }
     if (slot.mode === 'active') sendEvent({ type: 'error', message: `YouTube 재생 오류 (${event.data})` });

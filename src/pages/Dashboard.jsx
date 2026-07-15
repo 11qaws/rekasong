@@ -220,7 +220,7 @@ export default function Dashboard() {
     .filter((song) => song?.type === 'youtube' && song?.id && song?.src)
     .slice(0, PRELOAD_POOL_SIZE), [state?.queue]);
   const preloadSignature = preloadCandidates.map((song) => `${song.id}:${song.src}`).join('|');
-  const preparationBySongId = useMemo(() => Object.fromEntries(preloadStates.map((song) => [song.id, song.status])), [preloadStates]);
+  const preparationBySongId = useMemo(() => Object.fromEntries(preloadStates.map((song) => [song.id, song])), [preloadStates]);
 
   useEffect(() => {
     if (!useOnAirPlayer || onAirConnectionState !== 'connected') return;
@@ -233,7 +233,8 @@ export default function Dashboard() {
         id: song.id,
         type: 'youtube',
         src: song.src,
-        status: previous.find((item) => item.id === song.id)?.status || 'preparing'
+        status: previous.find((item) => item.id === song.id)?.status || 'preparing',
+        detail: previous.find((item) => item.id === song.id)?.detail || { phase: '준비 요청', position: 0 }
       })));
     } catch {
       // The worker persists the pool and sends it to a reconnected player.

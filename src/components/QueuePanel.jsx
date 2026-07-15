@@ -37,7 +37,8 @@ export default function QueuePanel({ queue, history, preparationBySongId = {}, o
         ) : (
           <AnimatePresence initial={false}>
             {queue.map((song, index) => {
-              const preparation = song.type === 'youtube' ? (preparationBySongId[song.id] || 'queued') : null;
+              const preparationItem = song.type === 'youtube' ? preparationBySongId[song.id] : null;
+              const preparation = preparationItem?.status || (song.type === 'youtube' ? 'queued' : null);
               const readiness = preparation === 'ready'
                 ? { label: '준비됨', icon: CircleCheck }
                 : preparation === 'preparing'
@@ -46,6 +47,12 @@ export default function QueuePanel({ queue, history, preparationBySongId = {}, o
                     ? { label: '준비 실패', icon: Clock3 }
                     : { label: '대기', icon: Clock3 };
               const ReadinessIcon = readiness.icon;
+              const probeTime = preparation === 'preparing' && Number.isFinite(preparationItem?.detail?.position)
+                ? ` ${preparationItem.detail.position.toFixed(1)}초`
+                : '';
+              const readinessTitle = preparation === 'queued'
+                ? '풀에 들어오면 준비를 시작합니다.'
+                : `${preparationItem?.detail?.phase || '상태를 기다리는 중'}${preparation === 'preparing' ? ` · ${preparationItem?.detail?.position?.toFixed?.(1) || '0.0'}초` : ''}`;
               return (
               <motion.div
                 key={song.id || index}
@@ -62,7 +69,7 @@ export default function QueuePanel({ queue, history, preparationBySongId = {}, o
               >
                 <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                 <strong>{song.title}</strong>
-                {song.type === 'youtube' && <span className={`queue-readiness is-${preparation}`} title={preparation === 'queued' ? '풀에 들어오면 준비를 시작합니다.' : `YouTube ${readiness.label}`}><ReadinessIcon size={13} /> {readiness.label}</span>}
+                {song.type === 'youtube' && <span className={`queue-readiness is-${preparation}`} title={readinessTitle}><ReadinessIcon size={13} /> {readiness.label}{probeTime}</span>}
                 <button type="button" onClick={() => onPlayQueueItem(song.id)} className="queue-play-action" title="이 곡을 바로 현재 재생으로 가져오기"><Play size={14} /> 바로 재생</button>
                 <button type="button" onClick={() => onRemoveFromQueue(song.id)} className="btn-icon btn-icon-danger" title="대기열에서 제거"><X size={15} /></button>
               </motion.div>
