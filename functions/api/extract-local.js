@@ -1,4 +1,4 @@
-import { extractSongTitle, selectGeminiApiKey } from './gemini.js';
+import { extractSongTitle, isFallbackGeminiKey, selectGeminiApiKey } from './gemini.js';
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -8,8 +8,8 @@ export async function onRequest(context) {
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
 
-  const sendEvent = async (status, title = null, error = null) => {
-    const payload = JSON.stringify({ status, title, error });
+  const sendEvent = async (status, title = null, error = null, mode = null) => {
+    const payload = JSON.stringify({ status, title, error, mode });
     await writer.write(encoder.encode(`data: ${payload}\n\n`));
   };
 
@@ -25,8 +25,9 @@ export async function onRequest(context) {
       const { filename = '', metadata = {}, audioBase64 = '', audioMimeType = 'audio/mp3' } = body;
 
       const apiKey = selectGeminiApiKey(env);
+      const isFallback = isFallbackGeminiKey(apiKey);
 
-      await sendEvent("AI가 음원과 메타데이터를 분석 중...");
+      await sendEvent(isFallback ? "기본 규칙으로 파일명을 정리 중..." : "AI가 음원과 메타데이터를 분석 중...");
 
       const prompt = `너는 버튜버(VTuber) 스트리머의 노래방 방송을 돕는 일류 비서이자 서브컬처 음악 전문가야.
 너는 기본적으로 애니메송, OST, 보컬로이드(Vocaloid), J-POP, 우타이테, 동인 음악 등 '서브컬처 노래'에 대한 매우 강한 편향(Bias)과 깊은 지식을 가지고 있어. 제목이 모호한 상황이라면 서브컬처 곡을 최우선으로 가정하고 분석해.
@@ -53,6 +54,9 @@ export async function onRequest(context) {
    (단, '아이돌(アイドル)', 'KICK BACK'처럼 번역이 필요 없거나 원어 발음 그대로 한국에서도 쓰이는 초유명 곡은 검색 생략 가능)
 7. 추론 과정, 출처, 부연 설명은 응답에 포함하지 말고 최종 곡명만 작성해.
 
+[출력 전 필수 검증]
+- final_title은 파일명 전체를 그대로 복사하면 안 돼. 아티스트, MR/inst, 작품명, 버전·가사 표기를 제거한 순수 곡명 하나만 남겨.
+
 반드시 아래 JSON 형식으로만 응답해:
 {
   "final_title": "최종 추출된 순수 곡명 단 하나"
@@ -63,11 +67,17 @@ export async function onRequest(context) {
       const extractedTitle = await extractSongTitle({
         apiKey,
         prompt,
+        fallbackTitle: metadata.title || filename,
         audioBase64,
         audioMimeType
       });
 
-      await sendEvent("완료", extractedTitle);
+      await sendEvent(
+        isFallback ? "Gemini 키가 없어 기본 규칙으로 제목을 정리했습니다." : "완료",
+        extractedTitle,
+        null,
+        isFallback ? 'fallback' : 'ai'
+      );
 
     } catch (error) {
       await sendEvent("에러", null, error.message);

@@ -51,7 +51,11 @@ export function useAiTitleExtraction(setStagedItem) {
                 if (!prev || prev.stagingId !== stagingId || prev.isTitleEdited) return prev;
                 return { ...prev, title: data.title.trim() };
               });
-              setAiStatusMessage('AI 제목 정리 완료');
+              setAiStatusMessage(
+                data.mode === 'fallback'
+                  ? '기본 제목 정리 완료 · AI 분석을 사용하려면 Gemini 키를 연결하세요.'
+                  : 'AI 제목 정리 완료'
+              );
             } else if (data.error || data.status === 'error') {
               console.error(data.error || data.status);
               setAiStatusMessage('AI 분석에 실패했습니다. 직접 수정할 수 있어요.');

@@ -1,4 +1,4 @@
-import { extractSongTitle, selectGeminiApiKey } from './gemini.js';
+import { extractSongTitle, isFallbackGeminiKey, selectGeminiApiKey } from './gemini.js';
 
 function decodeHtmlEntities(value) {
   return String(value || '')
@@ -19,8 +19,8 @@ export async function onRequest(context) {
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
 
-  const sendEvent = async (status, title = null, error = null) => {
-    const payload = JSON.stringify({ status, title, error });
+  const sendEvent = async (status, title = null, error = null, mode = null) => {
+    const payload = JSON.stringify({ status, title, error, mode });
     await writer.write(encoder.encode(`data: ${payload}\n\n`));
   };
 
@@ -30,12 +30,8 @@ export async function onRequest(context) {
 
       await sendEvent("유튜브 영상 정보 분석 중...");
       
-      let apiKey = null;
-      try {
-        apiKey = selectGeminiApiKey(env);
-      } catch {
-        // Without a Gemini secret, use deterministic title cleanup below.
-      }
+      const apiKey = selectGeminiApiKey(env);
+      const isFallback = isFallbackGeminiKey(apiKey);
 
       let ytTitle = '';
       let ytDescription = '';
@@ -92,16 +88,25 @@ export async function onRequest(context) {
    (단, '아이돌(アイドル)', 'KICK BACK'처럼 번역이 필요 없거나 원어 발음 그대로 한국에서도 쓰이는 초유명 곡은 검색 생략 가능)
 7. 추론 과정, 출처, 부연 설명은 응답에 포함하지 말고 최종 곡명만 작성해.
 
+[출력 전 필수 검증]
+- final_title은 영상 제목을 그대로 복사하면 안 돼. 채널명, MV, 애니메이션/작품명, 가사·버전 표기 중 하나라도 포함된 경우 다시 분리해.
+- 예를 들어 `林明日香 MV「小さきもの」七夜の願い星ジラーチ (歌詞あり)`의 final_title은 `작은 존재`처럼 순수 곡명 하나여야 해.
+
 반드시 아래 JSON 형식으로만 응답해:
 {
   "final_title": "최종 추출된 순수 곡명 단 하나"
 }`;
 
-      await sendEvent("한국어 번역명 찾는 중...");
+      await sendEvent(isFallback ? "기본 규칙으로 곡명을 정리 중..." : "한국어 번역명 찾는 중...");
 
-      const extractedTitle = await extractSongTitle({ apiKey, prompt });
+      const extractedTitle = await extractSongTitle({ apiKey, prompt, fallbackTitle: ytTitle });
 
-      await sendEvent("완료", extractedTitle);
+      await sendEvent(
+        isFallback ? "Gemini 키가 없어 기본 규칙으로 제목을 정리했습니다." : "완료",
+        extractedTitle,
+        null,
+        isFallback ? 'fallback' : 'ai'
+      );
 
     } catch (error) {
       await sendEvent("에러", null, error.message);
