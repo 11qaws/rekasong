@@ -40,9 +40,9 @@ function parseJsonResponse(text) {
 
 export async function extractSongTitle({ apiKey, prompt, audioBase64 = '', audioMimeType = 'audio/mp3' }) {
   if (apiKey === FALLBACK_KEY) {
-    const titleMatch = prompt.match(/Title\)\s*:\s*"([^"]+)"/i);
+    const titleMatch = prompt.match(/Title\)\s*:\s*"([^"]*)"/i);
     const firstQuotedValue = prompt.match(/"([^"]{2,})"/);
-    return cleanTitle(titleMatch?.[1] || firstQuotedValue?.[1]);
+    return cleanTitle(titleMatch ? titleMatch[1] : firstQuotedValue?.[1]);
   }
 
   const input = [{ type: 'text', text: prompt }];

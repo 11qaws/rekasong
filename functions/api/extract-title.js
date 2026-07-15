@@ -1,5 +1,14 @@
 import { extractSongTitle, selectGeminiApiKey } from './gemini.js';
 
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -38,13 +47,24 @@ export async function onRequest(context) {
         });
         const html = await ytRes.text();
 
-        const titleMatch = html.match(/<meta name="title" content="([^"]+)">/i);
+        const titleMatch = html.match(/<meta name="title" content="([^"]*)">/i);
+        const ogTitleMatch = html.match(/<meta property="og:title" content="([^"]*)">/i);
+        const pageTitleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
         const descMatch = html.match(/<meta name="description" content="([^"]+)">/i);
         const authorMatch = html.match(/<link itemprop="name" content="([^"]+)">/i);
 
-        ytTitle = titleMatch ? titleMatch[1] : '';
+        ytTitle = decodeHtmlEntities(titleMatch?.[1] || ogTitleMatch?.[1] || pageTitleMatch?.[1] || '');
         ytDescription = descMatch ? descMatch[1] : '';
         ytAuthor = authorMatch ? authorMatch[1] : '';
+
+        if (!ytTitle || /^https?:\/\/www\.youtube\.com\/watch/i.test(ytTitle)) {
+          const oembedResponse = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`);
+          if (oembedResponse.ok) {
+            const oembed = await oembedResponse.json();
+            ytTitle = decodeHtmlEntities(oembed.title || ytTitle);
+            ytAuthor = decodeHtmlEntities(oembed.author_name || ytAuthor);
+          }
+        }
       } catch (err) {
         console.error('Failed to fetch YouTube page', err);
       }
