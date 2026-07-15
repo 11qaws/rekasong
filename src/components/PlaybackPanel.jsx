@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import { AlertOctagon, Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, Settings, SkipForward, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 
 export default function PlaybackPanel({
-  room,
-  publicKeyB64,
   currentSong,
   isPlaying,
   onTogglePlay,
@@ -16,18 +14,22 @@ export default function PlaybackPanel({
   setSharedState,
   showToast,
   onAirPlayerUrl,
+  onAirDisplayUrl,
   onAirStatus,
   onEndBroadcastSession,
-  onPrepareOnAir
+  onPrepareOnAir,
+  onPrepareOnAirDisplay
 }) {
   const [panicArmed, setPanicArmed] = useState(false);
   const [previousVolume, setPreviousVolume] = useState(100);
   const [isObsSetupOpen, setIsObsSetupOpen] = useState(false);
   const [isPreparingPlayer, setIsPreparingPlayer] = useState(false);
   const [preparedPlayerUrl, setPreparedPlayerUrl] = useState('');
-  const widgetUrl = `${window.location.origin}${window.location.pathname}#/widget?room=${room}&key=${encodeURIComponent(publicKeyB64 || '')}`;
+  const [isPreparingDisplay, setIsPreparingDisplay] = useState(false);
+  const [preparedDisplayUrl, setPreparedDisplayUrl] = useState('');
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
+  const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
 
   const formatTime = (seconds) => {
     if (!seconds || Number.isNaN(seconds)) return '0:00';
@@ -64,6 +66,27 @@ export default function PlaybackPanel({
   const copyPlayerUrl = async () => {
     const url = await preparePlayer();
     if (url) copyUrl(url, 'OBS On-Air 플레이어 주소를 복사했습니다.');
+  };
+
+  const prepareDisplay = async () => {
+    if (displayUrl) return displayUrl;
+    if (!onPrepareOnAirDisplay) return '';
+    setIsPreparingDisplay(true);
+    try {
+      const url = await onPrepareOnAirDisplay();
+      setPreparedDisplayUrl(url || '');
+      return url;
+    } catch (error) {
+      showToast?.(error.message || '화면 정보 위젯을 준비하지 못했습니다.', 'error');
+      return '';
+    } finally {
+      setIsPreparingDisplay(false);
+    }
+  };
+
+  const copyDisplayUrl = async () => {
+    const url = await prepareDisplay();
+    if (url) copyUrl(url, 'OBS 화면 정보 위젯 주소를 복사했습니다.');
   };
 
   const toggleMute = () => {
@@ -150,7 +173,7 @@ export default function PlaybackPanel({
               <button type="button" className="btn-icon" onClick={() => setIsObsSetupOpen(false)} aria-label="닫기"><X size={18} /></button>
             </header>
 
-            <p className="obs-setup-intro">방송 중에는 이 창을 열 필요가 없습니다. 화면 표시는 무음 위젯으로, 노래 소리는 On-Air 플레이어 하나로만 OBS에 넣습니다.</p>
+            <p className="obs-setup-intro">화면 정보와 재생은 같은 방송 세션으로 연결됩니다. 화면 정보 위젯은 무음으로, 오디오는 선택한 재생기 소스에서만 OBS에 넣습니다.</p>
 
             <ol className="obs-setup-steps">
               <li>
@@ -158,7 +181,9 @@ export default function PlaybackPanel({
                 <div>
                   <strong>화면 정보 위젯</strong>
                   <p>OBS 브라우저 소스로 추가하고, 오디오는 끕니다.</p>
-                  <button type="button" onClick={() => copyUrl(widgetUrl, 'OBS 화면 위젯 주소를 복사했습니다.')} className="btn-copy"><Copy size={14} /> 주소 복사</button>
+                  <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay || onAirStatus === 'unconfigured'}>
+                    {isPreparingDisplay ? '준비 중…' : <><Copy size={14} /> {displayUrl ? '주소 복사' : '위젯 준비 후 주소 복사'}</>}
+                  </button>
                 </div>
               </li>
               <li>

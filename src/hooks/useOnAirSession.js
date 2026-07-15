@@ -150,10 +150,34 @@ export function useOnAirSession(onEvent) {
     ? `${window.location.origin}${window.location.pathname}#/widget?mode=player&session=${encodeURIComponent(session.room)}&token=${encodeURIComponent(session.playerToken)}&api=${encodeURIComponent(SESSION_BASE_URL)}`
     : '';
 
+  const displayUrl = session?.displayToken && SESSION_BASE_URL
+    ? `${window.location.origin}${window.location.pathname}#/widget?mode=display&session=${encodeURIComponent(session.room)}&token=${encodeURIComponent(session.displayToken)}&api=${encodeURIComponent(SESSION_BASE_URL)}`
+    : '';
+
   const preparePlayer = useCallback(async () => {
     const activeSession = await ensureSession();
     return `${window.location.origin}${window.location.pathname}#/widget?mode=player&session=${encodeURIComponent(activeSession.room)}&token=${encodeURIComponent(activeSession.playerToken)}&api=${encodeURIComponent(SESSION_BASE_URL)}`;
   }, [ensureSession]);
+
+  const issueDisplayToken = useCallback(async (activeSession) => {
+    const response = await fetch(`${SESSION_BASE_URL}/v1/sessions/${encodeURIComponent(activeSession.room)}/display-token`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${activeSession.controlToken}` }
+    });
+    const data = await response.json();
+    if (!response.ok || !data.displayToken) throw new Error(data.error || '화면 정보 위젯 토큰을 만들지 못했습니다.');
+
+    const upgradedSession = { ...activeSession, displayToken: data.displayToken };
+    persistSession(upgradedSession);
+    setSession(upgradedSession);
+    return upgradedSession;
+  }, []);
+
+  const prepareDisplay = useCallback(async () => {
+    let activeSession = await ensureSession();
+    if (!activeSession.displayToken) activeSession = await issueDisplayToken(activeSession);
+    return `${window.location.origin}${window.location.pathname}#/widget?mode=display&session=${encodeURIComponent(activeSession.room)}&token=${encodeURIComponent(activeSession.displayToken)}&api=${encodeURIComponent(SESSION_BASE_URL)}`;
+  }, [ensureSession, issueDisplayToken]);
 
   return {
     configured: Boolean(SESSION_BASE_URL),
@@ -161,7 +185,9 @@ export function useOnAirSession(onEvent) {
     transport,
     session,
     playerUrl,
+    displayUrl,
     preparePlayer,
+    prepareDisplay,
     ensureSession,
     sendCommand,
     uploadAsset,

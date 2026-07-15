@@ -29,6 +29,26 @@ const parseBearer = (request) => request.headers.get('Authorization')?.replace(/
 
 const assetKey = (room, assetId) => `sessions/${room}/${assetId}`;
 
+const displaySong = (song) => {
+  if (!song || typeof song !== 'object' || !song.id || !song.title) return null;
+  const type = song.type === 'youtube' ? 'youtube' : 'local';
+  return {
+    id: String(song.id),
+    title: String(song.title).slice(0, 240),
+    type,
+    src: type === 'youtube' && song.src ? String(song.src) : '',
+    tags: Array.isArray(song.tags) ? song.tags.map((tag) => String(tag).slice(0, 48)).slice(0, 8) : []
+  };
+};
+
+const displayState = (candidate) => {
+  const source = candidate && typeof candidate === 'object' ? candidate : {};
+  return {
+    currentSong: displaySong(source.currentSong),
+    history: Array.isArray(source.history) ? source.history.map(displaySong).filter(Boolean).slice(-100) : []
+  };
+};
+
 const mediaResponse = (object) => {
   const headers = new Headers(corsHeaders);
   object.writeHttpMetadata(headers);
@@ -53,23 +73,31 @@ export default {
       const room = crypto.randomUUID();
       const controlToken = randomToken();
       const playerToken = randomToken();
+      const displayToken = randomToken();
       const id = env.SESSION_ROOM.idFromName(room);
       const stub = env.SESSION_ROOM.get(id);
       const initRequest = new Request('https://session.internal/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room, controlToken, playerToken })
+        body: JSON.stringify({ room, controlToken, playerToken, displayToken })
       });
       const result = await stub.fetch(initRequest);
       if (!result.ok) return result;
-      return json({ room, controlToken, playerToken });
+      return json({ room, controlToken, playerToken, displayToken });
     }
 
-    const routeMatch = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]+)\/(ws|assets|media)(?:\/([^/]+))?$/i);
+    const routeMatch = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]+)\/(ws|assets|media|display-token)(?:\/([^/]+))?$/i);
     if (!routeMatch) return json({ error: 'Not found' }, 404);
 
-    const [, room] = routeMatch;
+    const [, room, route] = routeMatch;
     const id = env.SESSION_ROOM.idFromName(room);
+    if (route === 'display-token') {
+      const internalRequest = new Request('https://session.internal/display-token', {
+        method: request.method,
+        headers: request.headers
+      });
+      return env.SESSION_ROOM.get(id).fetch(internalRequest);
+    }
     return env.SESSION_ROOM.get(id).fetch(request);
   }
 };
@@ -84,6 +112,7 @@ export class SessionRoom {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/init') return this.initialize(request);
     if (url.pathname.endsWith('/ws')) return this.openSocket(request);
+    if ((url.pathname === '/display-token' || url.pathname.endsWith('/display-token')) && request.method === 'POST') return this.issueDisplayToken(request);
     if (url.pathname.endsWith('/assets') && request.method === 'POST') return this.uploadAsset(request);
     if (/\/media\/[^/]+$/.test(url.pathname) && request.method === 'GET') return this.streamAsset(request);
     return json({ error: 'Not found' }, 404);
@@ -92,16 +121,18 @@ export class SessionRoom {
   async initialize(request) {
     const existing = await this.ctx.storage.get('session');
     if (existing) return json({ error: 'Session already exists' }, 409);
-    const { room, controlToken, playerToken } = await request.json();
-    if (!room || !controlToken || !playerToken) return json({ error: 'Invalid session setup' }, 400);
+    const { room, controlToken, playerToken, displayToken } = await request.json();
+    if (!room || !controlToken || !playerToken || !displayToken) return json({ error: 'Invalid session setup' }, 400);
 
     await this.ctx.storage.put('session', {
       room,
       status: 'active',
       controlHash: await hashToken(controlToken),
       playerHash: await hashToken(playerToken),
+      displayHash: await hashToken(displayToken),
       assets: {},
       transport: { status: 'idle', song: null, sessionId: null, position: 0, volume: 100 },
+      display: { currentSong: null, history: [] },
       endedAt: null,
       cleanupAt: null
     });
@@ -115,9 +146,27 @@ export class SessionRoom {
     return this.ctx.storage.get('session');
   }
 
+  async issueDisplayToken(request) {
+    const session = await this.getSession();
+    const token = parseBearer(request);
+    if (!session || session.status !== 'active' || !(await this.authenticate(session, token, 'control'))) {
+      return json({ error: 'Unauthorized or closed session' }, 401);
+    }
+
+    const displayToken = randomToken();
+    session.displayHash = await hashToken(displayToken);
+    session.display = session.display || { currentSong: null, history: [] };
+    await this.ctx.storage.put('session', session);
+    return json({ displayToken });
+  }
+
   async authenticate(session, token, role) {
     if (!session || !token) return false;
-    const expected = role === 'control' ? session.controlHash : session.playerHash;
+    const expected = role === 'control'
+      ? session.controlHash
+      : role === 'player'
+        ? session.playerHash
+        : session.displayHash;
     return Boolean(expected) && expected === await hashToken(token);
   }
 
@@ -126,7 +175,7 @@ export class SessionRoom {
     const url = new URL(request.url);
     const role = url.searchParams.get('role');
     const token = url.searchParams.get('token') || '';
-    if (!['control', 'player'].includes(role)) return json({ error: 'Invalid socket role' }, 400);
+    if (!['control', 'player', 'display'].includes(role)) return json({ error: 'Invalid socket role' }, 400);
 
     const session = await this.getSession();
     if (!session || session.status !== 'active' || !(await this.authenticate(session, token, role))) {
@@ -140,8 +189,14 @@ export class SessionRoom {
     // The OBS player being back is the only signal that broadcast output is
     // live again. A controller refresh must not keep abandoned media alive.
     if (role === 'player') await this.ctx.storage.deleteAlarm();
-    this.send(server, { type: 'snapshot', transport: session.transport, session: { room: session.room, status: session.status } });
-    this.broadcast({ type: 'presence', role, connected: true }, role === 'player' ? 'control' : 'player');
+    this.send(server, {
+      type: 'snapshot',
+      transport: session.transport,
+      display: session.display || { currentSong: null, history: [] },
+      session: { room: session.room, status: session.status }
+    });
+    if (role === 'player') this.broadcast({ type: 'presence', role, connected: true }, 'control');
+    if (role === 'control') this.broadcast({ type: 'presence', role, connected: true }, 'player');
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -171,6 +226,14 @@ export class SessionRoom {
     if (command.type === 'end_session') {
       await this.endSession(session, 'explicit');
       return this.send(socket, { type: 'command_ack', commandId: command.commandId });
+    }
+
+    if (command.type === 'display_state') {
+      session.display = displayState(command.display);
+      await this.ctx.storage.put('session', session);
+      this.broadcast({ type: 'display_state', display: session.display }, 'display');
+      this.send(socket, { type: 'command_ack', commandId: command.commandId });
+      return;
     }
 
     const nextTransport = { ...session.transport };

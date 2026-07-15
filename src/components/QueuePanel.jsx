@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { ArrowUpCircle, GripVertical, ListMusic, Trash2, X } from 'lucide-react';
+import { ArrowUpCircle, GripVertical, ListMusic, Play, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
-export default function QueuePanel({ queue, history, onRemoveFromQueue, autoPlayNext, setSharedState }) {
+export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFromQueue, autoPlayNext, setSharedState }) {
   const [dragOverIndex, setDragOverIndex] = useState(null);
 
   const moveQueueItem = (event, dropIndex) => {
@@ -52,6 +52,7 @@ export default function QueuePanel({ queue, history, onRemoveFromQueue, autoPlay
               >
                 <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                 <strong>{song.title}</strong>
+                <button type="button" onClick={() => onPlayQueueItem(song.id)} className="queue-play-action" title="이 곡을 바로 현재 재생으로 가져오기"><Play size={14} /> 바로 재생</button>
                 <button type="button" onClick={() => onRemoveFromQueue(song.id)} className="btn-icon btn-icon-danger" title="대기열에서 제거"><X size={15} /></button>
               </motion.div>
             ))}

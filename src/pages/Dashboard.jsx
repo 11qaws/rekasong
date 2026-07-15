@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import YouTube from 'react-youtube';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
@@ -15,12 +15,33 @@ import './Dashboard.css';
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
 
+const toDisplaySong = (song) => {
+  if (!song?.id || !song?.title) return null;
+  const type = song.type === 'youtube' ? 'youtube' : 'local';
+  return {
+    id: String(song.id),
+    title: String(song.title),
+    type,
+    src: type === 'youtube' ? String(song.src || '') : '',
+    tags: Array.isArray(song.tags) ? song.tags : []
+  };
+};
+
+const toDisplayState = (state) => ({
+  currentSong: toDisplaySong(state?.currentSong),
+  history: Array.isArray(state?.history) ? state.history.map(toDisplaySong).filter(Boolean).slice(-100) : []
+});
+
 export default function Dashboard() {
   const [state, setSharedState] = useSyncState();
   const currentSong = state?.currentSong;
+  const history = useMemo(() => Array.isArray(state?.history) ? state.history : [], [state?.history]);
   const onAirEventHandlerRef = useRef(null);
   const onAir = useOnAirSession((payload) => onAirEventHandlerRef.current?.(payload));
   const useOnAirPlayer = onAir.configured;
+  const onAirDisplayToken = onAir.session?.displayToken;
+  const onAirConnectionState = onAir.connectionState;
+  const sendOnAirCommand = onAir.sendCommand;
   
   const [activeVideoId, setActiveVideoId] = useState('');
   const [localAudioSrc, setLocalAudioSrc] = useState(null);
@@ -181,6 +202,15 @@ export default function Dashboard() {
       publishSync(payload, room, signingKeys.privateKey);
     }
   }, [state, room, signingKeys]);
+
+  useEffect(() => {
+    if (!useOnAirPlayer || !onAirDisplayToken || onAirConnectionState !== 'connected') return;
+    try {
+      sendOnAirCommand({ type: 'display_state', display: toDisplayState({ currentSong, history }) });
+    } catch {
+      // The player/session reconnect path will publish the latest display state.
+    }
+  }, [currentSong, history, onAirDisplayToken, onAirConnectionState, sendOnAirCommand, useOnAirPlayer]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -343,12 +373,12 @@ export default function Dashboard() {
     showToast('선택한 곡을 취소했습니다.', 'info');
   };
 
-  const playAudioForSong = (song) => {
+  const playAudioForSong = (song, { stoppingSongId } = {}) => {
     setCurrentTime(0);
     setDuration(0);
     if (useOnAirPlayer) {
       if (!song) {
-        onAir.sendCommand({ type: 'stop', sessionId: currentSong?.id });
+        onAir.sendCommand({ type: 'stop', sessionId: stoppingSongId || currentSong?.id });
         setIsPlaying(false);
         return;
       }
@@ -463,32 +493,62 @@ export default function Dashboard() {
   };
 
   const handlePlayNext = (expectedSongId = null) => {
-    setSharedState(prev => {
-      if (expectedSongId && prev.currentSong?.id !== expectedSongId) {
-        return prev;
-      }
+    const current = state?.currentSong;
+    if (!current || (expectedSongId && current.id !== expectedSongId)) return;
 
-      const current = prev.currentSong;
-      const history = current ? [...(prev.history || []), current] : prev.history || [];
-      const queue = prev.queue || [];
-      
-      if (queue.length > 0) {
-        const nextSong = queue[0];
-        playAudioForSong(nextSong);
-        return {
-          ...prev,
-          currentSong: nextSong,
-          queue: queue.slice(1),
-          history
-        };
-      } else {
-        playAudioForSong(null);
-        return {
-          ...prev,
-          currentSong: null,
-          history
-        };
-      }
+    const queuedSongs = state?.queue || [];
+    const nextSong = queuedSongs[0] || null;
+
+    try {
+      // Keep player I/O outside React's state updater. A failed WebSocket
+      // command must not leave the UI looking as if it skipped successfully.
+      playAudioForSong(nextSong, { stoppingSongId: current.id });
+    } catch (error) {
+      showToast(error.message || '다음 곡으로 넘기지 못했습니다.', 'error');
+      return;
+    }
+
+    setSharedState((previous) => {
+      // Ignore duplicate clicks or a stale end event after the current song
+      // has already changed.
+      if (previous.currentSong?.id !== current.id) return previous;
+
+      const queue = previous.queue || [];
+      const actualNextSong = queue[0] || null;
+      const history = [...(previous.history || []), current];
+      return {
+        ...previous,
+        currentSong: actualNextSong,
+        queue: actualNextSong ? queue.slice(1) : queue,
+        history
+      };
+    });
+  };
+
+  const handlePlayQueuedSong = (songId) => {
+    const selectedSong = (state?.queue || []).find((song) => song.id === songId);
+    if (!selectedSong) return;
+
+    const current = state?.currentSong || null;
+    try {
+      playAudioForSong(selectedSong, { stoppingSongId: current?.id });
+    } catch (error) {
+      showToast(error.message || '선택한 대기열 곡을 재생하지 못했습니다.', 'error');
+      return;
+    }
+
+    setSharedState((previous) => {
+      const queue = previous.queue || [];
+      const selectedIndex = queue.findIndex((song) => song.id === songId);
+      if (selectedIndex < 0) return previous;
+
+      const nextCurrent = queue[selectedIndex];
+      return {
+        ...previous,
+        currentSong: nextCurrent,
+        queue: queue.filter((song) => song.id !== songId),
+        history: previous.currentSong ? [...(previous.history || []), previous.currentSong] : (previous.history || [])
+      };
     });
   };
 
@@ -660,8 +720,10 @@ export default function Dashboard() {
             setSharedState={setSharedState}
             showToast={showToast}
             onAirPlayerUrl={onAir.playerUrl}
+            onAirDisplayUrl={onAir.displayUrl}
             onAirStatus={onAir.connectionState}
             onPrepareOnAir={onAir.preparePlayer}
+            onPrepareOnAirDisplay={onAir.prepareDisplay}
             onEndBroadcastSession={handleEndBroadcastSession}
           />
         </ErrorBoundary>
@@ -671,6 +733,7 @@ export default function Dashboard() {
             <QueuePanel
               queue={state?.queue || []}
               history={state?.history || []}
+              onPlayQueueItem={handlePlayQueuedSong}
               onRemoveFromQueue={handleRemoveFromQueue}
               autoPlayNext={Boolean(state?.autoPlayNext)}
               setSharedState={setSharedState}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useWidgetSync } from '../hooks/useRemoteSync';
 import OnAirPlayer from '../components/OnAirPlayer';
@@ -23,13 +23,41 @@ export default function Widget() {
   const token = searchParams.get('token') || hashParams.get('token') || '';
   const apiBaseUrl = searchParams.get('api') || hashParams.get('api') || '';
 
-  if (mode === 'player') {
-    return <OnAirPlayer apiBaseUrl={apiBaseUrl} room={session} token={token} />;
-  }
-
   useWidgetSync(room, publicKeyB64, (payload) => {
     setState(payload.state);
   });
+
+  useEffect(() => {
+    if (mode !== 'display' || !apiBaseUrl || !session || !token) return undefined;
+
+    let socket;
+    try {
+      const url = new URL(`/v1/sessions/${encodeURIComponent(session)}/ws`, apiBaseUrl);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      url.searchParams.set('role', 'display');
+      url.searchParams.set('token', token);
+      socket = new WebSocket(url.toString());
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if ((payload.type === 'snapshot' || payload.type === 'display_state') && payload.display) {
+            setState(payload.display);
+          }
+          if (payload.type === 'session_ended') setState({ currentSong: null, history: [] });
+        } catch {
+          // Keep the information widget visible while its session reconnects.
+        }
+      };
+    } catch {
+      // The OBS browser source will retry after its normal refresh/reconnect cycle.
+    }
+
+    return () => socket?.close();
+  }, [mode, apiBaseUrl, session, token]);
+
+  if (mode === 'player') {
+    return <OnAirPlayer apiBaseUrl={apiBaseUrl} room={session} token={token} />;
+  }
 
   const { currentSong, history = [] } = state;
   // The broadcast-facing list is the songs already sung plus the song that is
