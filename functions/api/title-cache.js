@@ -31,7 +31,10 @@ export async function onRequest(context) {
   if (request.method === 'GET') {
     const url = new URL(request.url);
     const kind = url.searchParams.get('kind') || '';
-    const ids = [...new Set(url.searchParams.getAll('id').map((id) => id.trim()).filter(Boolean))].slice(0, 100);
+    const ids = [...new Set([
+      ...url.searchParams.getAll('id'),
+      ...(url.searchParams.get('ids') || '').split(',')
+    ].map((id) => id.trim()).filter(Boolean))].slice(0, 100);
     if (ids.length > 1) {
       const pairs = await Promise.all(ids.map(async (id) => [id, await getCachedTitle(env, kind, id)]));
       const entries = Object.fromEntries(pairs.filter(([, cached]) => cached));

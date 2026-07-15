@@ -62,8 +62,10 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
     const pendingKeys = songsToCheck.map((song) => songbookCacheKey(activeSongbook.platform, song.id));
     setCacheLookupKeys((previous) => ({ ...previous, ...Object.fromEntries(pendingKeys.map((key) => [key, true])) }));
-    const parameters = new URLSearchParams({ kind: `songbook:${activeSongbook.platform}` });
-    songsToCheck.forEach((song) => parameters.append('id', song.id));
+    const parameters = new URLSearchParams({
+      kind: `songbook:${activeSongbook.platform}`,
+      ids: songsToCheck.map((song) => song.id).join(',')
+    });
     let cancelled = false;
 
     fetch(apiUrl(`/api/title-cache?${parameters.toString()}`))
