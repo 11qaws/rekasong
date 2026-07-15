@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import YouTube from 'react-youtube';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
@@ -206,32 +206,10 @@ export default function Dashboard() {
       title: video.title,
       artist: video.channelTitle,
       tags: video.tags || [],
-      source: video.source || 'youtube'
+      source: video.source || 'youtube',
+      mrVerified: Boolean(video.mrVerified)
     });
     runAiExtractionStream(`/api/extract-title?id=${video.id}`);
-  };
-
-  const handleQuickPlay = (video) => {
-    const newSong = {
-      id: Date.now().toString(),
-      type: 'youtube',
-      src: video.id,
-      title: video.title,
-      artist: video.channelTitle,
-      tags: video.tags || [],
-      source: video.source || 'youtube'
-    };
-    
-    setSharedState(prev => {
-      if (!prev.currentSong) {
-        playAudioForSong(newSong);
-        showToast('바로 재생을 시작합니다.', 'success');
-        return { ...prev, currentSong: newSong };
-      }
-      const q = prev.queue || [];
-      showToast('대기열 끝에 곡이 예약되었습니다.', 'info');
-      return { ...prev, queue: [...q, newSong] };
-    });
   };
 
   const handleLocalFileDrop = (file) => {
@@ -396,7 +374,6 @@ export default function Dashboard() {
         <ErrorBoundary>
           <SearchPanel 
             onSelectResult={handleSelectSearchResult} 
-            onQuickPlay={handleQuickPlay}
             onLocalFileDrop={handleLocalFileDrop}
             sharedState={state || {}}
             setSharedState={setSharedState}

@@ -9,7 +9,12 @@ const defaultState = {
   volume: 100,
   isMuted: false,
   melomingChannelId: '',
-  setlinkPublicId: '',
+  setlinkCatalog: [],
+  setlinkSourceUrl: '',
+  setlinkCatalogMeta: null,
+  youtubePlaylistCatalog: [],
+  youtubePlaylistSourceUrl: '',
+  youtubePlaylistCatalogMeta: null,
   activeIntegrationTab: 'youtube',
   autoPlayNext: false
 };

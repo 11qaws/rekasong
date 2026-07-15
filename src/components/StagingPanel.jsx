@@ -1,8 +1,14 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Play, Loader2, Sparkles, X, ListPlus, Music, User } from 'lucide-react';
 import YouTube from 'react-youtube';
 
 export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage }) {
+  const [isConfirmed, setIsConfirmed] = useState(false);
+
+  useEffect(() => {
+    setIsConfirmed(false);
+  }, [stagedItem?.src, stagedItem?.type]);
+
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
@@ -15,10 +21,11 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
   }
 
   const { type, src, title, artist } = stagedItem;
+  const hasPlayableMr = type === 'local' ? Boolean(src) : type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(src || '');
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
-      onGoLive(false);
+      if (hasPlayableMr && isConfirmed) onGoLive(false);
     }
   };
 
@@ -87,7 +94,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             className="btn-primary go-live-btn" 
             onClick={() => onGoLive(false)} 
             style={{flex: 1, padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}}
-            disabled={!title.trim()}
+            disabled={!title.trim() || !hasPlayableMr || !isConfirmed}
           >
             {hasCurrentSong ? (
               <><ListPlus size={20} /> 대기열에 추가</>
@@ -101,12 +108,23 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
               onClick={() => onGoLive(true)} 
               style={{flex: 1, backgroundColor: title.trim() ? 'var(--accent-red)' : '#E9ECEF', padding: '1rem', fontSize: '1.1rem', fontWeight: 'bold'}} 
               title="대기열 1순위로 새치기"
-              disabled={!title.trim()}
+              disabled={!title.trim() || !hasPlayableMr || !isConfirmed}
             >
               <><Play size={20} /> 바로 다음 곡으로 (새치기)</>
             </button>
           )}
         </div>
+        {hasPlayableMr && (
+          <label style={{display:'flex', alignItems:'center', gap:'0.5rem', fontSize:'0.8rem', color:'var(--text-muted)', cursor:'pointer'}}>
+            <input type="checkbox" checked={isConfirmed} onChange={(event) => setIsConfirmed(event.target.checked)} />
+            미리보기에서 재생 가능한 MR임을 확인했습니다.
+          </label>
+        )}
+        {!hasPlayableMr && (
+          <p style={{margin: 0, fontSize: '0.8rem', color: 'var(--accent-red)'}}>
+            재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.
+          </p>
+        )}
       </div>
 
       <div className="preview-player" style={{ position: 'relative', marginTop: '1rem' }}>
