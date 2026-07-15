@@ -90,7 +90,7 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
   });
 
   const interaction = await response.json();
-  if (!response.ok) throw new Error(interaction.error?.message || 'Failed to fetch from Gemini');
+  if (!response.ok) throw new Error(interaction.error?.message || `Gemini request failed (${response.status})`);
   const result = parseJsonResponse(getInteractionText(interaction));
   const title = typeof result.final_title === 'string' ? result.final_title.trim() : '';
   if (!title) throw new Error('Gemini did not return a final_title');
