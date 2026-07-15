@@ -5,7 +5,7 @@ import OnAirPlayer from '../components/OnAirPlayer';
 import './Widget.css';
 
 export default function Widget() {
-  const [state, setState] = useState({ currentSong: null, queue: [] });
+  const [state, setState] = useState({ currentSong: null, queue: [], history: [] });
 
   // URL에서 파라미터 추출 (HashRouter 환경 대비)
   const hash = window.location.hash;
@@ -31,7 +31,11 @@ export default function Widget() {
     setState(payload.state);
   });
 
-  const { currentSong, queue } = state;
+  const { currentSong, history = [] } = state;
+  // The broadcast-facing list is the songs already sung plus the song that is
+  // currently on air. The dashboard queue is deliberately kept private so it
+  // does not reveal upcoming requests to viewers.
+  const setlist = [...history, ...(currentSong ? [currentSong] : [])];
 
   return (
     <div className="widget-container">
@@ -110,9 +114,9 @@ export default function Widget() {
             </div>
             <div className="setlist-items">
               <AnimatePresence>
-                {queue.map((song, index) => {
+                {setlist.map((song) => {
                   const isCurrent = currentSong?.id === song.id;
-                  const isPast = queue.findIndex(s => s.id === currentSong?.id) > index;
+                  const isPast = !isCurrent;
                   
                   return (
                       <motion.div
