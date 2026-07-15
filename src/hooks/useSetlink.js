@@ -1,8 +1,6 @@
 import { useMemo } from 'react';
 
-// The catalogue is fetched explicitly by the SearchPanel and then supplied to
-// this hook. Keeping the hook local makes refreshes and persisted snapshots
-// deterministic instead of polling Setlink in the background.
+// Setlink catalogs are imported explicitly by SearchPanel and passed here.
 export function useSetlink(catalog) {
   const songs = useMemo(
     () => (Array.isArray(catalog) ? catalog.filter((song) => song?.title) : []),

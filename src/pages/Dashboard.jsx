@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import YouTube from 'react-youtube';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
+import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
 import SearchPanel from '../components/SearchPanel';
@@ -12,6 +13,7 @@ import './Dashboard.css';
 
 export default function Dashboard() {
   const [state, setSharedState] = useSyncState();
+  const currentSong = state?.currentSong;
   
   const [activeVideoId, setActiveVideoId] = useState('');
   const [localAudioSrc, setLocalAudioSrc] = useState(null);
@@ -27,6 +29,10 @@ export default function Dashboard() {
   const [duration, setDuration] = useState(0);
   const ytPlayerRef = useRef(null);
   const audioRef = useRef(null);
+  const handlePlayNextRef = useRef(null);
+  const activeSongIdRef = useRef(null);
+  const reportedMediaIssueRef = useRef(null);
+  const reportedDelayRef = useRef(null);
 
   // Sync volume to players
   useEffect(() => {
@@ -46,15 +52,23 @@ export default function Dashboard() {
     }
   }, [isPlaying]);
 
-  // Track Progress
   useEffect(() => {
-    // currentSong이 null이 되면 (비상 정지 등으로 인해) 오디오 재생도 강제 중단
-    if (state && !state.currentSong) {
+    activeSongIdRef.current = currentSong?.id || null;
+    reportedMediaIssueRef.current = null;
+    reportedDelayRef.current = null;
+
+    if (!currentSong) {
       setIsPlaying(false);
       setActiveVideoId('');
       setLocalAudioSrc(null);
+    } else if (currentSong.type === 'youtube') {
+      setActiveVideoId(currentSong.src);
+      setLocalAudioSrc(null);
+    } else if (currentSong.type === 'local') {
+      setActiveVideoId('');
+      setLocalAudioSrc(currentSong.src);
     }
-  }, [state?.currentSong]);
+  }, [currentSong]);
 
   // Clean up ObjectURLs to prevent memory leaks
   useEffect(() => {
@@ -97,15 +111,23 @@ export default function Dashboard() {
   };
 
   const [stagedItem, setStagedItem] = useState(null);
+  const {
+    aiStatusMessage,
+    cancelAiExtraction,
+    isAiLoading,
+    runAiExtractionStream
+  } = useAiTitleExtraction(setStagedItem);
   
   // Toast notifications
   const [toasts, setToasts] = useState([]);
-  const showToast = (message, type = 'info') => {
-    const id = Date.now().toString();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
+  const dismissToast = (id) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  };
+
+  const showToast = (message, type = 'info', action = null) => {
+    const id = Date.now().toString() + '-' + Math.random().toString(36).slice(2, 7);
+    setToasts(prev => [...prev, { id, message, type, action }]);
+    setTimeout(() => dismissToast(id), action ? 5000 : 3000);
   };
   
   const [room] = useState(() => getOrCreateRoom());
@@ -133,74 +155,26 @@ export default function Dashboard() {
 
       if (e.code === 'Space') {
         e.preventDefault();
-        if (state.currentSong) {
+        if (currentSong) {
           setIsPlaying(prev => !prev);
           showToast(isPlaying ? '일시정지' : '재생', 'info');
         }
       } else if (e.ctrlKey && e.code === 'ArrowRight') {
         e.preventDefault();
-        handlePlayNext();
+        handlePlayNextRef.current?.();
         showToast('다음 곡으로 스킵', 'info');
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [state.currentSong, isPlaying]);
-
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiStatusMessage, setAiStatusMessage] = useState('');
-
-  const runAiExtractionStream = async (url, options = {}) => {
-    setIsAiLoading(true);
-    setAiStatusMessage('AI 분석 준비 중...');
-
-    const timeoutId = setTimeout(() => {
-      setIsAiLoading(false);
-      setAiStatusMessage('AI 응답 지연 (직접 입력 요망)');
-    }, 10000);
-
-    try {
-      const response = await fetch(url, options);
-      if (!response.body) throw new Error('No response body');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.status === '완료') {
-                setStagedItem(prev => prev ? ({ ...prev, title: data.title, artist: '' }) : prev);
-                setIsAiLoading(false);
-              } else if (data.status === '에러') {
-                console.error(data.error);
-                setIsAiLoading(false);
-              } else {
-                setAiStatusMessage(data.status);
-              }
-            } catch(e) {}
-          }
-        }
-      }
-    } catch (err) {
-      console.error(err);
-      setIsAiLoading(false);
-      setAiStatusMessage('AI 추출 실패');
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  };
+  }, [currentSong, isPlaying]);
 
   const handleSelectSearchResult = (video) => {
+    const replacedStagedItem = Boolean(stagedItem);
+    cancelAiExtraction();
+    const stagingId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setStagedItem({
+      stagingId,
       type: 'youtube',
       src: video.id,
       title: video.title,
@@ -209,18 +183,26 @@ export default function Dashboard() {
       source: video.source || 'youtube',
       mrVerified: Boolean(video.mrVerified)
     });
-    runAiExtractionStream(`/api/extract-title?id=${video.id}`);
+    showToast(
+      replacedStagedItem ? '선택한 곡으로 바꾸었습니다. 2단계에서 정보를 확인하세요.' : '2단계에서 곡 정보와 재생 대상을 확인하세요.',
+      'info'
+    );
+    if (video.id) runAiExtractionStream(`/api/extract-title?id=${video.id}`, {}, stagingId);
   };
 
   const handleLocalFileDrop = (file) => {
+    cancelAiExtraction();
     const url = URL.createObjectURL(file);
+    const stagingId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setStagedItem({
+      stagingId,
       type: 'local',
       src: url,
       title: file.name,
       artist: '',
       file: file
     });
+    showToast('로컬 파일을 불러왔습니다. 2단계에서 정보를 확인하세요.', 'info');
 
     let metadata = {};
     // Try parsing tags for better alias
@@ -228,18 +210,21 @@ export default function Dashboard() {
       onSuccess: (tag) => {
         if (tag.tags.title) {
           metadata = tag.tags;
-          setStagedItem(prev => ({
-            ...prev,
-            title: tag.tags.title,
-            artist: tag.tags.artist || ''
-          }));
+          setStagedItem(prev => {
+            if (!prev || prev.stagingId !== stagingId) return prev;
+            return {
+              ...prev,
+              title: prev.isTitleEdited ? prev.title : tag.tags.title,
+              artist: prev.isArtistEdited ? prev.artist : (tag.tags.artist || '')
+            };
+          });
         }
         
         runAiExtractionStream('/api/extract-local', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: file.name, metadata })
-        });
+        }, stagingId);
       },
       onError: (error) => {
         console.log('No ID3 tags found:', error.type);
@@ -247,13 +232,24 @@ export default function Dashboard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: file.name, metadata })
-        });
+        }, stagingId);
       }
     });
   };
 
   const handleAliasChange = (field, value) => {
-    setStagedItem(prev => ({ ...prev, [field]: value }));
+    setStagedItem(prev => prev ? ({
+      ...prev,
+      [field]: value,
+      ...(field === 'title' ? { isTitleEdited: true } : {}),
+      ...(field === 'artist' ? { isArtistEdited: true } : {})
+    }) : prev);
+  };
+
+  const handleClearStaged = () => {
+    cancelAiExtraction();
+    setStagedItem(null);
+    showToast('선택한 곡을 취소했습니다.', 'info');
   };
 
   const playAudioForSong = (song) => {
@@ -303,11 +299,16 @@ export default function Dashboard() {
       };
     });
 
+    cancelAiExtraction();
     setStagedItem(null);
   };
 
-  const handlePlayNext = () => {
+  const handlePlayNext = (expectedSongId = null) => {
     setSharedState(prev => {
+      if (expectedSongId && prev.currentSong?.id !== expectedSongId) {
+        return prev;
+      }
+
       const current = prev.currentSong;
       const history = current ? [...(prev.history || []), current] : prev.history || [];
       const queue = prev.queue || [];
@@ -332,11 +333,47 @@ export default function Dashboard() {
     });
   };
 
+  handlePlayNextRef.current = handlePlayNext;
+
+  const handlePlaybackDelay = (songId, source) => {
+    if (!songId || activeSongIdRef.current !== songId || reportedDelayRef.current === songId) return;
+    reportedDelayRef.current = songId;
+    showToast(source + ' 재생이 지연되고 있습니다. 잠시 기다리거나 스킵으로 다음 곡을 재생하세요.', 'info');
+  };
+
+  const handleMediaFailure = (songId, source, detail = '') => {
+    if (!songId || activeSongIdRef.current !== songId || reportedMediaIssueRef.current === songId) return;
+    reportedMediaIssueRef.current = songId;
+    const reason = detail ? ' (' + detail + ')' : '';
+    showToast(source + '을(를) 재생할 수 없습니다' + reason + '. 현재 곡만 건너뜁니다.', 'error');
+    setTimeout(() => handlePlayNextRef.current?.(songId), 400);
+  };
+
   const handleRemoveFromQueue = (songId) => {
+    const queue = state?.queue || [];
+    const removedIndex = queue.findIndex(song => song.id === songId);
+    const removedSong = queue[removedIndex];
+
+    if (!removedSong) return;
+
     setSharedState(prev => ({
       ...prev,
-      queue: (prev.queue || []).filter(s => s.id !== songId)
+      queue: (prev.queue || []).filter(song => song.id !== songId)
     }));
+
+    showToast('“' + removedSong.title + '”을 대기열에서 제거했습니다.', 'info', {
+      label: '되돌리기',
+      onClick: () => {
+        setSharedState(prev => {
+          const currentQueue = prev.queue || [];
+          if (currentQueue.some(song => song.id === removedSong.id)) return prev;
+
+          const restoredQueue = [...currentQueue];
+          restoredQueue.splice(Math.min(removedIndex, restoredQueue.length), 0, removedSong);
+          return { ...prev, queue: restoredQueue };
+        });
+      }
+    });
   };
 
   const onLivePlayerReady = (event) => {
@@ -345,29 +382,33 @@ export default function Dashboard() {
     if (isPlaying) event.target.playVideo();
   };
 
-  const onLivePlayerEnd = (event) => {
-    // window.autoPlayNextToggle or state.autoPlayNext
-    if (state?.autoPlayNext || window.autoPlayNextToggle) {
-      handlePlayNext();
-    } else {
+  const onLivePlayerEnd = (expectedSongId) => {
+    if (!expectedSongId || activeSongIdRef.current !== expectedSongId) return;
+
+    setSharedState(prev => {
+      if (prev.currentSong?.id !== expectedSongId) return prev;
+
+      const current = prev.currentSong;
+      const history = current ? [...(prev.history || []), current] : prev.history || [];
+      const queue = prev.queue || [];
+
+      if (prev.autoPlayNext && queue.length > 0) {
+        const nextSong = queue[0];
+        playAudioForSong(nextSong);
+        return { ...prev, currentSong: nextSong, queue: queue.slice(1), history };
+      }
+
       setIsPlaying(false);
-      setSharedState(prev => {
-        const current = prev.currentSong;
-        const history = current ? [...(prev.history || []), current] : prev.history || [];
-        return {
-          ...prev,
-          currentSong: null,
-          history
-        };
-      });
-    }
+      playAudioForSong(null);
+      return { ...prev, currentSong: null, history };
+    });
   };
 
   return (
     <div className={`dashboard-container ${stagedItem ? 'staging-active' : ''}`}>
       <header className="dashboard-header">
         <h1 className="logo">Rekasong</h1>
-        <p className="subtitle">그...그런건 없는데</p>
+        <p className="subtitle">방송용 노래 검색 · 재생 · OBS 위젯 제어</p>
       </header>
 
       <div className="dashboard-grid">
@@ -385,7 +426,7 @@ export default function Dashboard() {
             stagedItem={stagedItem}
             onAliasChange={handleAliasChange}
             onGoLive={handleGoLive}
-            onClearStaged={() => setStagedItem(null)}
+            onClearStaged={handleClearStaged}
             hasCurrentSong={!!state?.currentSong}
             isAiLoading={isAiLoading}
             aiStatusMessage={aiStatusMessage}
@@ -409,6 +450,7 @@ export default function Dashboard() {
             currentTime={currentTime}
             duration={duration}
             onSeek={handleSeek}
+            autoPlayNext={Boolean(state?.autoPlayNext)}
             setSharedState={setSharedState}
             showToast={showToast}
           />
@@ -416,10 +458,22 @@ export default function Dashboard() {
       </div>
 
       {/* Toast Notifications Container */}
-      <div className="toast-container">
+      <div className="toast-container" aria-live="polite" aria-atomic="false">
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.type}`}>
-            {t.message}
+            <span>{t.message}</span>
+            {t.action && (
+              <button
+                type="button"
+                className="toast-action"
+                onClick={() => {
+                  t.action.onClick();
+                  dismissToast(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -428,21 +482,45 @@ export default function Dashboard() {
       <div className="live-players-hidden">
         {activeVideoId && (
           <YouTube 
+            key={activeVideoId + '-' + (currentSong?.id || '')}
             videoId={activeVideoId} 
             opts={{ width: '200', height: '112', playerVars: { autoplay: 1 } }} 
             onReady={onLivePlayerReady}
-            onEnd={onLivePlayerEnd}
+            onEnd={() => onLivePlayerEnd(currentSong?.id)}
+            onStateChange={(event) => {
+              if (event.data === 3) handlePlaybackDelay(currentSong?.id, 'YouTube');
+            }}
             onError={(e) => {
               console.error("YouTube Player Error:", e.data);
-              showToast("유튜브 영상을 재생할 수 없습니다. 다음 곡으로 넘어갑니다.", "error");
-              setTimeout(() => {
-                handlePlayNext();
-              }, 2000);
+              const details = {
+                2: '영상 주소가 올바르지 않음',
+                5: '브라우저 재생을 지원하지 않음',
+                100: '영상이 삭제되었거나 비공개임',
+                101: '외부 재생이 허용되지 않음',
+                150: '외부 재생이 허용되지 않음'
+              };
+              handleMediaFailure(currentSong?.id, 'YouTube', details[e.data] || '알 수 없는 재생 오류');
             }}
           />
         )}
         {localAudioSrc && (
-          <audio ref={audioRef} src={localAudioSrc} autoPlay onEnded={onLivePlayerEnd} />
+          <audio
+            ref={audioRef}
+            src={localAudioSrc}
+            autoPlay
+            onEnded={() => onLivePlayerEnd(currentSong?.id)}
+            onWaiting={() => handlePlaybackDelay(currentSong?.id, '로컬 음원')}
+            onError={() => {
+              const errorCode = audioRef.current?.error?.code;
+              const details = {
+                1: '가져오기가 중단됨',
+                2: '파일을 읽을 수 없음',
+                3: '음원 형식이 손상되었거나 지원되지 않음',
+                4: '브라우저가 이 형식을 지원하지 않음'
+              };
+              handleMediaFailure(currentSong?.id, '로컬 음원', details[errorCode] || '읽기 오류');
+            }}
+          />
         )}
       </div>
     </div>

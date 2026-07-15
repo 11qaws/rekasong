@@ -1,3 +1,5 @@
+import { extractSongTitle, selectGeminiApiKey } from './gemini.js';
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -19,9 +21,7 @@ export async function onRequest(context) {
 
       await sendEvent("유튜브 영상 정보 분석 중...");
       
-      const apiKeys = [env.GEMINI_API_KEY_1, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3].filter(Boolean);
-      if (apiKeys.length === 0) throw new Error('Missing GEMINI_API_KEY environment variable');
-      const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+      const apiKey = selectGeminiApiKey(env);
 
       let ytTitle = '';
       let ytDescription = '';
@@ -65,51 +65,18 @@ export async function onRequest(context) {
    - 원어 발음 그대로 읽지 않고 의미를 번역해야 하는 모든 일본어 곡
    - 띄어쓰기나 부제 등 한국 팬덤 내 정확한 통용 표기법에 대해 0.1%라도 확신이 없는 경우
    (단, '아이돌(アイドル)', 'KICK BACK'처럼 번역이 필요 없거나 원어 발음 그대로 한국에서도 쓰이는 초유명 곡은 검색 생략 가능)
-7. 반드시 분석 과정을 'analysis' 필드에 상세히 작성하여 추론한 뒤, 최종 추출 곡명만을 'final_title' 필드에 작성해.
+7. 추론 과정, 출처, 부연 설명은 응답에 포함하지 말고 최종 곡명만 작성해.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
-  "analysis": "입력 데이터에서 아티스트, 노래방 번호, 애니메이션 이름 등을 식별하고 제거하는 논리적 추론 과정",
   "final_title": "최종 추출된 순수 곡명 단 하나"
 }`;
 
       await sendEvent("한국어 번역명 찾는 중...");
 
-      const aiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: "application/json"
-          },
-          tools: [{ googleSearch: {} }]
-        })
-      });
+      const extractedTitle = await extractSongTitle({ apiKey, prompt });
 
-      const data = await aiResponse.json();
-      
-      if (!aiResponse.ok) {
-        throw new Error(data.error?.message || 'Failed to fetch from Gemini');
-      }
-
-      const jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (!jsonString) {
-        throw new Error('Empty response from AI');
-      }
-
-      let parsedData;
-      try {
-        parsedData = JSON.parse(jsonString);
-      } catch (parseError) {
-        throw new Error(`JSON 파싱 실패. 원본 응답: ${jsonString}`);
-      }
-      const extractedTitle = parsedData.final_title || '';
-
-      await sendEvent("완료", extractedTitle.replace(/^["']|["']$/g, ''));
+      await sendEvent("완료", extractedTitle);
 
     } catch (error) {
       await sendEvent("에러", null, error.message);

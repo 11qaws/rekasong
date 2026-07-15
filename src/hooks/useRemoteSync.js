@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 
-const CHANNEL_NAME = 'rekasong-widget-sync';
-const STORAGE_KEY = 'rekasong-widget-sync-data';
+const CHANNEL_NAME_PREFIX = 'rekasong-widget-sync';
+const STORAGE_KEY_PREFIX = 'rekasong-widget-sync-data';
 const ROOM_STORAGE_KEY = 'rekasong-widget-room';
 const KEYS_STORAGE_KEY = 'rekasong-widget-keys';
+
+const channelName = (room) => `${CHANNEL_NAME_PREFIX}-${room || 'default'}`;
+const storageKey = (room) => `${STORAGE_KEY_PREFIX}-${room || 'default'}`;
 
 const b64url = (buf) =>
   btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -90,14 +93,22 @@ let ntfyTimer = null;
 
 export function publishSync(payload, room, privateKey) {
   try {
-    const channel = new BroadcastChannel(CHANNEL_NAME);
+    const channel = new BroadcastChannel(channelName(room));
     channel.postMessage(payload);
     channel.close();
   } catch { }
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(storageKey(room), JSON.stringify(payload));
   } catch { }
+
+  if (isLocalDev() && room) {
+    fetch(`${window.location.origin}/api/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room, payload })
+    }).catch(() => {});
+  }
 
   if (room && privateKey) {
     clearTimeout(ntfyTimer);
@@ -122,8 +133,13 @@ export function useWidgetSync(room, publicKeyB64, onSync) {
       if (payload && payload.state) onSyncRef.current(payload);
     };
 
+    try {
+      const cached = localStorage.getItem(storageKey(room));
+      if (cached) handle(JSON.parse(cached));
+    } catch { }
+
     const handleStorage = (e) => {
-      if (e.key === STORAGE_KEY && e.newValue) {
+      if (e.key === storageKey(room) && e.newValue) {
         try { handle(JSON.parse(e.newValue)); } catch { }
       }
     };
@@ -131,7 +147,7 @@ export function useWidgetSync(room, publicKeyB64, onSync) {
 
     let channel;
     try {
-      channel = new BroadcastChannel(CHANNEL_NAME);
+      channel = new BroadcastChannel(channelName(room));
       channel.onmessage = (e) => handle(e.data);
     } catch { }
 
@@ -140,7 +156,8 @@ export function useWidgetSync(room, publicKeyB64, onSync) {
       let lastTimestamp = 0;
       devInterval = setInterval(async () => {
         try {
-          const res = await fetch(`${window.location.origin}/api/sync`);
+          const res = await fetch(`${window.location.origin}/api/sync?room=${encodeURIComponent(room || '')}`);
+          if (!res.ok) return;
           const payload = await res.json();
           if (payload && payload.state && payload.timestamp > lastTimestamp) {
             lastTimestamp = payload.timestamp;
