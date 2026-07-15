@@ -21,7 +21,7 @@ export default function Dashboard() {
   const [localAudioSrc, setLocalAudioSrc] = useState(null);
   
   // Audio Controls
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem('rekasong_volume');
     const parsed = parseInt(saved, 10);

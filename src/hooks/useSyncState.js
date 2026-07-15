@@ -28,7 +28,7 @@ const isPlayableSong = (song) =>
   typeof song.src === 'string' &&
   song.src.length > 0;
 
-const normaliseState = (candidate, { fromStorage = false } = {}) => {
+const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = false } = {}) => {
   const source = candidate && typeof candidate === 'object' ? candidate : {};
   const keepSong = (song) => isPlayableSong(song) && !(fromStorage && song.type === 'local');
   const volume = Number(source.volume);
@@ -38,7 +38,9 @@ const normaliseState = (candidate, { fromStorage = false } = {}) => {
     ...source,
     queue: Array.isArray(source.queue) ? source.queue.filter(keepSong) : [],
     history: Array.isArray(source.history) ? source.history.filter(keepSong) : [],
-    currentSong: keepSong(source.currentSong) ? source.currentSong : null,
+    // Media playback cannot be safely resumed after a page reload. Keeping the
+    // old item here creates a phantom "Now Playing" state with no active player.
+    currentSong: resetCurrentSong ? null : (keepSong(source.currentSong) ? source.currentSong : null),
     volume: Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : defaultState.volume,
     isMuted: Boolean(source.isMuted),
     melomingChannelId: typeof source.melomingChannelId === 'string' ? source.melomingChannelId : '',
@@ -58,7 +60,7 @@ const normaliseState = (candidate, { fromStorage = false } = {}) => {
 const readStoredState = () => {
   try {
     const item = window.localStorage.getItem(STORAGE_KEY);
-    return item ? normaliseState(JSON.parse(item), { fromStorage: true }) : defaultState;
+    return item ? normaliseState(JSON.parse(item), { fromStorage: true, resetCurrentSong: true }) : defaultState;
   } catch (error) {
     console.warn('Error reading localStorage', error);
     return defaultState;
