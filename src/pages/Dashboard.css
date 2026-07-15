@@ -1058,6 +1058,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .song-composer .panel { height: auto; max-height: none; min-height: 0; }
 .composer-area .search-panel { gap: 0.8rem; }
 .composer-area .search-results .empty-state { min-height: 0; padding: 0.8rem 1rem !important; font-size: 0.82rem; }
+.composer-search-hint { padding: 0.65rem 0.75rem; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.78rem; text-align: center; }
 .composer-area .drop-zone-placeholder { display: flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 0; padding: 0.7rem 0.85rem; border-radius: 8px; }
 .composer-area .drop-zone-placeholder svg { width: 20px; height: 20px; margin: 0 !important; }
 .composer-area .drop-zone-placeholder p { margin: 0 !important; font-size: 0.8rem !important; }
@@ -1084,4 +1085,8 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   .playback-controls .volume-slider { width: 86px; }
   .playback-progress { width: 100%; }
   .queue-list { max-height: 180px; }
+  .queue-panel { padding: 0.85rem; }
+  .queue-panel .queue-list { min-height: 0; max-height: 150px; }
+  .queue-panel .queue-empty { min-height: 62px; }
+  .composer-area .search-panel { padding: 0.85rem; }
 }

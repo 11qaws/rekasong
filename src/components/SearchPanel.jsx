@@ -201,10 +201,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           </div>
         )}
         {!isSearching && results.length === 0 && query === '' && (
-          <div className="empty-state" style={{padding:'2rem 1rem'}}>
-            <span style={{fontSize:'1.5rem', display:'block', marginBottom:'0.5rem'}}>☝️</span>
-            위 검색창에 부르고 싶은 곡을 입력하세요.<br/>
-            (유튜브 URL을 직접 붙여넣거나 로컬 MR 파일을 드래그하세요!)
+          <div className="composer-search-hint">
+            곡명 또는 YouTube URL을 입력하세요. 로컬 MR은 아래에서 바로 추가할 수 있어요.
           </div>
         )}
         {results.length === 0 && !isSearching && query !== '' && !error && (
