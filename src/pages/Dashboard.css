@@ -971,8 +971,12 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 @keyframes aiAnalysisDot { 0%, 100% { opacity: 0.24; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .ai-retry-button { flex: 0 0 auto; border: 1px solid var(--glass-border); border-radius: 6px; padding: 0.4rem 0.55rem; background: var(--bg-mid); color: var(--text-main); font: inherit; font-size: 0.72rem; cursor: pointer; }
 .ai-retry-button:hover, .ai-retry-button:focus-visible { border-color: var(--eureka-emerald); color: var(--eureka-emerald); }
-.staging-actions { display: grid; gap: 0.65rem; margin-top: 0.85rem; }
-.preview-player-priority { position: relative; margin: 0.7rem 0 0.85rem; }
+.staging-media-info { display: grid; grid-template-columns: minmax(250px, 0.9fr) minmax(300px, 1.1fr); align-items: start; gap: 1rem; }
+.staging-song-info { display: grid; gap: 0.8rem; min-width: 0; }
+.preview-player-priority { position: relative; margin: 0; }
+.staging-title-help { margin: -0.35rem 0 0; color: var(--text-muted); font-size: 0.7rem; }
+.staging-title-help span { margin-left: 8px; color: var(--eureka-emerald); }
+.staging-actions { display: grid; gap: 0.65rem; margin-top: 0; }
 .mr-confirm-button { display: flex; align-items: center; justify-content: center; gap: 0.42rem; width: 100%; min-height: 42px; border: 1px solid rgba(16,255,203,0.38); border-radius: 9px; background: rgba(16,255,203,0.08); color: var(--text-main); font: inherit; font-size: 0.82rem; font-weight: 750; cursor: pointer; transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease; }
 .mr-confirm-button:hover, .mr-confirm-button:focus-visible { transform: translateY(-1px); border-color: var(--eureka-emerald); background: rgba(16,255,203,0.15); }
 .mr-confirm-button.is-confirmed { border-color: var(--eureka-emerald); background: var(--eureka-emerald); color: var(--bg-deep); }
@@ -994,4 +998,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
     height: auto;
     max-height: none;
   }
+}
+@media (max-width: 650px) {
+  .staging-media-info { grid-template-columns: 1fr; }
 }

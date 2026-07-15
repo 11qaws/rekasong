@@ -45,89 +45,90 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         </button>
       </div>
 
-      <div className="preview-player preview-player-priority">
-        {type === 'youtube' && (
-          <div className="youtube-preview-wrapper">
-            <YouTube
-              videoId={src}
-              opts={{
-                width: '100%',
-                height: '180',
-                playerVars: {
-                  autoplay: 0,
-                  controls: 1,
-                  origin: window.location.origin
-                }
-              }}
-            />
-          </div>
-        )}
-        {type === 'local' && stagedItem.mediaType === 'video' && (
-          <video controls src={src} className="local-video-preview" style={{width:'100%', maxHeight:'320px'}} />
-        )}
-        {type === 'local' && stagedItem.mediaType !== 'video' && (
-          <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
-        )}
-      </div>
-
-      <div className="ai-title-card">
-        <div className="ai-title-icon"><Sparkles size={18} /></div>
-        <div className="ai-title-copy">
-          <strong>AI 곡명 정리</strong>
-          <span>{isAiLoading ? (aiStatusMessage || '영상 정보에서 부를 곡명을 찾고 있어요.') : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.')}</span>
-          {isAiLoading && (
-            <div className="ai-phase-track" aria-label={`AI 분석 ${analysisPhase}단계 진행 중`}>
-              {analysisSteps.map((step, index) => {
-                const phase = index + 1;
-                const state = phase < analysisPhase ? 'done' : phase === analysisPhase ? 'active' : '';
-                return <span key={step} className={state}><b>{phase}</b>{step}</span>;
-              })}
+      <div className="staging-media-info">
+        <div className="preview-player preview-player-priority">
+          {type === 'youtube' && (
+            <div className="youtube-preview-wrapper">
+              <YouTube
+                videoId={src}
+                opts={{
+                  width: '100%',
+                  height: '180',
+                  playerVars: {
+                    autoplay: 0,
+                    controls: 1,
+                    origin: window.location.origin
+                  }
+                }}
+              />
             </div>
           )}
-        </div>
-        {isAiLoading && (
-          <div className="ai-analysis-badge" role="status" aria-label="AI 곡명 분석 중">
-            <Loader2 size={13} className="spinner" />
-            <span>분석 중</span>
-            <i aria-hidden="true" />
-            <i aria-hidden="true" />
-            <i aria-hidden="true" />
-          </div>
-        )}
-        {!isAiLoading && onRetryAiExtraction && (
-          <button type="button" className="ai-retry-button" onClick={onRetryAiExtraction}>다시 분석</button>
-        )}
-      </div>
-      
-      <div className="staging-form">
-        <label style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-          표시될 곡명
-          {!isAiLoading && aiStatusMessage ? (
-            <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--eureka-emerald)'}}>
-              <Sparkles size={12} className="sparkles-anim" /> {aiStatusMessage}
-            </span>
-          ) : null}
-        </label>
-        <div className="search-input-wrapper">
-          <Music className="search-icon" size={16} style={{top: '12px'}}/>
-          <input 
-            type="text" 
-            value={title} 
-            onChange={(e) => onAliasChange('title', e.target.value)} 
-            className="glass-input search-input"
-            placeholder="곡명을 입력하세요"
-            autoFocus
-          />
-        </div>
-        <p style={{fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'-0.3rem', marginBottom:'0.5rem'}}>
-          방송 화면에 표시될 곡명을 수정하세요.
-          {stagedItem.tags && stagedItem.tags.length > 0 && (
-            <span style={{marginLeft: '8px', color: 'var(--eureka-emerald)'}}>
-              (태그: {stagedItem.tags.join(', ')})
-            </span>
+          {type === 'local' && stagedItem.mediaType === 'video' && (
+            <video controls src={src} className="local-video-preview" style={{width:'100%', maxHeight:'320px'}} />
           )}
-        </p>
+          {type === 'local' && stagedItem.mediaType !== 'video' && (
+            <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
+          )}
+        </div>
 
+        <div className="staging-song-info">
+          <div className="ai-title-card">
+            <div className="ai-title-icon"><Sparkles size={18} /></div>
+            <div className="ai-title-copy">
+              <strong>AI 곡명 정리</strong>
+              <span>{isAiLoading ? (aiStatusMessage || '영상 정보에서 부를 곡명을 찾고 있어요.') : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.')}</span>
+              {isAiLoading && (
+                <div className="ai-phase-track" aria-label={`AI 분석 ${analysisPhase}단계 진행 중`}>
+                  {analysisSteps.map((step, index) => {
+                    const phase = index + 1;
+                    const state = phase < analysisPhase ? 'done' : phase === analysisPhase ? 'active' : '';
+                    return <span key={step} className={state}><b>{phase}</b>{step}</span>;
+                  })}
+                </div>
+              )}
+            </div>
+            {isAiLoading && (
+              <div className="ai-analysis-badge" role="status" aria-label="AI 곡명 분석 중">
+                <Loader2 size={13} className="spinner" />
+                <span>분석 중</span>
+                <i aria-hidden="true" />
+                <i aria-hidden="true" />
+                <i aria-hidden="true" />
+              </div>
+            )}
+            {!isAiLoading && onRetryAiExtraction && (
+              <button type="button" className="ai-retry-button" onClick={onRetryAiExtraction}>다시 분석</button>
+            )}
+          </div>
+
+          <div className="staging-form">
+            <label style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              표시될 곡명
+              {!isAiLoading && aiStatusMessage ? (
+                <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--eureka-emerald)'}}>
+                  <Sparkles size={12} className="sparkles-anim" /> {aiStatusMessage}
+                </span>
+              ) : null}
+            </label>
+            <div className="search-input-wrapper">
+              <Music className="search-icon" size={16} style={{top: '12px'}}/>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => onAliasChange('title', e.target.value)}
+                className="glass-input search-input"
+                placeholder="곡명을 입력하세요"
+                autoFocus
+              />
+            </div>
+            <p className="staging-title-help">
+              방송 화면에 표시될 곡명을 수정하세요.
+              {stagedItem.tags && stagedItem.tags.length > 0 && (
+                <span>(태그: {stagedItem.tags.join(', ')})</span>
+              )}
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="staging-actions">
