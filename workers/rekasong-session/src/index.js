@@ -1,4 +1,5 @@
 const SESSION_GRACE_MS = 2 * 60 * 1000;
+const SESSION_INITIAL_GRACE_MS = 30 * 60 * 1000;
 const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
@@ -104,6 +105,9 @@ export class SessionRoom {
       endedAt: null,
       cleanupAt: null
     });
+    // A staging upload can create a session before OBS has opened its player.
+    // Do not retain those files forever if the broadcast is never started.
+    await this.ctx.storage.setAlarm(Date.now() + SESSION_INITIAL_GRACE_MS);
     return json({ ok: true });
   }
 
