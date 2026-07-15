@@ -162,17 +162,22 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
       for (let index = 0; index < unresolved.length; index += 100) {
         const batch = unresolved.slice(index, index + 100);
-        const response = await fetch(apiUrl('/api/title-cache'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({ operation: 'lookup', kind: 'youtube', ids: batch.map((song) => song.sourceId) })
-        });
-        if (!response.ok) continue;
-        const data = await response.json();
-        Object.entries(data.entries || {}).forEach(([sourceId, cached]) => {
-          if (cached?.title) knownTitles.set(sourceId, cached.title);
-        });
+        try {
+          const response = await fetch(apiUrl('/api/title-cache'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ operation: 'lookup', kind: 'youtube', ids: batch.map((song) => song.sourceId) })
+          });
+          if (!response.ok) continue;
+          const data = await response.json();
+          Object.entries(data.entries || {}).forEach(([sourceId, cached]) => {
+            if (cached?.title) knownTitles.set(sourceId, cached.title);
+          });
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          // A cache outage must not prevent newly imported songs from being normalized.
+        }
       }
 
       if (controller.signal.aborted) return;
