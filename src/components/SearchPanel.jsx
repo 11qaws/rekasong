@@ -76,15 +76,21 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const file = e.target.files[0];
     const isSupportedMedia = file.type.startsWith('audio/') || file.type === 'video/mp4';
     if (!isSupportedMedia) {
-        alert('오류: 오디오 파일(MP3 등)만 지원됩니다.');
+      alert('오류: 오디오 파일 또는 MP4 영상만 지원됩니다.');
         return;
       }
     if (file.size > 200 * 1024 * 1024) {
-        alert('오류: 50MB 이하의 오디오 파일만 업로드할 수 있습니다.');
+      alert('오류: 200MB 이하의 오디오/MP4 파일만 업로드할 수 있습니다.');
         return;
       }
       onLocalFileDrop(file);
     }
+  };
+
+  const handleFileDrop = (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer?.files?.[0];
+    if (file) handleFileSelect({ target: { files: [file] } });
   };
 
   const handleIntegrationConnect = (platform, id) => {
@@ -229,11 +235,13 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       <div 
         className="drop-zone-placeholder"
         onClick={() => document.querySelector('.hidden-file-input').click()}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleFileDrop}
         style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
         title="클릭하여 파일 선택"
       >
         <UploadCloud size={32} style={{ color: 'var(--eureka-emerald)', marginBottom: '10px' }} />
-        <p style={{ margin: 0, fontWeight: 500 }}>로컬 파일(MP3) 추가하기</p>
+        <p style={{ margin: 0, fontWeight: 500 }}>로컬 MR 파일(오디오/MP4) 추가하기</p>
         <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
         <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
         <input ref={fileInputRef} type="file" accept="audio/*,video/mp4" onChange={handleFileSelect} className="hidden-file-input" />
