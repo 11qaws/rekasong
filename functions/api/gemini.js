@@ -12,7 +12,7 @@ function cleanTitle(value) {
   return String(value || '')
     .replace(/\[[^\]]*(off\s*vocal|instrumental|karaoke|mr|inst)[^\]]*\]/gi, '')
     .replace(/\([^)]*(off\s*vocal|instrumental|karaoke|mr|inst)[^)]*\)/gi, '')
-    .replace(/\s*[|-]\s*(off\s*vocal|instrumental|karaoke|mr|inst).*$/i, '')
+    .replace(/\s*[|\/-]\s*(off\s*vocal|instrumental|karaoke|mr|inst|ky|tj).*$/i, '')
     .replace(/\s+/g, ' ')
     .trim() || '제목을 직접 확인해 주세요';
 }
