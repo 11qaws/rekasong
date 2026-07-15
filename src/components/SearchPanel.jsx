@@ -14,6 +14,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState(false);
+  const [pendingSongbookMatch, setPendingSongbookMatch] = useState(null);
   
   // Integration Onboarding States
   const [tempMeloId, setTempMeloId] = useState('');
@@ -91,6 +92,62 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0];
     if (file) handleFileSelect({ target: { files: [file] } });
+  };
+
+  const selectYoutubeResult = (video) => {
+    if (pendingSongbookMatch) {
+      onSelectResult({
+        ...video,
+        title: pendingSongbookMatch.title || video.title,
+        source: pendingSongbookMatch.source,
+        songbookId: pendingSongbookMatch.songbookId,
+        tags: pendingSongbookMatch.tags || [],
+        skipAiTitleExtraction: true
+      });
+      setPendingSongbookMatch(null);
+      return;
+    }
+    onSelectResult(video);
+  };
+
+  const selectSongbookSong = async (song, platform, youtubeId) => {
+    if (youtubeId) {
+      onSelectResult({
+        id: youtubeId,
+        title: song.title,
+        channelTitle: song.artist,
+        src: youtubeId,
+        tags: song.tags,
+        source: platform,
+        songbookId: song.id,
+        skipAiTitleExtraction: true
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/title-cache?kind=${encodeURIComponent(`songbook:${platform}`)}&id=${encodeURIComponent(song.id)}`));
+      const data = await response.json();
+      if (data.cached?.mrId) {
+        onSelectResult({
+          id: data.cached.mrId,
+          title: data.cached.title || song.title,
+          channelTitle: song.artist,
+          tags: song.tags,
+          source: platform,
+          songbookId: song.id,
+          mrVerified: true,
+          skipAiTitleExtraction: true
+        });
+        return;
+      }
+    } catch {
+      // A cache miss must fall through to the normal MR search flow.
+    }
+
+    setPendingSongbookMatch({ title: song.title, source: platform, songbookId: song.id, tags: song.tags || [] });
+    setQuery(`${song.artist} ${song.title}`.trim());
+    handleTabChange('youtube');
   };
 
   const handleIntegrationConnect = (platform, id) => {
@@ -179,7 +236,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       <div className="search-results">
         {results.map((v) => (
           <div key={v.id} className="result-item" style={{position:'relative'}}>
-            <div style={{display:'flex', width:'100%', cursor:'pointer'}} onClick={() => onSelectResult(v)}>
+            <div style={{display:'flex', width:'100%', cursor:'pointer'}} onClick={() => selectYoutubeResult(v)}>
               <img 
                 src={v.thumbnail || 'https://via.placeholder.com/120x68/333/fff?text=No+Image'} 
                 alt="thumbnail" 
@@ -371,21 +428,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 <button 
                   className="btn-primary" 
                   style={{padding:'0.5rem 1rem', fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'0.4rem', flexShrink: 0}}
-                  onClick={() => {
-                    if (youtubeId) {
-                      onSelectResult({
-                        id: youtubeId,
-                        title: song.title,
-                        channelTitle: song.artist,
-                        src: song.youtubeUrl,
-                        tags: song.tags,
-                        source: platform
-                      });
-                    } else {
-                      setQuery(`${song.artist} ${song.title}`);
-                      handleTabChange('youtube');
-                    }
-                  }}
+                  onClick={() => selectSongbookSong(song, platform, youtubeId)}
                 >
                   {youtubeId ? <><Music size={14}/>{song.mrVerified ? '검증된 MR 검토' : 'MR 후보 검토'}</> : <><Search size={14}/>MR 찾기</>}
                 </button>

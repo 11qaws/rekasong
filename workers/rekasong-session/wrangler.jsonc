@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rekasong-session",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-15",
+  "account_id": "4a99fafce98c0a4f0d4d12de1a36ac18",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSION_ROOM",
+        "class_name": "SessionRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SessionRoom"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "rekasong-session-media"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

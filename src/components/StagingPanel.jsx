@@ -22,6 +22,8 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
 
   const { type, src, title } = stagedItem;
   const hasPlayableMr = type === 'local' ? Boolean(src) : type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(src || '');
+  const needsBroadcastAsset = type === 'local' && stagedItem.assetStatus && stagedItem.assetStatus !== 'local';
+  const isBroadcastAssetReady = !needsBroadcastAsset || stagedItem.assetStatus === 'ready';
   const analysisPhase = (() => {
     if (!isAiLoading) return 0;
     if (/한국어|번역|매칭/.test(aiStatusMessage)) return 3;
@@ -75,9 +77,9 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           <div className="ai-title-card">
             <div className="ai-title-icon"><Sparkles size={18} /></div>
             <div className="ai-title-copy">
-              <strong>AI 곡명 정리</strong>
-              <span>{isAiLoading ? (aiStatusMessage || '영상 정보에서 부를 곡명을 찾고 있어요.') : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.')}</span>
-              {isAiLoading && (
+              <strong>{stagedItem.skipAiTitleExtraction ? '노래책 곡명' : 'AI 곡명 정리'}</strong>
+              <span>{stagedItem.skipAiTitleExtraction ? '노래책에 등록된 곡명을 그대로 사용합니다.' : (isAiLoading ? (aiStatusMessage || '영상 정보에서 부를 곡명을 찾고 있어요.') : (aiStatusMessage || '선택한 영상에서 부를 곡명을 자동으로 찾아 정리합니다.'))}</span>
+              {!stagedItem.skipAiTitleExtraction && isAiLoading && (
                 <div className="ai-phase-track" aria-label={`AI 분석 ${analysisPhase}단계 진행 중`}>
                   {analysisSteps.map((step, index) => {
                     const phase = index + 1;
@@ -87,7 +89,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
                 </div>
               )}
             </div>
-            {isAiLoading && (
+            {!stagedItem.skipAiTitleExtraction && isAiLoading && (
               <div className="ai-analysis-badge" role="status" aria-label="AI 곡명 분석 중">
                 <Loader2 size={13} className="spinner" />
                 <span>분석 중</span>
@@ -96,7 +98,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
                 <i aria-hidden="true" />
               </div>
             )}
-            {!isAiLoading && onRetryAiExtraction && (
+            {!stagedItem.skipAiTitleExtraction && !isAiLoading && onRetryAiExtraction && (
               <button type="button" className="ai-retry-button" onClick={onRetryAiExtraction}>다시 분석</button>
             )}
           </div>
@@ -132,6 +134,13 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
       </div>
 
       <div className="staging-actions">
+        {type === 'local' && needsBroadcastAsset && (
+          <p className={`staging-asset-status ${stagedItem.assetStatus === 'error' ? 'is-error' : ''}`}>
+            {stagedItem.assetStatus === 'uploading'
+              ? `방송용 파일 준비 중… ${stagedItem.assetProgress || 0}%`
+              : stagedItem.assetError || '방송용 파일을 준비하지 못했습니다.'}
+          </p>
+        )}
         {hasPlayableMr ? (
           <button
             type="button"
@@ -150,7 +159,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           <button
             className="btn-primary go-live-btn"
             onClick={() => onGoLive(false)}
-            disabled={!title.trim() || !hasPlayableMr || !isConfirmed}
+            disabled={!title.trim() || !hasPlayableMr || !isConfirmed || !isBroadcastAssetReady}
           >
             {hasCurrentSong ? <><ListPlus size={20} /> 대기열에 추가</> : <><Play size={20} /> 즉시 재생 (방송 송출)</>}
           </button>
@@ -159,7 +168,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
               className="btn-primary go-live-btn go-live-next"
               onClick={() => onGoLive(true)}
               title="대기열 1순위로 새치기"
-              disabled={!title.trim() || !hasPlayableMr || !isConfirmed}
+              disabled={!title.trim() || !hasPlayableMr || !isConfirmed || !isBroadcastAssetReady}
             >
               <><Play size={20} /> 바로 다음 곡으로</>
             </button>

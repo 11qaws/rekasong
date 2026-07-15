@@ -30,7 +30,10 @@ const isPlayableSong = (song) =>
 
 const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = false } = {}) => {
   const source = candidate && typeof candidate === 'object' ? candidate : {};
-  const keepSong = (song) => isPlayableSong(song) && !(fromStorage && song.type === 'local');
+  // Legacy local entries point at a page-scoped blob URL and cannot survive a
+  // reload. Session-uploaded local media uses an asset id instead, so keep it
+  // with the queue/history while the broadcast session is alive.
+  const keepSong = (song) => isPlayableSong(song) && !(fromStorage && song.type === 'local' && song.src.startsWith('blob:'));
   const volume = Number(source.volume);
 
   return {

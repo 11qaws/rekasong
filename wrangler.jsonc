@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rekasong",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-07-15",
+  "kv_namespaces": [
+    {
+      "binding": "TITLE_CACHE",
+      "id": "7057fd5d1d7d412db0bb49c2a337ea7f"
+    }
+  ]
+}

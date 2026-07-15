@@ -11,6 +11,10 @@ export function useAiTitleExtraction(setStagedItem) {
     setIsAiLoading(false);
   }, []);
 
+  const setAiStatus = useCallback((message = '') => {
+    setAiStatusMessage(message);
+  }, []);
+
   useEffect(() => () => requestRef.current.controller?.abort(), []);
 
   const runAiExtractionStream = useCallback(async (url, options = {}, stagingId, { overwriteTitle = false } = {}) => {
@@ -56,7 +60,9 @@ export function useAiTitleExtraction(setStagedItem) {
                 };
               });
               setAiStatusMessage(
-                data.mode === 'candidate'
+                data.mode === 'cache'
+                  ? '저장된 곡명 적용 완료'
+                  : data.mode === 'candidate'
                   ? (data.status || '곡명 후보를 확인 중입니다.')
                   : data.mode === 'fallback'
                   ? '기본 제목 정리 완료 · AI 분석을 사용하려면 Gemini 키를 연결하세요.'
@@ -89,5 +95,5 @@ export function useAiTitleExtraction(setStagedItem) {
     }
   }, [setStagedItem]);
 
-  return { aiStatusMessage, cancelAiExtraction, isAiLoading, runAiExtractionStream };
+  return { aiStatusMessage, cancelAiExtraction, isAiLoading, runAiExtractionStream, setAiStatus };
 }

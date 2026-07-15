@@ -1,4 +1,5 @@
 import { extractSongTitle, isFallbackGeminiKey, isUsableSongTitle, normalizeSongTitle, selectGeminiApiKey } from './gemini.js';
+import { getCachedTitle, putCachedTitle } from './title-cache.js';
 
 function decodeHtmlEntities(value) {
   return String(value || '')
@@ -13,6 +14,7 @@ export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const videoId = url.searchParams.get('id');
+  const forceRefresh = url.searchParams.get('refresh') === '1';
 
   // SSE 설정을 위한 스트림 생성
   const { readable, writable } = new TransformStream();
@@ -29,6 +31,12 @@ export async function onRequest(context) {
       if (!videoId) throw new Error('Missing "id" parameter');
 
       await sendEvent("유튜브 영상 정보 분석 중...");
+
+      const cachedTitle = forceRefresh ? null : await getCachedTitle(env, 'youtube', videoId);
+      if (cachedTitle?.title) {
+        await sendEvent("저장된 곡명을 불러왔습니다.", cachedTitle.title, null, 'cache');
+        return;
+      }
       
       const apiKey = selectGeminiApiKey(env);
       const isFallback = isFallbackGeminiKey(apiKey);
@@ -99,6 +107,7 @@ Return JSON only. The field must be the canonical composition title alone:
       await sendEvent(isFallback ? "기본 규칙으로 곡명을 정리 중..." : "한국어 번역명 찾는 중...");
 
       const extraction = await extractSongTitle({ apiKey, prompt, fallbackTitle: ytTitle });
+      await putCachedTitle(env, 'youtube', videoId, extraction.title, { source: extraction.mode });
 
       await sendEvent(
         extraction.mode === 'fallback'

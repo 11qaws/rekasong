@@ -1,4 +1,5 @@
 import { extractSongTitle, isFallbackGeminiKey, isUsableSongTitle, normalizeSongTitle, selectGeminiApiKey } from './gemini.js';
+import { getCachedTitle, putCachedTitle } from './title-cache.js';
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -22,12 +23,19 @@ export async function onRequest(context) {
       await sendEvent("파일 정보 추출 중...");
 
       const body = await request.json();
-      const { filename = '', metadata = {}, audioBase64 = '', audioMimeType = 'audio/mp3' } = body;
+      const { filename = '', metadata = {}, audioBase64 = '', audioMimeType = 'audio/mp3', cacheKey = '', forceRefresh = false } = body;
 
       const apiKey = selectGeminiApiKey(env);
       const isFallback = isFallbackGeminiKey(apiKey);
 
       await sendEvent(isFallback ? "기본 규칙으로 파일명을 정리 중..." : "AI가 음원과 메타데이터를 분석 중...");
+
+      const localCacheId = cacheKey || `${filename}:${metadata.title || ''}:${metadata.artist || ''}`;
+      const cachedTitle = forceRefresh ? null : await getCachedTitle(env, 'local', localCacheId);
+      if (cachedTitle?.title) {
+        await sendEvent("저장된 곡명을 불러왔습니다.", cachedTitle.title, null, 'cache');
+        return;
+      }
 
       const sourceCandidate = normalizeSongTitle(metadata.title || filename);
       if (isUsableSongTitle(sourceCandidate)) {
@@ -67,6 +75,7 @@ Return JSON only. The field must be the canonical composition title alone:
         audioBase64,
         audioMimeType
       });
+      await putCachedTitle(env, 'local', localCacheId, extraction.title, { source: extraction.mode });
 
       await sendEvent(
         extraction.mode === 'fallback'

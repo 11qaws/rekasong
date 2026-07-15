@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useWidgetSync } from '../hooks/useRemoteSync';
+import OnAirPlayer from '../components/OnAirPlayer';
 import './Widget.css';
 
 export default function Widget() {
@@ -13,9 +14,18 @@ export default function Widget() {
   const typeMatch = hash.match(/type=([^&]+)/);
   
   const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '');
   const room = searchParams.get('room') || (roomMatch ? roomMatch[1] : null);
   const publicKeyB64 = searchParams.get('key') || (keyMatch ? keyMatch[1] : null);
   const type = searchParams.get('type') || (typeMatch ? typeMatch[1] : null);
+  const mode = searchParams.get('mode') || hashParams.get('mode') || '';
+  const session = searchParams.get('session') || hashParams.get('session') || '';
+  const token = searchParams.get('token') || hashParams.get('token') || '';
+  const apiBaseUrl = searchParams.get('api') || hashParams.get('api') || '';
+
+  if (mode === 'player') {
+    return <OnAirPlayer apiBaseUrl={apiBaseUrl} room={session} token={token} />;
+  }
 
   useWidgetSync(room, publicKeyB64, (payload) => {
     setState(payload.state);

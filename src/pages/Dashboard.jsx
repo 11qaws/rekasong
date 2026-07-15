@@ -3,6 +3,7 @@ import YouTube from 'react-youtube';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
+import { useOnAirSession } from '../hooks/useOnAirSession';
 import { apiUrl } from '../lib/api';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
@@ -15,6 +16,9 @@ import './Dashboard.css';
 export default function Dashboard() {
   const [state, setSharedState] = useSyncState();
   const currentSong = state?.currentSong;
+  const onAirEventHandlerRef = useRef(null);
+  const onAir = useOnAirSession((payload) => onAirEventHandlerRef.current?.(payload));
+  const useOnAirPlayer = onAir.configured;
   
   const [activeVideoId, setActiveVideoId] = useState('');
   const [localAudioSrc, setLocalAudioSrc] = useState(null);
@@ -32,20 +36,24 @@ export default function Dashboard() {
   const audioRef = useRef(null);
   const videoRef = useRef(null);
   const handlePlayNextRef = useRef(null);
+  const togglePlaybackRef = useRef(null);
   const activeSongIdRef = useRef(null);
   const reportedMediaIssueRef = useRef(null);
   const reportedDelayRef = useRef(null);
 
   // Sync volume to players
   useEffect(() => {
-    if (ytPlayerRef.current && ytPlayerRef.current.setVolume) ytPlayerRef.current.setVolume(volume);
-    if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
-    if (videoRef.current) videoRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+    if (!useOnAirPlayer) {
+      if (ytPlayerRef.current && ytPlayerRef.current.setVolume) ytPlayerRef.current.setVolume(volume);
+      if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+      if (videoRef.current) videoRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+    }
     localStorage.setItem('rekasong_volume', volume);
-  }, [volume]);
+  }, [volume, useOnAirPlayer]);
 
   // Sync play/pause to players
   useEffect(() => {
+    if (useOnAirPlayer) return;
     if (isPlaying) {
       if (ytPlayerRef.current && ytPlayerRef.current.playVideo) ytPlayerRef.current.playVideo();
       if (audioRef.current) audioRef.current.play().catch(()=>console.log("Play interrupted"));
@@ -55,13 +63,14 @@ export default function Dashboard() {
       if (audioRef.current) audioRef.current.pause();
       if (videoRef.current) videoRef.current.pause();
     }
-  }, [isPlaying]);
+  }, [isPlaying, useOnAirPlayer]);
 
   useEffect(() => {
     activeSongIdRef.current = currentSong?.id || null;
     reportedMediaIssueRef.current = null;
     reportedDelayRef.current = null;
 
+    if (useOnAirPlayer) return;
     if (!currentSong) {
       setIsPlaying(false);
       setActiveVideoId('');
@@ -73,18 +82,20 @@ export default function Dashboard() {
       setActiveVideoId('');
       setLocalAudioSrc(currentSong.src);
     }
-  }, [currentSong]);
+  }, [currentSong, useOnAirPlayer]);
 
   // Clean up ObjectURLs to prevent memory leaks
   useEffect(() => {
+    if (useOnAirPlayer) return undefined;
     return () => {
       if (localAudioSrc && localAudioSrc.startsWith('blob:')) {
         URL.revokeObjectURL(localAudioSrc);
       }
     };
-  }, [localAudioSrc]);
+  }, [localAudioSrc, useOnAirPlayer]);
 
   useEffect(() => {
+    if (useOnAirPlayer) return undefined;
     let interval;
     if (isPlaying) {
       interval = setInterval(() => {
@@ -107,9 +118,18 @@ export default function Dashboard() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isPlaying, activeVideoId, localAudioSrc]);
+  }, [isPlaying, activeVideoId, localAudioSrc, useOnAirPlayer]);
 
   const handleSeek = (time) => {
+    if (useOnAirPlayer) {
+      try {
+        onAir.sendCommand({ type: 'seek', sessionId: currentSong?.id, position: time });
+        setCurrentTime(time);
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+      return;
+    }
     if (ytPlayerRef.current && ytPlayerRef.current.seekTo) {
       ytPlayerRef.current.seekTo(time, true);
     }
@@ -127,7 +147,8 @@ export default function Dashboard() {
     aiStatusMessage,
     cancelAiExtraction,
     isAiLoading,
-    runAiExtractionStream
+    runAiExtractionStream,
+    setAiStatus
   } = useAiTitleExtraction(setStagedItem);
   
   // Toast notifications
@@ -168,8 +189,7 @@ export default function Dashboard() {
       if (e.code === 'Space') {
         e.preventDefault();
         if (currentSong) {
-          setIsPlaying(prev => !prev);
-          showToast(isPlaying ? '일시정지' : '재생', 'info');
+          togglePlaybackRef.current?.();
         }
       } else if (e.ctrlKey && e.code === 'ArrowRight') {
         e.preventDefault();
@@ -193,26 +213,32 @@ export default function Dashboard() {
       artist: video.channelTitle,
       tags: video.tags || [],
       source: video.source || 'youtube',
+      songbookId: video.songbookId || null,
+      skipAiTitleExtraction: Boolean(video.skipAiTitleExtraction),
       mrVerified: Boolean(video.mrVerified)
     });
     showToast(
       replacedStagedItem ? '선택한 곡으로 바꾸었습니다. 2단계에서 정보를 확인하세요.' : '2단계에서 곡 정보와 재생 대상을 확인하세요.',
       'info'
     );
-    if (video.id) runAiExtractionStream(apiUrl(`/api/extract-title?id=${video.id}`), {}, stagingId);
+    if (video.skipAiTitleExtraction) {
+      setAiStatus('노래책에 등록된 곡명을 그대로 사용합니다.');
+    } else if (video.id) {
+      runAiExtractionStream(apiUrl(`/api/extract-title?id=${video.id}`), {}, stagingId);
+    }
   };
 
   const handleRetryAiExtraction = () => {
     if (!stagedItem?.stagingId) return;
     if (stagedItem.type === 'youtube' && stagedItem.src) {
-      runAiExtractionStream(apiUrl(`/api/extract-title?id=${stagedItem.src}`), {}, stagedItem.stagingId, { overwriteTitle: true });
+      runAiExtractionStream(apiUrl(`/api/extract-title?id=${stagedItem.src}&refresh=1`), {}, stagedItem.stagingId, { overwriteTitle: true });
       return;
     }
     if (stagedItem.type === 'local' && stagedItem.file) {
       runAiExtractionStream(apiUrl('/api/extract-local'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: stagedItem.file.name, metadata: {} })
+        body: JSON.stringify({ filename: stagedItem.file.name, metadata: {}, cacheKey: stagedItem.localCacheKey || '', forceRefresh: true })
       }, stagedItem.stagingId, { overwriteTitle: true });
     }
   };
@@ -228,9 +254,28 @@ export default function Dashboard() {
       mediaType: file.type === 'video/mp4' ? 'video' : 'audio',
       title: file.name,
       artist: '',
-      file: file
+      file: file,
+      localCacheKey: `${file.name}:${file.size}:${file.lastModified}`,
+      assetStatus: useOnAirPlayer ? 'uploading' : 'local',
+      assetProgress: useOnAirPlayer ? 0 : null,
+      assetId: null
     });
     showToast('로컬 파일을 불러왔습니다. 2단계에서 정보를 확인하세요.', 'info');
+
+    if (useOnAirPlayer) {
+      onAir.uploadAsset(file, (assetProgress) => {
+        setStagedItem((previous) => previous?.stagingId === stagingId ? { ...previous, assetProgress } : previous);
+      }).then((asset) => {
+        setStagedItem((previous) => previous?.stagingId === stagingId
+          ? { ...previous, assetId: asset.assetId, assetStatus: 'ready', assetProgress: 100 }
+          : previous);
+      }).catch((error) => {
+        setStagedItem((previous) => previous?.stagingId === stagingId
+          ? { ...previous, assetStatus: 'error', assetError: error.message }
+          : previous);
+        showToast(error.message || '방송용 로컬 파일을 준비하지 못했습니다.', 'error');
+      });
+    }
 
     let metadata = {};
     // Try parsing tags for better alias
@@ -251,7 +296,7 @@ export default function Dashboard() {
         runAiExtractionStream(apiUrl('/api/extract-local'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name, metadata })
+          body: JSON.stringify({ filename: file.name, metadata, cacheKey: `${file.name}:${file.size}:${file.lastModified}` })
         }, stagingId);
       },
       onError: (error) => {
@@ -259,7 +304,7 @@ export default function Dashboard() {
         runAiExtractionStream(apiUrl('/api/extract-local'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name, metadata })
+          body: JSON.stringify({ filename: file.name, metadata, cacheKey: `${file.name}:${file.size}:${file.lastModified}` })
         }, stagingId);
       }
     });
@@ -276,14 +321,34 @@ export default function Dashboard() {
 
   const handleClearStaged = () => {
     cancelAiExtraction();
-    setStagedItem(null);
+    setAiStatus('');
+    setStagedItem((previous) => {
+      if (previous?.type === 'local' && previous.src?.startsWith('blob:')) URL.revokeObjectURL(previous.src);
+      return null;
+    });
     showToast('선택한 곡을 취소했습니다.', 'info');
   };
 
   const playAudioForSong = (song) => {
-    setIsPlaying(true); // 항상 새 곡은 재생 상태로 시작
     setCurrentTime(0);
     setDuration(0);
+    if (useOnAirPlayer) {
+      if (!song) {
+        onAir.sendCommand({ type: 'stop', sessionId: currentSong?.id });
+        setIsPlaying(false);
+        return;
+      }
+      onAir.sendCommand({
+        type: 'load',
+        sessionId: song.id,
+        song,
+        position: 0,
+        volume
+      });
+      return;
+    }
+
+    setIsPlaying(true); // 항상 새 곡은 재생 상태로 시작
     if (!song) {
       setActiveVideoId('');
       setLocalAudioSrc(null);
@@ -300,17 +365,41 @@ export default function Dashboard() {
 
   const handleGoLive = (insertAtTop = false) => {
     if (!stagedItem) return;
+    if (useOnAirPlayer && onAir.connectionState !== 'connected') {
+      showToast('OBS On-Air 위젯이 연결된 뒤 방송 재생을 시작할 수 있습니다.', 'error');
+      return;
+    }
+    if (useOnAirPlayer && stagedItem.type === 'local' && !stagedItem.assetId) {
+      showToast(stagedItem.assetError || '방송용 로컬 파일을 준비 중입니다.', 'info');
+      return;
+    }
 
     const newSong = {
       id: Date.now().toString(),
       type: stagedItem.type,
       title: stagedItem.title,
       artist: stagedItem.artist,
-      src: stagedItem.src,
+      src: useOnAirPlayer && stagedItem.type === 'local' ? stagedItem.assetId : stagedItem.src,
+      assetId: useOnAirPlayer && stagedItem.type === 'local' ? stagedItem.assetId : undefined,
       mediaType: stagedItem.mediaType || 'audio',
       tags: stagedItem.tags || [],
-      source: stagedItem.source || 'youtube'
+      source: stagedItem.source || 'youtube',
+      songbookId: stagedItem.songbookId || null
     };
+
+    const cacheEntries = [];
+    if (newSong.type === 'youtube' && newSong.src) cacheEntries.push({ kind: 'youtube', id: newSong.src, mrId: newSong.src });
+    if (newSong.source !== 'youtube' && newSong.songbookId) {
+      cacheEntries.push({ kind: `songbook:${newSong.source}`, id: newSong.songbookId, songbookId: newSong.songbookId, mrId: newSong.type === 'youtube' ? newSong.src : null });
+    }
+    if (newSong.type === 'local' && stagedItem.localCacheKey) cacheEntries.push({ kind: 'local', id: stagedItem.localCacheKey });
+    if (cacheEntries.length) {
+      fetch(apiUrl('/api/title-cache'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newSong.title, entries: cacheEntries })
+      }).catch(() => {});
+    }
 
     setSharedState(prev => {
       // If nothing is playing, play immediately
@@ -329,7 +418,10 @@ export default function Dashboard() {
     });
 
     cancelAiExtraction();
-    setStagedItem(null);
+    setStagedItem((previous) => {
+      if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:')) URL.revokeObjectURL(previous.src);
+      return null;
+    });
   };
 
   const handlePlayNext = (expectedSongId = null) => {
@@ -363,6 +455,44 @@ export default function Dashboard() {
   };
 
   handlePlayNextRef.current = handlePlayNext;
+
+  const handleTogglePlayback = () => {
+    if (!currentSong) return;
+    if (useOnAirPlayer) {
+      try {
+        onAir.sendCommand({ type: isPlaying ? 'pause' : 'play', sessionId: currentSong.id });
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+      return;
+    }
+    setIsPlaying((previous) => !previous);
+  };
+
+  const handleVolumeChange = (nextVolume) => {
+    const clamped = Math.max(0, Math.min(100, Number(nextVolume) || 0));
+    setVolume(clamped);
+    if (useOnAirPlayer && currentSong) {
+      try {
+        onAir.sendCommand({ type: 'volume', sessionId: currentSong.id, volume: clamped });
+      } catch (error) {
+        showToast(error.message, 'error');
+      }
+    }
+  };
+
+  const handleEndBroadcastSession = () => {
+    if (!useOnAirPlayer) {
+      setSharedState((previous) => ({ ...previous, currentSong: null, queue: [], history: [] }));
+      setIsPlaying(false);
+      return;
+    }
+    try {
+      onAir.sendCommand({ type: 'end_session' });
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  };
 
   const handlePlaybackDelay = (songId, source) => {
     if (!songId || activeSongIdRef.current !== songId || reportedDelayRef.current === songId) return;
@@ -433,6 +563,40 @@ export default function Dashboard() {
     });
   };
 
+  togglePlaybackRef.current = handleTogglePlayback;
+  onAirEventHandlerRef.current = (payload) => {
+    if (payload.type === 'snapshot' || payload.type === 'transport') {
+      const remoteTransport = payload.transport || {};
+      if (remoteTransport.song?.id) {
+        setSharedState((previous) => {
+          if (previous.currentSong?.id === remoteTransport.song.id) return previous;
+          return { ...previous, currentSong: remoteTransport.song };
+        });
+      }
+      if (Number.isFinite(remoteTransport.position)) setCurrentTime(remoteTransport.position);
+      if (Number.isFinite(remoteTransport.duration)) setDuration(remoteTransport.duration);
+      setIsPlaying(remoteTransport.status === 'playing' || remoteTransport.status === 'buffering' || remoteTransport.status === 'loading');
+    }
+    if (payload.type === 'player_event') {
+      const event = payload.event || {};
+      const remoteTransport = payload.transport || {};
+      if (Number.isFinite(remoteTransport.position)) setCurrentTime(remoteTransport.position);
+      if (Number.isFinite(event.duration)) setDuration(event.duration);
+      if (event.type === 'playing') setIsPlaying(true);
+      if (event.type === 'paused' || event.type === 'ended' || event.type === 'error') setIsPlaying(false);
+      if (event.type === 'buffering') handlePlaybackDelay(event.sessionId, 'On-Air 위젯');
+      if (event.type === 'ended') onLivePlayerEnd(event.sessionId);
+      if (event.type === 'error') handleMediaFailure(event.sessionId, 'On-Air 위젯', event.message || '재생 오류');
+    }
+    if (payload.type === 'session_ended') {
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setDuration(0);
+      setSharedState((previous) => ({ ...previous, currentSong: null, queue: [], history: [] }));
+      showToast('방송 세션을 종료하고 임시 파일 정리를 예약했습니다.', 'info');
+    }
+  };
+
   return (
     <div className={`dashboard-container ${stagedItem ? 'staging-active' : ''}`}>
       <header className="dashboard-header">
@@ -449,14 +613,18 @@ export default function Dashboard() {
             currentSong={state?.currentSong}
             onSkip={handlePlayNext}
             isPlaying={isPlaying}
-            onTogglePlay={() => setIsPlaying(!isPlaying)}
+            onTogglePlay={handleTogglePlayback}
             volume={volume}
-            onVolumeChange={setVolume}
+            onVolumeChange={handleVolumeChange}
             currentTime={currentTime}
             duration={duration}
             onSeek={handleSeek}
             setSharedState={setSharedState}
             showToast={showToast}
+            onAirPlayerUrl={onAir.playerUrl}
+            onAirStatus={onAir.connectionState}
+            onPrepareOnAir={onAir.preparePlayer}
+            onEndBroadcastSession={handleEndBroadcastSession}
           />
         </ErrorBoundary>
         </div>
