@@ -11,7 +11,7 @@ export default function PlaybackPanel({
   currentTime,
   duration,
   onSeek,
-  setSharedState,
+  onRequeueCurrent,
   showToast,
   onAirPlayerUrl,
   onAirDisplayUrl,
@@ -124,14 +124,12 @@ export default function PlaybackPanel({
               {isMuted ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
             </button>
             <input aria-label="볼륨" type="range" min="0" max="100" value={volume} onChange={(event) => onVolumeChange(Number(event.target.value))} className="volume-slider" />
-            <button type="button" onClick={onSkip} className="btn-icon" title="다음 곡으로 스킵"><SkipForward size={17} /></button>
+            {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
+            <button type="button" onClick={() => onSkip()} className="btn-icon" title="다음 곡으로 스킵"><SkipForward size={17} /></button>
+            {/* 다시 예약은 새 entryId의 새 QueueEntry 생성이다(§1) — 코디네이터가 팩토리로 처리. */}
             <button
               type="button"
-              onClick={() => {
-                const replay = { ...currentSong, id: Date.now().toString() };
-                setSharedState((previous) => ({ ...previous, queue: [...(previous.queue || []), replay] }));
-                showToast?.('현재 곡을 대기열 끝에 다시 예약했습니다.', 'success');
-              }}
+              onClick={() => onRequeueCurrent?.()}
               className="btn-icon"
               title="현재 곡 다시 예약"
             ><Repeat size={16} /></button>
