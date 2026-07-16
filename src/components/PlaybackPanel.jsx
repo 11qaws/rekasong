@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertOctagon, Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, Settings, SkipForward, Volume1, Volume2, VolumeX, X } from 'lucide-react';
+import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, Settings, SkipForward, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 
 export default function PlaybackPanel({
   currentSong,
@@ -20,7 +20,6 @@ export default function PlaybackPanel({
   onPrepareOnAir,
   onPrepareOnAirDisplay
 }) {
-  const [panicArmed, setPanicArmed] = useState(false);
   const [previousVolume, setPreviousVolume] = useState(100);
   const [isObsSetupOpen, setIsObsSetupOpen] = useState(false);
   const [isPreparingPlayer, setIsPreparingPlayer] = useState(false);
@@ -97,18 +96,6 @@ export default function PlaybackPanel({
     }
   };
 
-  const handlePanic = () => {
-    if (!panicArmed) {
-      setPanicArmed(true);
-      showToast?.('한 번 더 누르면 현재 곡과 대기열을 모두 멈춥니다.', 'error');
-      window.setTimeout(() => setPanicArmed(false), 3000);
-      return;
-    }
-    setSharedState((previous) => ({ ...previous, currentSong: null, queue: [] }));
-    setPanicArmed(false);
-    showToast?.('현재 곡과 대기열을 모두 멈췄습니다.', 'error');
-  };
-
   return (
     <section className="panel playback-panel glass-card" aria-label="현재 재생 제어">
       <div className="playback-panel-header">
@@ -117,9 +104,6 @@ export default function PlaybackPanel({
           {currentSong && <span className={`on-air-badge ${isPlaying ? '' : 'is-paused'}`}>{isPlaying ? '● ON AIR' : 'Ⅱ 일시정지'}</span>}
           <button type="button" onClick={() => setIsObsSetupOpen(true)} className="btn-icon" title="OBS 연결 설정" aria-label="OBS 연결 설정">
             <Settings size={16} />
-          </button>
-          <button type="button" onClick={handlePanic} className={`btn-icon btn-icon-danger ${panicArmed ? 'panic-warn' : ''}`} title="두 번 누르면 현재 곡과 대기열을 정지합니다">
-            <AlertOctagon size={16} />
           </button>
         </div>
       </div>

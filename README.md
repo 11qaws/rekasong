@@ -1,3 +1,14 @@
+# Rekasong
+
+방송용 노래 검색·MR 카탈로그·대기열·OBS 위젯 제어 도구입니다.
+
+## 기준 문서
+
+- [곡 생애주기와 상태 모델](docs/SONG_LIFECYCLE.md) — 재생·대기열·OBS·위젯·UI/UX의 기준 계약
+- [현재 상태와 다음 작업](docs/PROJECT_STATUS.md) — 구현 범위, 알려진 차이, 우선순위별 TODO
+
+---
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.

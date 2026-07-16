@@ -397,12 +397,13 @@ export default function Dashboard() {
       return;
     }
 
-    setIsPlaying(true); // 항상 새 곡은 재생 상태로 시작
     if (!song) {
+      setIsPlaying(false);
       setActiveVideoId('');
       setLocalAudioSrc(null);
       return;
     }
+    setIsPlaying(true); // 항상 새 곡은 재생 상태로 시작
     if (song.type === 'youtube') {
       setActiveVideoId(song.src);
       setLocalAudioSrc(null);
