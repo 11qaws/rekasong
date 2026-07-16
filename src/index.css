@@ -25,9 +25,14 @@
   
   /* 숨겨진 설정 바리에이션 (Hidden Lore Colors) & 위젯 호환성 */
   --eureka-magenta: #FF2A6D;
-  --eureka-lemon: #FFFF66; 
+  --eureka-lemon: #FFFF66;
   --star-gold: var(--eureka-lemon);
   --star-warm: #FFF0A8;
+
+  /* 기존 코드가 참조하던 미정의 변수 보완 (기존에 쓰이던 리터럴 값을 변수로 승격 — 새 색 아님) */
+  --eureka-azure: #6D9ABD; /* rgba(109,154,189,…) 리터럴과 동일. Setlink/보조 정보 액센트 */
+  --accent-red: #EF4444; /* 위험·정지 동작 전용 (기존 danger 리터럴과 동일) */
+  --bg-panel: var(--bg-mid);
   
   --glass-bg: #FFFFFF;
   --glass-border: rgba(69, 123, 123, 0.15); /* 틸 컬러 기반의 부드러운 테두리 */
@@ -39,6 +44,9 @@
 
 * {
   box-sizing: border-box;
+  /* 테마 스크롤바 (Firefox + Chromium 121+). 실버 썸/투명 트랙으로 통일 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--chr-silver) transparent;
 }
 
 body {
@@ -73,9 +81,9 @@ body.widget-mode {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--text-dim);
+  background: var(--chr-silver);
   border-radius: 10px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--neon-cyan);
+  background: var(--chr-vest);
 }

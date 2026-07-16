@@ -1,5 +1,27 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-16 — 반응형 통일 디자인 (UX Audit Phase 06)
+
+상세 계획·검증은 `docs/ux-audits/PHASE_06_RESPONSIVE_UNITY.md` 참조. CSS만 변경(JS/JSX 무변경).
+
+- **뷰포트 잠금(wide)**: 대시보드가 100vh 플렉스 체인 + `grid-rows: auto minmax(0,1fr)`로 잠기고, 페이지 스크롤 없이 대기열/검색 리스트만 패널 내부에서 스크롤. narrow(≤1100px)는 기존 스택을 보존하되 리스트 높이를 캡해 페이지 길이를 고정.
+- **컨테이너 쿼리**: 2단계 미리보기 레이아웃이 뷰포트가 아닌 composer 칼럼 실폭(620px)에 반응.
+- **색 위계 재정렬**: 활성 탭 등 상시 면적의 네온 에메랄드를 딥그린(--chr-vest)으로, 네온은 ON AIR·현재재생·포커스링(`:focus-visible`)·재생 CTA로 한정.
+
+### 트러블슈팅 기록 (재발 방지 레퍼런스)
+
+1. **미정의 CSS 변수 4종**(`--accent-red`, `--eureka-azure`, `--bg-panel`, `--text-dim/--neon-cyan`)이 조용히 스타일을 죽이고 있었다(패닉 경고 무색, 스크롤바 투명 등). 기존 리터럴 값을 변수로 승격해 복구. *교훈: 변수 참조 추가 시 :root 정의 여부를 반드시 교차 확인.*
+2. **`.glass-card`의 다크테마 잔재 테두리**(`rgba(255,255,255,0.08)`)가 캐스케이드에서 `.panel` 실버 테두리를 덮어써 모든 패널이 무테였다.
+3. **flex-basis 0%에서는 `flex-wrap`이 영영 발동하지 않는다.** 탭 오버플로 수정 시 `flex: 1` → `flex: 1 1 auto` + 컨테이너 `min-width: 0` 필요.
+4. **`display: grid` 리스트에 `grid-template-columns`가 없으면 트랙이 max-content로 늘어난다.** 긴 곡명이 대기열 행을 옆으로 밀어 모바일에서 버튼이 화면 밖으로 나감 → `minmax(0, 1fr)` 명시.
+5. **스크롤 컨테이너의 위쪽 padding 영역에는 스크롤 지나가는 콘텐츠가 비쳐 보인다.** sticky 제목 위로 영상 프리뷰가 비침 → 패널 `padding-top: 0` + sticky 제목이 간격을 불투명하게 대체.
+6. **Chrome headless `--screenshot`은 원인 불명의 스테일 렌더를 반환할 수 있다.** 같은 빌드를 playwright-core(설치된 Chrome 채널)로 열자 DOM 실측과 스크린샷이 일치. 시각 검증은 playwright 경유를 권장.
+7. 검증 중 발견한 기존 결함 수정: `.btn-secondary` 스타일 부재(기본 버튼 렌더), `.btn-icon-danger` 95px 고정폭(아이콘 버튼 비대), 히스토리 행 액션 세로 쌓임(~90px 행).
+
+### 검증
+- `npm run lint` / `npm run build` 통과 (경고는 기존 JS 경고 6건 그대로).
+- vite preview + playwright-core로 6개 뷰포트 × 대기열 12곡/2단계/온보딩 상태 실렌더 확인.
+
 ## v0.0.6 — External failure resilience
 
 - Audited 120 external-failure and damaged-input scenarios across widget sync, YouTube, local audio, and persisted/external state.

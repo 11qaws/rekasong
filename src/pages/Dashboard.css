@@ -1,6 +1,11 @@
-/* Dashboard Base - Eureka Signature Theme */
+/* Dashboard Base - Eureka Signature Theme
+   [Phase 08 반응형 통일] wide(>1100px)에서는 대시보드가 뷰포트(100vh)에 잠기고
+   페이지 스크롤 없이 각 패널의 리스트만 내부 스크롤한다. narrow(<=1100px)에서는
+   기존의 세로 스택 방향성을 유지하되 리스트 높이를 캡해 총 스크롤량을 줄인다. */
 .dashboard-container {
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
   /* 조끼 색상 기반의 차분한 틸 그레이 배경 (가장 눈이 편안한 색) */
   background-color: var(--bg-deep);
   color: var(--text-main);
@@ -63,20 +68,23 @@
   margin-top: 0.5rem;
 }
 
-/* 3-Panel Grid */
+/* 라이브 콘솔 그리드 — 단일 진실 공급원.
+   1행: 현재 재생(전체 폭, 콘텐츠 높이) / 2행: 대기열 | 곡 추가(남은 높이 전부).
+   minmax(0, 1fr) 행이 뷰포트 잠금의 핵심: 2행 패널들은 남은 높이를 넘지 못한다.
+   staging 여부는 composer 영역 내부에서만 바뀌므로 그리드는 변하지 않는다. */
 .dashboard-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr; /* 초기 상태는 2단 */
-  gap: 1.5rem;
-  max-width: 1400px;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1600px;
   margin: 0 auto;
-  height: calc(100vh - 220px); /* 화면을 꽉 채우기 위한 높이 지정 */
-  min-height: 500px; /* Phase 11: 최소 높이 보장 */
-  transition: grid-template-columns 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.dashboard-container.staging-active .dashboard-grid {
-  grid-template-columns: 1.2fr 1fr 1.2fr; /* 3단 시 Staging을 약간 작게 */
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'playback playback'
+    'queue composer';
+  gap: 1rem;
 }
 
 /* Bento Box Panel (The White Shirt) */
@@ -206,7 +214,7 @@
 .result-item:hover {
   background: var(--glass-border);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); /* 라이트 테마에 맞는 옅은 그림자 */
 }
 
 .result-thumb {
@@ -248,7 +256,7 @@
   border: 1px solid transparent;
 }
 .songbook-item:hover {
-  background: rgba(255,255,255,0.02);
+  background: var(--bg-deep); /* 흰 패널 위에서 실제로 보이는 호버 배경 */
   border-color: var(--glass-border);
   transform: translateX(4px);
 }
@@ -259,7 +267,7 @@
 .songbook-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 .songbook-tags span { padding: 0.1rem 0.5rem; border-radius: 10px; background: var(--chr-hat); color: #fff; font-size: 0.65rem; }
 .songbook-mr-state { margin-top: 0.45rem; color: var(--text-muted); font-size: 0.72rem; }
-.songbook-mr-state.is-linked { color: var(--eureka-emerald); font-weight: 700; }
+.songbook-mr-state.is-linked { color: var(--chr-vest); font-weight: 700; } /* 흰 배경 위 텍스트는 네온 대신 딥그린 */
 .songbook-actions { display: flex; flex: 0 0 124px; flex-direction: column; align-items: stretch; gap: 0.38rem; width: 124px; }
 .songbook-action-primary, .songbook-action-secondary, .songbook-file-action { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 34px; border-radius: 8px; font: inherit; white-space: nowrap; }
 .songbook-action-primary, .songbook-action-secondary, .songbook-file-action { width: 100%; }
@@ -410,9 +418,8 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #10b981;
+  color: var(--chr-vest);
   font-weight: 600;
-  text-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
 }
 
 /* Live Panel Specifics */
@@ -503,6 +510,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1; /* allow shrinking */
+  min-width: 0; /* nowrap 텍스트가 줄어들 수 있게 (없으면 좁은 화면에서 액션 버튼을 밀어냄) */
 }
 
 .history-artist {
@@ -629,8 +637,7 @@
 .btn-icon-danger {
   color: #ef4444;
   border-color: rgba(239, 68, 68, 0.3);
-  min-width: 95px; /* Phase 11: 텍스트 변경 시 덜컥거림 방지 */
-  justify-content: center;
+  justify-content: center; /* 현재는 모두 아이콘 전용이므로 고정 최소폭(95px)을 제거 */
 }
 
 .btn-icon-danger:hover {
@@ -707,26 +714,14 @@ button, input {
   font-family: inherit;
 }
 
-button:focus, input:focus {
-  outline: 2px solid var(--chr-vest);
+/* 포커스링은 에메랄드 — 키보드 조작 순간에만 (클릭마다 링이 뜨지 않게 :focus-visible) */
+button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--eureka-emerald);
   outline-offset: 2px;
 }
 
-/* Webkit Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.4);
-}
+/* 스크롤바 테마는 index.css에서 전역으로 관리한다 (실버 썸 / 투명 트랙).
+   과거 다크테마용 흰색 반투명 썸 정의는 라이트 테마에서 보이지 않아 제거. */
 
 /* Global Container */
 .audio-controls {
@@ -779,12 +774,11 @@ button:focus, input:focus {
   width: 24px;
   height: 24px;
   background-color: var(--chr-vest);
-  color: var(--bg-deep);
+  color: #fff;
   border-radius: 50%;
   font-size: 0.85rem;
   font-weight: 800;
   margin-right: 0.5rem;
-  box-shadow: 0 0 10px rgba(250, 204, 21, 0.3);
 }
 
 /* 퀵 예약 버튼 (Bypass) */
@@ -813,7 +807,7 @@ button:focus, input:focus {
 }
 .btn-quick-play:hover {
   background: var(--chr-vest);
-  color: var(--bg-deep);
+  color: #fff;
   border-color: var(--chr-vest);
 }
 
@@ -841,6 +835,8 @@ button:focus, input:focus {
 
 .ai-status-done {
   animation: fadeIn 0.5s ease;
+  /* 흰 배경 위 네온 텍스트는 읽히지 않는다 — 인라인 컬러를 딥그린으로 교정 */
+  color: var(--chr-vest) !important;
 }
 
 @keyframes fadeIn {
@@ -871,58 +867,76 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .history-item.active { animation: fadeIn 0.3s ease-out; }
 .panel-title { position: sticky; top: -1px; z-index: 10; background: var(--bg-deep); padding: 0.5rem; margin-top: -0.5rem; border-radius: 8px 8px 0 0; }
 .panel-heading { display: flex; align-items: center; gap: 0.45rem; margin: 0 0 0.65rem; font-size: 1rem; }
-.drop-zone { transition: all 0.2s; } .drop-zone:hover { border-color: var(--eureka-emerald); background: rgba(16, 185, 129, 0.05); }
-.drop-zone-placeholder.drag-over { border-color: var(--eureka-emerald); background: rgba(16, 185, 129, 0.12); box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.22); }
+.drop-zone { transition: all 0.2s; } .drop-zone:hover { border-color: var(--eureka-emerald); background: rgba(16, 255, 203, 0.05); }
+.drop-zone-placeholder.drag-over { border-color: var(--eureka-emerald); background: rgba(16, 255, 203, 0.12); box-shadow: 0 0 0 2px rgba(16, 255, 203, 0.22); }
 .playback-options { margin: 0 0 0.75rem; color: var(--text-muted); font-size: 0.8rem; }
 .playback-options summary { cursor: pointer; width: fit-content; }
 .playback-options > label { display: flex; align-items: flex-start; gap: 0.55rem; margin-top: 0.55rem; padding: 0.65rem 0.75rem; border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer; }
 .playback-options input { margin-top: 0.15rem; }
 .playback-options strong, .playback-options small { display: block; }
 .playback-options small { margin-top: 0.2rem; color: var(--text-muted); }
-.btn-copy { transition: all 0.3s; } .btn-copy:hover { box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); transform: translateY(-1px); }
+/* .btn-copy 호버는 위(레몬 하이라이트) 한 곳에서만 정의한다 — 에메랄드 글로우 중복 제거 */
 
 
 .search-input-wrapper { position: relative; flex: 1; display: flex; align-items: center; }
 .search-icon { position: absolute; left: 12px; color: var(--text-muted); }
 .search-input { padding-left: 36px !important; }
-.glass-card { border: 1px solid rgba(255, 255, 255, 0.08); }
+.glass-card { border: 1px solid var(--glass-border); } /* 다크테마 잔재(흰 반투명)가 .panel 테두리를 지우던 것 복구 */
 
 
-.search-tabs { 
-  display: flex; 
-  gap: 0.5rem; 
-  border-bottom: none; 
-  background: rgba(0,0,0,0.2); 
-  padding: 0.3rem; 
-  border-radius: 8px; 
-}
-.tab-btn { 
-  background: transparent; 
-  border: none; 
-  padding: 0.6rem 1rem; 
-  color: var(--text-muted); 
-  cursor: pointer; 
-  display: flex; 
-  align-items: center; 
+/* 탭: 레이블이 두 줄로 꺾이지 않게 nowrap, 공간이 모자라면 컨테이너가 줄바꿈.
+   min-width:0 필수 — .panel-title(flex row)의 아이템이라 min-content 바닥값 때문에
+   컨테이너가 자식 합계 폭으로 늘어나 wrap이 영영 발동하지 않는다. */
+.search-panel .tabs { flex-wrap: wrap; min-width: 0; width: 100%; }
+.tab-btn {
+  background: transparent;
+  border: none;
+  padding: 0.55rem 0.6rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 0.5rem; 
-  font-weight: 600; 
-  transition: all 0.3s; 
-  flex: 1; 
-  border-radius: 6px; 
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  white-space: nowrap;
+  transition: color 0.2s, background 0.2s;
+  flex: 1 1 auto; /* basis 0%면 flex-wrap이 절대 발동하지 않는다 — 콘텐츠 기준으로 줄바꿈 */
+  border-radius: 6px;
 }
-.tab-btn:hover { 
-  color: var(--text-main); 
-  background: rgba(255,255,255,0.05); 
+.tab-btn:hover {
+  color: var(--text-main);
+  background: var(--bg-deep);
 }
-.tab-btn.active { 
-  color: #fff; 
-  background: var(--eureka-emerald); 
-  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3); 
+/* 활성 탭은 구조적 액센트(딥그린) — 네온은 탭 같은 상시 표시 면적에 쓰지 않는다 */
+.tab-btn.active {
+  color: #fff;
+  background: var(--chr-vest);
 }
 
-
-@media (max-width: 1200px) { .dashboard-container.staging-active .dashboard-grid { grid-template-columns: 1fr; height: auto; } .dashboard-grid { grid-template-columns: 1fr; height: auto; } .panel { min-height: 500px; } }
+/* 보조 버튼 공통 스타일 (기존에 정의가 누락되어 브라우저 기본 버튼으로 렌더되던 것 보완) */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--bg-mid);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.btn-secondary:hover, .btn-secondary:focus-visible {
+  border-color: var(--chr-vest);
+  color: var(--chr-vest);
+  background: var(--bg-deep);
+}
 
 
 @keyframes sparklePop { 0% { transform: scale(0.5) rotate(0deg); opacity: 0; } 50% { transform: scale(1.5) rotate(15deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); opacity: 1; } }
@@ -931,14 +945,13 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-@media (max-width: 768px) { .dashboard-container { padding: 0.5rem; } .dashboard-header .logo { font-size: 1.5rem; } .logo::after { right: -26px; bottom: 7px; transform: scale(0.75) rotate(28deg); } .panel { padding: 1rem; min-height: 400px; } .search-input { font-size: 0.9rem; } .btn-primary { padding: 0.6rem 1rem; font-size: 0.9rem; } }
 .queue-item.draggable.drag-over { border-top: 2px solid var(--eureka-emerald); transform: translateY(2px); }
 
 /* Toast Notifications */
 .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
-.toast { background: var(--glass-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--glass-border); padding: 12px 20px; border-radius: 8px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 4px 15px rgba(0,0,0,0.3); animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.toast-action { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 5px 9px; background: rgba(255,255,255,0.18); color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
-.toast-action:hover, .toast-action:focus-visible { background: rgba(255,255,255,0.32); }
+.toast { background: var(--glass-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--glass-border); padding: 12px 20px; border-radius: 8px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 4px 15px rgba(0,0,0,0.12); animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.toast-action { flex: 0 0 auto; border: 1px solid var(--glass-border); border-radius: 6px; padding: 5px 9px; background: var(--bg-deep); color: var(--chr-vest); font: inherit; font-weight: 700; cursor: pointer; }
+.toast-action:hover, .toast-action:focus-visible { background: var(--bg-mid); border-color: var(--chr-vest); }
 @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
 /* Dashboard Subtle BG Animation */
@@ -946,33 +959,9 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .dashboard-container::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle at center, rgba(16, 185, 129, 0.03) 0%, transparent 60%); z-index: -1; animation: bgSpin 30s linear infinite; pointer-events: none; }
 @keyframes bgSpin { 100% { transform: rotate(360deg); } }
 
-/* Main workflow stays together: search first, then the selected-song preview.
-   Live controls occupy the companion column and never get squeezed into a
-   narrow third column. */
-.dashboard-grid {
-  grid-template-columns: minmax(0, 1.65fr) minmax(360px, 0.9fr);
-  grid-template-areas: 'workflow live';
-  max-width: 1600px;
-  align-items: start;
-  height: auto;
-  min-height: calc(100vh - 220px);
-}
 .local-video-preview { display: block; width: 100%; border-radius: 8px; background: #000; }
-.dashboard-container { overflow-x: hidden; overflow-y: auto; max-height: 100vh; }
-.dashboard-container.staging-active .dashboard-grid {
-  grid-template-columns: minmax(0, 1.65fr) minmax(360px, 0.9fr);
-  grid-template-areas: 'workflow live';
-}
-.workflow-column { grid-area: workflow; min-width: 0; display: flex; flex-direction: column; gap: 1.5rem; }
-.live-column { grid-area: live; min-width: 0; display: flex; }
-.workflow-search, .workflow-staging, .live-column > * { width: 100%; min-width: 0; }
-.workflow-search > .panel { height: auto; max-height: none; }
-.live-column > .panel { min-height: calc(100vh - 220px); height: auto; }
-.workflow-staging { overflow: hidden; }
-.workflow-staging > * { width: 100%; min-width: 0; }
-.workflow-search > .panel, .workflow-staging > .panel, .live-column > .panel { width: 100%; min-width: 0; }
 .ai-title-card { display: flex; align-items: center; gap: 0.7rem; padding: 0.75rem; border: 1px solid rgba(16,255,203,0.35); border-radius: 10px; background: rgba(16,255,203,0.07); }
-.ai-title-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 8px; color: var(--eureka-emerald); background: rgba(16,255,203,0.14); }
+.ai-title-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 8px; color: var(--chr-vest); background: rgba(16,255,203,0.14); }
 .ai-title-copy { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
 .ai-title-copy strong { font-size: 0.82rem; color: var(--text-main); }
 .ai-title-copy span { color: var(--text-muted); font-size: 0.74rem; line-height: 1.35; }
@@ -980,11 +969,11 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .ai-phase-track span { display: inline-flex; align-items: center; gap: 0.18rem; color: var(--text-muted); font-size: 0.64rem; white-space: nowrap; opacity: 0.55; }
 .ai-phase-track span:not(:last-child)::after { content: ''; width: 8px; height: 1px; margin-left: 0.16rem; background: currentColor; opacity: 0.45; }
 .ai-phase-track b { display: grid; place-items: center; width: 13px; height: 13px; border: 1px solid currentColor; border-radius: 50%; font-size: 0.55rem; }
-.ai-phase-track .active { color: var(--eureka-emerald); opacity: 1; font-weight: 800; }
-.ai-phase-track .active b { border-color: var(--eureka-emerald); background: var(--eureka-emerald); color: var(--bg-deep); box-shadow: 0 0 0 3px rgba(16,255,203,0.12); }
-.ai-phase-track .done { color: var(--eureka-emerald); opacity: 0.82; }
-.ai-phase-track .done b { background: currentColor; color: var(--bg-deep); }
-.ai-analysis-badge { display: inline-flex; align-items: center; gap: 0.28rem; flex: 0 0 auto; padding: 0.35rem 0.45rem; border: 1px solid rgba(16,255,203,0.46); border-radius: 999px; background: rgba(16,255,203,0.13); color: var(--eureka-emerald); font-size: 0.7rem; font-weight: 800; letter-spacing: -0.02em; }
+.ai-phase-track .active { color: var(--chr-vest); opacity: 1; font-weight: 800; }
+.ai-phase-track .active b { border-color: var(--chr-vest); background: var(--chr-vest); color: #fff; box-shadow: 0 0 0 3px rgba(16,255,203,0.12); }
+.ai-phase-track .done { color: var(--chr-vest); opacity: 0.82; }
+.ai-phase-track .done b { background: currentColor; color: #fff; }
+.ai-analysis-badge { display: inline-flex; align-items: center; gap: 0.28rem; flex: 0 0 auto; padding: 0.35rem 0.45rem; border: 1px solid rgba(16,255,203,0.46); border-radius: 999px; background: rgba(16,255,203,0.13); color: var(--chr-vest); font-size: 0.7rem; font-weight: 800; letter-spacing: -0.02em; }
 .ai-analysis-badge i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: aiAnalysisDot 1.05s ease-in-out infinite; }
 .ai-analysis-badge i:nth-of-type(2) { animation-delay: 0.15s; }
 .ai-analysis-badge i:nth-of-type(3) { animation-delay: 0.3s; }
@@ -995,50 +984,26 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .staging-song-info { display: grid; gap: 0.8rem; min-width: 0; }
 .preview-player-priority { position: relative; margin: 0; }
 .staging-title-help { margin: -0.35rem 0 0; color: var(--text-muted); font-size: 0.7rem; }
-.staging-title-help span { margin-left: 8px; color: var(--eureka-emerald); }
+.staging-title-help span { margin-left: 8px; color: var(--chr-vest); }
 .staging-actions { display: grid; gap: 0.65rem; margin-top: 0; }
 .mr-cache-note { margin: 0; padding: 0.62rem 0.72rem; border: 1px solid rgba(16,255,203,0.22); border-radius: 8px; background: rgba(16,255,203,0.055); color: var(--text-muted); font-size: 0.76rem; line-height: 1.45; }
 .staging-action-buttons { display: flex; gap: 0.5rem; width: 100%; }
 .staging-action-buttons .go-live-btn { flex: 1; padding: 1rem; font-size: 1.02rem; font-weight: bold; }
-.staging-action-buttons .go-live-next { background-color: var(--accent-red); }
+/* '바로 다음 곡' 새치기는 위험 동작이 아니므로 빨강 대신 네이비로 강조를 구분한다 */
+.staging-action-buttons .go-live-next { background-color: var(--chr-hat); }
+.staging-action-buttons .go-live-next:hover:not(:disabled) { background: var(--chr-vest); }
 .mr-unavailable { margin: 0; font-size: 0.8rem; color: var(--accent-red); }
 .panel-title, .panel-heading, .section-title { min-width: 0; }
 .panel-title > span, .section-title > span { min-width: 0; }
 
-@media (max-width: 1100px) {
-  .dashboard-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'live' 'workflow';
-    height: auto;
-    min-height: 0;
-  }
-  .live-column > .panel, .workflow-search > .panel, .workflow-staging > .panel {
-    height: auto;
-    max-height: none;
-  }
-}
-@media (max-width: 650px) {
-  .staging-media-info { grid-template-columns: 1fr; }
-  .songbook-item { align-items: center; flex-direction: row; gap: 0.6rem; }
-  .songbook-actions { display: flex; flex: 0 0 108px; flex-direction: column; width: 108px; gap: 0.3rem; }
-  .songbook-action-primary, .songbook-action-secondary, .songbook-file-action, .songbook-retry-action { min-height: 31px; padding: 0.32rem 0.38rem; font-size: 0.7rem; }
-}
-
 /* Live-console-first layout: the active broadcast and queue own the screen,
-   while adding a song is a focused secondary composer. */
+   while adding a song is a focused secondary composer.
+   (그리드 자체의 정의는 상단 .dashboard-grid 한 곳에서만 한다) */
 .dashboard-header { margin-bottom: 1rem; padding: 1.15rem 2rem 1.4rem; }
-.dashboard-grid,
-.dashboard-container.staging-active .dashboard-grid {
-  grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
-  grid-template-areas:
-    'playback playback'
-    'queue composer';
-  gap: 1rem;
-  align-items: start;
-}
 .playback-area { grid-area: playback; min-width: 0; }
-.queue-area { grid-area: queue; min-width: 0; }
-.composer-area { grid-area: composer; min-width: 0; }
+/* 2행 영역은 flex로 자식 패널을 셀 높이에 정확히 채운다 (뷰포트 잠금 체인의 시작) */
+.queue-area { grid-area: queue; min-width: 0; min-height: 0; display: flex; }
+.composer-area { grid-area: composer; min-width: 0; min-height: 0; display: flex; container-type: inline-size; }
 .playback-panel { height: auto; min-height: 0; max-height: none; gap: 0.75rem; padding: 1rem 1.2rem; }
 .playback-panel-header, .queue-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .playback-heading { display: flex; align-items: center; gap: 0.45rem; font-weight: 800; color: var(--text-main); }
@@ -1056,9 +1021,12 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .visualizer-container i:nth-child(4) { animation-delay: 0.12s; }
 .playback-controls { display: flex; align-items: center; gap: 0.35rem; }
 .playback-controls .volume-slider { width: 110px; }
-.playback-primary { color: var(--bg-deep); background: var(--eureka-emerald); border-color: var(--eureka-emerald); }
+/* 재생 버튼: 네온 에메랄드가 허용되는 '현재 재생' 핵심 CTA. 아이콘은 네이비로 대비 확보 */
+.playback-primary { color: var(--chr-hat); background: var(--eureka-emerald); border-color: var(--eureka-emerald); }
+.playback-primary:hover { background: var(--eureka-emerald); color: var(--chr-hat); filter: brightness(0.94); }
 .playback-progress { min-width: 235px; display: flex; align-items: center; gap: 0.45rem; color: var(--text-muted); font-size: 0.72rem; }
 .playback-progress input { flex: 1; min-width: 80px; }
+.progress-slider { accent-color: var(--chr-vest); } /* 볼륨 슬라이더와 톤 통일 (기본 파랑 제거) */
 .playback-idle { display: flex; align-items: center; gap: 0.45rem; min-height: 42px; padding: 0.65rem 0.8rem; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.87rem; }
 .obs-setup-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1rem; background: rgba(24, 38, 49, 0.48); backdrop-filter: blur(3px); }
 .obs-setup-dialog { width: min(590px, 100%); max-height: min(700px, calc(100vh - 2rem)); overflow: auto; padding: 1.2rem; border: 1px solid var(--glass-border); border-radius: 14px; background: var(--bg-mid); box-shadow: 0 24px 60px rgba(30, 50, 65, 0.28); }
@@ -1073,24 +1041,54 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .obs-setup-steps p { margin: 0.24rem 0 0.55rem; color: var(--text-muted); font-size: 0.79rem; line-height: 1.45; }
 .obs-setup-steps .btn-copy { display: inline-flex; width: auto; align-items: center; gap: 0.35rem; }
 .obs-player-status { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.55rem; color: var(--text-muted); font-size: 0.76rem; }
-.obs-player-status.is-connected { color: var(--eureka-emerald); }
+.obs-player-status.is-connected { color: var(--chr-vest); }
 .obs-session-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--glass-border); }
 .obs-session-actions p { margin: 0; color: var(--text-muted); font-size: 0.75rem; line-height: 1.45; }
-.queue-panel { height: auto; min-height: 0; max-height: calc(100vh - 260px); gap: 0.7rem; }
+/* 대기열 패널: 그리드 셀 높이를 정확히 채우고, 리스트만 넘칠 때 내부 스크롤 */
+.queue-panel { flex: 1; height: auto; min-height: 0; max-height: none; gap: 0.7rem; overflow: hidden; }
 .queue-panel .playback-options { margin: 0; }
-.queue-list { display: grid; gap: 0.4rem; min-height: 104px; max-height: 300px; overflow: auto; padding-right: 0.2rem; }
+.queue-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr); /* 없으면 트랙이 max-content로 늘어나 긴 곡명이 행을 옆으로 밀어낸다 */
+  gap: 0.4rem;
+  align-content: start; /* 남는 세로 공간에서 행이 늘어나지 않게 */
+  flex: 1 1 0;
+  min-height: 96px;
+  overflow-y: auto; /* 넘칠 때만 스크롤 — 평소에는 스크롤바 없음 */
+  scrollbar-gutter: stable; /* 스크롤바 등장 시 행이 밀리는 점프 방지 */
+  padding-right: 0.2rem;
+}
 .queue-row { display: flex; align-items: center; gap: 0.5rem; min-height: 42px; padding: 0.5rem 0.6rem; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--bg-deep); }
 .queue-row.drag-over { border-top: 2px solid var(--eureka-emerald); }
 .queue-row strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.88rem; }
 .queue-grip { display: inline-flex; align-items: center; gap: 0.1rem; color: var(--text-muted); font-size: 0.74rem; cursor: grab; }
-.queue-play-action { display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; flex: 0 0 auto; min-height: 28px; padding: 0.28rem 0.5rem; border: 1px solid rgba(16, 255, 203, 0.58); border-radius: 7px; background: rgba(16, 255, 203, 0.08); color: var(--text-main); font: inherit; font-size: 0.72rem; font-weight: 700; white-space: nowrap; cursor: pointer; }
-.queue-play-action:hover, .queue-play-action:focus-visible { background: rgba(16, 255, 203, 0.17); border-color: var(--eureka-emerald); }
+/* 행마다 반복되는 상시 버튼이므로 네온 대신 중립 테두리 + 딥그린 텍스트, 호버 순간에만 강조 */
+.queue-play-action { display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; flex: 0 0 auto; min-height: 28px; padding: 0.28rem 0.5rem; border: 1px solid var(--glass-border); border-radius: 7px; background: var(--bg-mid); color: var(--chr-vest); font: inherit; font-size: 0.72rem; font-weight: 700; white-space: nowrap; cursor: pointer; transition: border-color 0.18s ease, background 0.18s ease; }
+.queue-play-action:hover, .queue-play-action:focus-visible { background: rgba(16, 255, 203, 0.12); border-color: var(--chr-vest); }
 .queue-empty { display: grid; place-items: center; min-height: 100px; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.84rem; text-align: center; }
+/* 대기열이 비어 있으면 플레이스홀더가 남는 공간을 채워 어색한 여백을 없앤다 */
+.queue-list:has(> .queue-empty) { grid-template-rows: minmax(100px, 1fr); align-content: stretch; }
 .history-accordion { border-top: 1px solid var(--glass-border); padding-top: 0.65rem; }
 .history-accordion summary { cursor: pointer; color: var(--text-muted); font-size: 0.82rem; }
-.history-accordion .history-list { max-height: 180px; overflow: auto; margin-top: 0.6rem; }
+.history-accordion .history-list { max-height: 180px; overflow: auto; margin-top: 0.6rem; scrollbar-gutter: stable; }
+/* 히스토리 행: 액션 아이콘들이 세로로 쌓여 행이 비대해지지 않게 가로 정렬 + 대기열 행과 밀도 통일 */
+.history-accordion .history-item { padding: 0.4rem 0.6rem; min-height: 42px; }
+.history-accordion .history-item > div { display: flex; align-items: center; gap: 0.15rem; flex: 0 0 auto; }
+/* 곡 추가(composer) 뷰포트 잠금 체인: 영역 → song-composer → motion 래퍼 → 패널.
+   스크롤은 결과 리스트(.search-results) 한 곳에서만 발생한다. 탭·검색폼·드롭존은 항상 보인다. */
+.composer-area .song-composer { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.song-composer > div { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .song-composer > div, .song-composer .panel { width: 100%; min-width: 0; }
-.song-composer .panel { height: auto; max-height: none; min-height: 0; }
+.song-composer .panel { flex: 1; height: auto; max-height: none; min-height: 0; overflow: hidden; }
+/* 곡 정보 확인(2단계) 패널은 리스트가 없으므로, 세로가 모자랄 때만 패널 자체가 스크롤.
+   스크롤 컨테이너의 위쪽 패딩 영역에 지나가는 콘텐츠(영상 프리뷰)가 비쳐 보이지 않도록
+   패널의 top 패딩을 0으로 하고 sticky 제목이 그 간격을 불투명하게 대신 채운다. */
+.song-composer .staging-panel { overflow-y: auto; padding-top: 0; scrollbar-gutter: stable; }
+.song-composer .staging-panel > .panel-title { top: 0; margin: 0; padding: 1.1rem 0.5rem 0.6rem; border-radius: 0 0 8px 8px; }
+.search-panel .tab-content, .search-panel .songbook-list { min-height: 0; }
+/* 세로 flex(노래책 뷰)에서는 검색바가 세로로 늘어나면 안 된다 (.search-input-wrapper의 flex:1은 가로 폭 용도) */
+.search-panel .songbook-list > .search-input-wrapper { flex: 0 0 auto; }
+.search-results { min-height: 0; scrollbar-gutter: stable; padding-right: 0.25rem; }
 .composer-area .search-panel { gap: 0.8rem; }
 .composer-area .search-results .empty-state { min-height: 0; padding: 0.8rem 1rem !important; font-size: 0.82rem; }
 .composer-search-hint { padding: 0.65rem 0.75rem; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.78rem; text-align: center; }
@@ -1101,29 +1099,54 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .composer-area .drop-zone-placeholder .btn-secondary { padding: 0.35rem 0.55rem; font-size: 0.75rem; }
 .composer-area .divider { margin: 0.25rem 0; font-size: 0.74rem; }
 
-@media (max-width: 1100px) {
-  .dashboard-grid,
-  .dashboard-container.staging-active .dashboard-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'playback' 'queue' 'composer';
-  }
-  .playback-now { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
-  .playback-controls, .playback-progress { min-width: 0; }
-  .queue-panel { max-height: none; }
-  .queue-list { max-height: 230px; }
+/* 2단계 미리보기 레이아웃은 뷰포트가 아니라 '컴포저 칼럼의 실제 폭'에 반응한다.
+   wide에서 칼럼이 좁으면 세로 스택, narrow에서 패널이 전체 폭이면 좌우 배치 —
+   같은 컴포넌트가 어느 화면에서든 알맞은 형태를 갖는 반응형 통일의 핵심. */
+@container (max-width: 620px) {
+  .staging-media-info { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 650px) {
-  .dashboard-header { margin: -0.5rem -0.5rem 0.75rem; padding: 0.8rem 1rem 1rem; }
+/* ---- Narrow (<=1100px): 세로 스택. 페이지가 스크롤을 갖는 대신
+   각 리스트는 높이를 캡해 '재생 → 대기열 → 곡 추가'의 스크롤 총량을 예측 가능하게 유지 ---- */
+@media (max-width: 1100px) {
+  .dashboard-container { display: block; height: auto; min-height: 100vh; overflow-x: hidden; overflow-y: auto; }
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: 'playback' 'queue' 'composer';
+  }
+  .queue-area, .composer-area { display: block; }
+  .queue-panel { flex: none; overflow: visible; }
+  .queue-list { flex: none; max-height: 300px; }
+  .song-composer .panel { overflow: visible; }
+  .song-composer .staging-panel { overflow: visible; }
+  .composer-area .search-results { max-height: 48vh; } /* 검색폼·탭은 항상 보이고 결과만 스크롤 */
+  .playback-now { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+  .playback-controls, .playback-progress { min-width: 0; }
+}
+
+/* ---- Compact (<=768px): 모바일 밀도. 패딩·타이포 축소 (구 768/650 블록 통합) ---- */
+@media (max-width: 768px) {
+  .dashboard-container { padding: 0.75rem; }
+  .dashboard-header { margin: -0.75rem -0.75rem 0.75rem; padding: 0.8rem 1rem 1rem; }
+  .dashboard-header::before, .dashboard-header::after { display: none; } /* 좁은 폭에서 단추 장식 생략 */
+  .dashboard-header .logo { font-size: 1.5rem; }
+  .logo::after { right: -26px; bottom: 7px; transform: scale(0.75) rotate(28deg); }
+  .panel { padding: 1rem; }
+  .search-input { font-size: 0.9rem; }
+  .btn-primary { padding: 0.6rem 1rem; font-size: 0.9rem; }
   .playback-panel { padding: 0.85rem; }
   .playback-title-row .visualizer-container { display: none; }
   .playback-controls .volume-slider { width: 86px; }
   .playback-progress { width: 100%; }
-  .queue-list { max-height: 180px; }
   .queue-panel { padding: 0.85rem; }
-  .queue-panel .queue-list { min-height: 0; max-height: 150px; }
+  .queue-panel .queue-list { min-height: 0; max-height: 200px; }
   .queue-panel .queue-empty { min-height: 62px; }
   .composer-area .search-panel { padding: 0.85rem; }
+  .composer-area .search-results { max-height: 44vh; }
+  .songbook-item { align-items: center; flex-direction: row; gap: 0.6rem; }
+  .songbook-actions { display: flex; flex: 0 0 108px; flex-direction: column; width: 108px; gap: 0.3rem; }
+  .songbook-action-primary, .songbook-action-secondary, .songbook-file-action, .songbook-retry-action { min-height: 31px; padding: 0.32rem 0.38rem; font-size: 0.7rem; }
   .obs-setup-dialog { padding: 1rem; }
   .obs-session-actions { align-items: flex-start; flex-direction: column; }
 }
