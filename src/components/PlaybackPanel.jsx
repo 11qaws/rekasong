@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, Settings, SkipForward, Volume1, Volume2, VolumeX, X } from 'lucide-react';
+import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 
 export default function PlaybackPanel({
   currentSong,
+  activePhase,
+  failureDetail,
   isPlaying,
   onTogglePlay,
   onSkip,
+  onDiscardCurrent,
+  onRetryCurrent,
   volume,
   onVolumeChange,
   currentTime,
@@ -29,6 +33,18 @@ export default function PlaybackPanel({
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
+
+  // 생애주기 전이 중/실패 상태(§2-1) — 일반 재생 조작을 잠그고 상태를 드러낸다.
+  // finishing: 쓰레기통만 허용(§4-3) · discarding: 중복 조작 방지(§4-4)
+  // failed: 재시도·버리기만 제시(§4-5).
+  const isFinishing = activePhase === 'finishing';
+  const isDiscarding = activePhase === 'discarding';
+  const isFailed = activePhase === 'failed';
+  const controlsLocked = isFinishing || isDiscarding || isFailed;
+  const phaseBadgeText = isFinishing ? '스킵 중…'
+    : isDiscarding ? '취소 중…'
+    : isFailed ? '재생 실패'
+    : isPlaying ? '● ON AIR' : 'Ⅱ 일시정지';
 
   const formatTime = (seconds) => {
     if (!seconds || Number.isNaN(seconds)) return '0:00';
@@ -101,7 +117,7 @@ export default function PlaybackPanel({
       <div className="playback-panel-header">
         <div className="playback-heading"><ListMusic size={17} /> 현재 재생</div>
         <div className="playback-header-actions">
-          {currentSong && <span className={`on-air-badge ${isPlaying ? '' : 'is-paused'}`}>{isPlaying ? '● ON AIR' : 'Ⅱ 일시정지'}</span>}
+          {currentSong && <span className={`on-air-badge ${isPlaying && !controlsLocked ? '' : 'is-paused'}`}>{phaseBadgeText}</span>}
           <button type="button" onClick={() => setIsObsSetupOpen(true)} className="btn-icon" title="OBS 연결 설정" aria-label="OBS 연결 설정">
             <Settings size={16} />
           </button>
@@ -117,7 +133,8 @@ export default function PlaybackPanel({
             </div>
           </div>
           <div className="playback-controls">
-            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" title={isPlaying ? '일시정지' : '재생'}>
+            {/* finishing/discarding/failed 중 일반 재생 조작 잠금(§4-3, §4-5). */}
+            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={controlsLocked} title={controlsLocked ? '지금은 재생/일시정지를 할 수 없습니다' : isPlaying ? '일시정지' : '재생'}>
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
             <button type="button" onClick={toggleMute} className="btn-icon" title={isMuted ? '음소거 해제' : '음소거'}>
@@ -125,7 +142,11 @@ export default function PlaybackPanel({
             </button>
             <input aria-label="볼륨" type="range" min="0" max="100" value={volume} onChange={(event) => onVolumeChange(Number(event.target.value))} className="volume-slider" />
             {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
-            <button type="button" onClick={() => onSkip()} className="btn-icon" title="다음 곡으로 스킵"><SkipForward size={17} /></button>
+            <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={controlsLocked} title={isFinishing ? '스킵 확인 중 — 곡이 끝나면 다음 곡으로 넘어갑니다' : isFailed ? '실패한 곡은 다시 재생하거나 버려 주세요' : '다음 곡으로 스킵'}><SkipForward size={17} /></button>
+            {isFailed && (
+              // §4-5 재시도: 같은 곡을 새 시도(runId)로 다시 재생한다.
+              <button type="button" onClick={() => onRetryCurrent?.()} className="btn-icon" title="같은 곡 다시 재생 (새 시도)"><RotateCcw size={16} /></button>
+            )}
             {/* 다시 예약은 새 entryId의 새 QueueEntry 생성이다(§1) — 코디네이터가 팩토리로 처리. */}
             <button
               type="button"
@@ -133,12 +154,29 @@ export default function PlaybackPanel({
               className="btn-icon"
               title="현재 곡 다시 예약"
             ><Repeat size={16} /></button>
+            {/* §4-4 현재 곡 쓰레기통 — finishing 중에도 허용되는 유일한 전이(§4-3). */}
+            <button
+              type="button"
+              onClick={() => onDiscardCurrent?.()}
+              className="btn-icon btn-icon-danger"
+              disabled={isDiscarding}
+              title="현재 곡 버리기 — 이력에 남지 않고 다음 곡을 자동 재생하지 않습니다"
+            ><Trash2 size={15} /></button>
           </div>
-          <div className="playback-progress">
-            <span>{formatTime(currentTime)}</span>
-            <input aria-label="재생 위치" type="range" min="0" max={duration || 100} value={currentTime} onChange={(event) => onSeek(Number(event.target.value))} className="progress-slider" />
-            <span>{formatTime(duration)}</span>
-          </div>
+          {isFailed ? (
+            <div className="playback-progress">
+              {/* 실패 사유는 진행 바 자리에 보인다(§1-1 "왜 멈췄는가"). 전체 문구는 title로. */}
+              <span className="mr-unavailable" title={failureDetail || '재생에 실패했습니다.'}>
+                {(failureDetail || '재생에 실패했습니다.').slice(0, 48)} — 다시 재생하거나 버려 주세요.
+              </span>
+            </div>
+          ) : (
+            <div className="playback-progress">
+              <span>{formatTime(currentTime)}</span>
+              <input aria-label="재생 위치" type="range" min="0" max={duration || 100} value={currentTime} onChange={(event) => onSeek(Number(event.target.value))} className="progress-slider" disabled={controlsLocked} />
+              <span>{formatTime(duration)}</span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="playback-idle"><Play size={17} /> 재생 중인 곡이 없습니다. 아래에서 곡을 추가하세요.</div>

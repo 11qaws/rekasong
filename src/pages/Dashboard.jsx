@@ -75,10 +75,12 @@ export default function Dashboard() {
   const ytPlayerRef = useRef(null);
   const audioRef = useRef(null);
   const videoRef = useRef(null);
-  const handlePlayNextRef = useRef(null);
+  const handleSkipRef = useRef(null);
   const togglePlaybackRef = useRef(null);
   const reportedMediaIssueRef = useRef(null);
   const reportedDelayRef = useRef(null);
+  // §4-4: 버린 곡의 entryId — 늦은 On-Air transport 스냅숏이 되살리지 못하게 한다.
+  const lastDiscardedEntryIdRef = useRef(null);
 
   // 이벤트 핸들러가 마운트 시 캡처한 {entryId, runId}를 최신 active와 대조하기
   // 위한 거울 ref (구 activeSongIdRef 가드를 entryId+runId 검증으로 교체).
@@ -164,6 +166,8 @@ export default function Dashboard() {
   }, [isPlaying, activeRunId, useOnAirPlayer]);
 
   const handleSeek = (time) => {
+    // finishing/discarding/failed 중 일반 탐색은 의미가 없거나 전이를 방해한다.
+    if (['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase)) return;
     if (useOnAirPlayer) {
       try {
         onAir.sendCommand({ type: 'seek', sessionId: currentEntry?.entryId, position: time });
@@ -265,8 +269,8 @@ export default function Dashboard() {
       } else if (e.ctrlKey && e.code === 'ArrowRight') {
         e.preventDefault();
         // D-25: 전이가 실제로 시작됐을 때만 성공 토스트를 보여 준다.
-        if (handlePlayNextRef.current?.()) {
-          showToast('다음 곡으로 스킵', 'info');
+        if (handleSkipRef.current?.()) {
+          showToast('현재 곡을 스킵합니다.', 'info');
         }
       }
     };
@@ -445,35 +449,53 @@ export default function Dashboard() {
   };
 
   // active.phase 확정 — 반드시 실제 Player 확인 이벤트 뒤에만 호출된다(INV-5).
-  const commitActivePhase = (marker, phase) => {
+  // extra: failed의 failureDetail 같은 phase 부속 정보를 함께 기록한다.
+  const commitActivePhase = (marker, phase, extra = {}) => {
     setSharedState((previous) => {
       const act = previous.active;
-      if (!act || act.entryId !== marker.entryId || act.runId !== marker.runId || act.phase === phase) return previous;
-      return { ...previous, active: { ...act, phase } };
+      if (!act || act.entryId !== marker.entryId || act.runId !== marker.runId) return previous;
+      if (act.phase === phase && !Object.keys(extra).length) return previous;
+      return { ...previous, active: { ...act, phase, ...extra } };
     });
   };
 
+  // finishing/discarding/failed는 의도가 확정된 상태라 일반 playing/paused
+  // 확인이 이를 되돌리지 못한다(§4-3 finishing 중 조작 제한, §4-4 discard 우선).
+  const isPhaseLocked = () =>
+    ['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase);
+
   const handleConfirmedPlaying = (marker) => {
-    if (!isCurrentRun(marker)) return;
+    if (!isCurrentRun(marker) || isPhaseLocked()) return;
     setIsPlaying(true);
     commitActivePhase(marker, 'playing');
   };
 
   const handleConfirmedPaused = (marker) => {
-    if (!isCurrentRun(marker)) return;
+    if (!isCurrentRun(marker) || isPhaseLocked()) return;
     setIsPlaying(false);
     commitActivePhase(marker, 'paused');
   };
 
-  // 실제 ended 확인 → completed 확정 → (autoPlayNext) 다음 곡 승격.
+  // 실제 ended 확인 → completed 확정 → 다음 곡 승격.
   // history 편입과 자동 다음 곡은 이 completed 전이 하나에서만 일어난다(INV-2/3/4).
+  // 승격 우선순위: 스킵/바로 재생이 예약한 pendingNextEntryId(§4-6 복합 명령)
+  // → autoPlayNext 설정 시 큐 첫 곡. finishing 중 ended는 예정 사유(skipped)로 완료.
   const handleConfirmedEnded = (marker, completionReason = 'natural') => {
     if (!isCurrentRun(marker)) return;
+    const act = activeRef.current;
+    // failed는 정상 종료가 아니다(§4-5) — 실패 확정 뒤 늦은 ended는 이력을 만들지 않는다.
+    if (act?.phase === 'failed') return;
+    const confirmedReason = act?.phase === 'finishing'
+      ? (act.pendingCompletionReason || 'skipped')
+      : completionReason;
     const snapshot = stateRef.current || {};
     if (snapshot.currentEntry?.entryId !== marker.entryId) return;
 
     const queue = snapshot.queue || [];
-    let promoted = snapshot.autoPlayNext && queue.length > 0 ? queue[0] : null;
+    const pendingNext = act?.pendingNextEntryId
+      ? queue.find((item) => item.entryId === act.pendingNextEntryId) || null
+      : null;
+    let promoted = pendingNext || (snapshot.autoPlayNext && queue.length > 0 ? queue[0] : null);
     let nextActive = null;
     if (promoted) {
       try {
@@ -492,7 +514,7 @@ export default function Dashboard() {
       }
     }
 
-    const finishedEntry = { ...snapshot.currentEntry, phase: 'completed', completionReason };
+    const finishedEntry = { ...snapshot.currentEntry, phase: 'completed', completionReason: confirmedReason };
     setSharedState((previous) => {
       if (previous.currentEntry?.entryId !== marker.entryId) return previous;
       if (previous.active && previous.active.runId !== marker.runId) return previous;
@@ -612,16 +634,22 @@ export default function Dashboard() {
     });
   };
 
-  // 스킵/다음 곡. 성공적으로 전이를 시작하면 true를 돌려준다(D-25 토스트 근거).
-  // NOTE(Stage 3 예정): 규범 §4-3의 스킵은 finishing → 실제 ended 확인 → completed
-  // 전이다. Stage 2에서는 버튼 배선을 고쳐 스킵이 실제로 동작하게 하고(D-01),
-  // 기존 '다음 곡 직접 로드' 의미를 유지한다.
+  // [과도기 폴백] 다음 곡 직접 로드 + 현재 곡 즉시 completed(skipped) 처리.
+  // 규범 §4-3의 finishing 전이를 열 수 없는 경우에만 쓴다:
+  //  - YouTube iframe: outputSafety를 확인할 수단이 없어(§2-4 unknown 고정) 광고 중
+  //    seekTo(끝)가 '광고만 끝나고 곡이 계속되는' finishing 고착을 만들 수 있다.
+  //    "길이를 모르면 완료 처리하지 않음"(§4-3)에 따라 프록시(Stage 6) 전까지 폴백.
+  //  - On-Air: 프로토콜에 finish 명령이 아직 없다(Stage 7 예정) → stop/load 폴백.
+  //  - 로컬 미디어의 duration을 아직 모르는(starting) 경우.
+  // 성공적으로 전이를 시작하면 true를 돌려준다(D-25 토스트 근거).
   const handlePlayNext = (expectedMarker = null) => {
     const snapshot = stateRef.current || {};
     const current = snapshot.currentEntry;
     if (!current) return false;
     // 늦게 도착한 이벤트/중복 호출 가드: 마커가 있으면 현재 run과 일치해야 한다.
     if (expectedMarker && !isCurrentRun(expectedMarker)) return false;
+    // failed 곡은 완료(이력 편입) 대상이 아니다(§4-5) — 재시도/버리기로만 벗어난다.
+    if (activeRef.current?.entryId === current.entryId && activeRef.current.phase === 'failed') return false;
 
     const queue = snapshot.queue || [];
     const nextEntry = queue[0] || null;
@@ -658,10 +686,181 @@ export default function Dashboard() {
     return true;
   };
 
+  // §2-4: YouTube iframe 경로는 광고와 실제 곡 타임라인을 신뢰성 있게 구분할 수
+  // 없어 outputSafety가 'unknown'으로 고정된다. 오디오 프록시(Stage 6)가 붙으면
+  // 해당 run에 한해 'safe'를 돌려줄 수 있게 이 함수 하나만 바꾼다.
+  const getYoutubeOutputSafety = () => 'unknown';
+
+  // §4-3 스킵의 1단계: 플레이어를 실제 끝으로 보내고 finishing으로 전이한다.
+  // 성공 시 true — 이후 동일 runId의 실제 ended(handleConfirmedEnded)에서만
+  // completed+승격이 일어난다. 길이를 모르면 열지 않는다(호출자가 폴백 판단).
+  // pendingNextEntryId: completed 뒤 승격할 곡 예약(스킵 버튼=큐 첫 곡, 바로 재생=선택 곡).
+  const tryBeginFinishing = (pendingNextEntryId = null) => {
+    const act = activeRef.current;
+    const current = stateRef.current?.currentEntry;
+    if (!act || !current || act.entryId !== current.entryId) return false;
+
+    // 이미 finishing이면 전환 대상 예약만 갱신한다(바로 재생 재클릭 등).
+    if (act.phase === 'finishing') {
+      if (pendingNextEntryId) {
+        setSharedState((previous) => {
+          const prevAct = previous.active;
+          if (!prevAct || prevAct.runId !== act.runId) return previous;
+          return { ...previous, active: { ...prevAct, pendingNextEntryId } };
+        });
+      }
+      return true;
+    }
+    // finishing은 실제 재생이 확인된 상태에서만 연다(§3 그래프: playing/paused/buffering).
+    if (!['playing', 'paused', 'buffering'].includes(act.phase)) return false;
+    // On-Air 프로토콜에는 아직 finish 명령이 없다(Stage 7) → 폴백.
+    if (useOnAirPlayer) return false;
+
+    const marker = { entryId: act.entryId, runId: act.runId };
+    const song = current.song;
+    let sendToEnd = null;
+
+    if (song.type === 'local') {
+      const el = song.mediaType === 'video' ? videoRef.current : audioRef.current;
+      const mediaDuration = el?.duration;
+      if (!el || !Number.isFinite(mediaDuration) || mediaDuration <= 0) return false;
+      sendToEnd = () => {
+        // 일시정지 상태에서 끝으로 seek만 하면 ended가 발화하지 않는 브라우저가
+        // 있어, 재생을 재개한 뒤 끝으로 보낸다(끝 지점이라 즉시 ended).
+        if (el.paused) el.play().catch(() => {});
+        el.currentTime = mediaDuration;
+      };
+    } else {
+      const yt = ytPlayerRef.current;
+      const ytDuration = yt?.getDuration?.();
+      // §4-3 안전장치: 길이를 모르거나 출력 안전성이 미확인이면 완료 처리하지 않는다.
+      if (!yt || !Number.isFinite(ytDuration) || ytDuration <= 0) return false;
+      if (getYoutubeOutputSafety() !== 'safe') return false;
+      sendToEnd = () => yt.seekTo(ytDuration, true);
+    }
+
+    // 전이 중 상태를 숨기지 않는다(§5-2): 먼저 finishing을 표시하고 끝으로 보낸다.
+    setSharedState((previous) => {
+      const prevAct = previous.active;
+      if (!prevAct || prevAct.entryId !== marker.entryId || prevAct.runId !== marker.runId) return previous;
+      return {
+        ...previous,
+        active: {
+          ...prevAct,
+          phase: 'finishing',
+          pendingCompletionReason: 'skipped',
+          ...(pendingNextEntryId ? { pendingNextEntryId } : {})
+        }
+      };
+    });
+    try {
+      sendToEnd();
+    } catch {
+      // 끝 이동 실패 시 finishing에 머문다 — ended가 오지 않으면 쓰레기통(§4-3
+      // finishing 중 유일 허용 행동)으로 회수할 수 있고, 화면은 '스킵 중'을 유지한다.
+    }
+    return true;
+  };
+
+  // 스킵(§4-3): finishing → 실제 ended → completed. finishing을 열 수 없으면
+  // 과도기 폴백(다음 곡 직접 로드, completionReason='skipped')을 쓴다.
+  // 스킵 버튼의 의도는 '다음 곡으로'이므로 자동 다음 곡 설정과 무관하게
+  // 큐 첫 곡을 전환 대상으로 예약한다(Before 동작 보존).
+  const handleSkipCurrent = () => {
+    const snapshot = stateRef.current || {};
+    if (!snapshot.currentEntry) return false;
+    const act = activeRef.current;
+    if (act && act.entryId === snapshot.currentEntry.entryId) {
+      if (act.phase === 'finishing' || act.phase === 'discarding') return false; // 중복 스킵 방지
+      if (act.phase === 'failed') {
+        showToast('재생에 실패한 곡입니다. 재시도하거나 버리기를 선택해 주세요.', 'info');
+        return false;
+      }
+    }
+    const nextQueuedId = (snapshot.queue || [])[0]?.entryId || null;
+    if (tryBeginFinishing(nextQueuedId)) return true;
+    return handlePlayNext();
+  };
+
+  // 현재 곡 쓰레기통(§4-4): discarding → discarded. 이력에 남기지 않고
+  // 자동 다음 곡을 시작하지 않는다(INV-3). 늦은 ended는 runId 불일치로 폐기된다.
+  const handleDiscardCurrent = () => {
+    const current = stateRef.current?.currentEntry;
+    if (!current) return;
+    const act = activeRef.current;
+    if (act && act.entryId === current.entryId && act.phase === 'discarding') return;
+
+    if (useOnAirPlayer) {
+      // On-Air 프로토콜에는 아직 discard 확인 이벤트가 없다(Stage 7) — stop 송신이
+      // 성공하면 확정한다. 송신 실패 시 상태를 바꾸지 않는다.
+      try {
+        onAir.sendCommand({ type: 'stop', sessionId: current.entryId });
+      } catch (error) {
+        showToast(error.message || '현재 곡을 정지하지 못했습니다.', 'error');
+        return;
+      }
+    } else {
+      // 로컬/YouTube 직접 재생: 같은 페이지의 요소라 정지를 동기로 확정할 수 있다.
+      // 언마운트(currentEntry=null)만으로는 재생이 즉시 멎지 않을 수 있어 명시 정지.
+      try {
+        audioRef.current?.pause();
+        videoRef.current?.pause();
+        ytPlayerRef.current?.stopVideo?.();
+      } catch {
+        // 파괴된 플레이어 참조 — 언마운트가 마저 정리한다.
+      }
+    }
+
+    // 늦은 transport 스냅숏이 버린 곡을 currentEntry로 되살리지 못하게 기억한다.
+    lastDiscardedEntryIdRef.current = current.entryId;
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setSharedState((previous) => {
+      if (previous.currentEntry?.entryId !== current.entryId) return previous;
+      return { ...previous, currentEntry: null, active: null };
+    });
+    showToast('현재 곡을 버렸습니다. 이력에 남지 않고 다음 곡을 자동 재생하지 않습니다.', 'info');
+  };
+
+  // failed 재시도(§4-5): 같은 entry를 새 runId로 다시 재생한다.
+  const handleRetryCurrent = () => {
+    const current = stateRef.current?.currentEntry;
+    const act = activeRef.current;
+    if (!current || !act || act.entryId !== current.entryId || act.phase !== 'failed') return;
+
+    let nextActive = null;
+    try {
+      nextActive = beginPlaybackRun(current);
+    } catch (error) {
+      showToast(error.message || '다시 재생을 시작하지 못했습니다.', 'error');
+      return;
+    }
+    setSharedState((previous) => {
+      if (previous.currentEntry?.entryId !== current.entryId) return previous;
+      return { ...previous, active: nextActive };
+    });
+    showToast('같은 곡을 새 시도로 다시 재생합니다.', 'info');
+  };
+
+  // 대기열 곡 바로 재생(§4-6). 현재 곡이 실제 재생 중이면 '선택 곡을 다음 전환
+  // 대상으로 예약 + 현재 곡 스킵 요청'(finishing 경로)으로, finishing을 열 수
+  // 없으면 과도기 폴백(직접 전환)으로 처리한다. failed 곡은 완료가 아니라
+  // 폐기 대상이므로 '버리기 + 선택 곡 시작' 복합 명령이 된다(INV-3).
   const handlePlayQueuedSong = (entryId) => {
     const snapshot = stateRef.current || {};
     const selectedEntry = (snapshot.queue || []).find((item) => item.entryId === entryId);
     if (!selectedEntry) return;
+
+    const act = activeRef.current;
+    const currentIsFailed = Boolean(
+      snapshot.currentEntry && act &&
+      act.entryId === snapshot.currentEntry.entryId && act.phase === 'failed'
+    );
+    if (snapshot.currentEntry && !currentIsFailed && tryBeginFinishing(entryId)) {
+      showToast('현재 곡을 끝낸 뒤 선택한 곡을 재생합니다.', 'info');
+      return;
+    }
 
     let nextActive = null;
     try {
@@ -671,12 +870,16 @@ export default function Dashboard() {
       return;
     }
 
+    if (currentIsFailed && snapshot.currentEntry) {
+      showToast('실패한 곡은 이력에 남기지 않고 버린 뒤 선택한 곡을 재생합니다.', 'info');
+    }
     setSharedState((previous) => {
       const q = previous.queue || [];
       const selectedIndex = q.findIndex((item) => item.entryId === entryId);
       if (selectedIndex < 0) return previous;
 
-      const finished = previous.currentEntry
+      // failed 곡은 discarded로 끝난다 — 이력·자동 다음 곡 없음(§4-5, INV-3).
+      const finished = previous.currentEntry && !currentIsFailed
         ? [{ ...previous.currentEntry, phase: 'completed', completionReason: 'skipped' }]
         : [];
       return {
@@ -689,7 +892,7 @@ export default function Dashboard() {
     });
   };
 
-  handlePlayNextRef.current = handlePlayNext;
+  handleSkipRef.current = handleSkipCurrent;
 
   // 현재 곡 '다시 예약' — 기존 항목 복제가 아니라 새 entryId의 새 QueueEntry(§1).
   const handleRequeueCurrent = () => {
@@ -703,6 +906,9 @@ export default function Dashboard() {
   const handleTogglePlayback = () => {
     const entry = stateRef.current?.currentEntry;
     if (!entry) return;
+    // §4-3/§4-5: finishing·discarding·failed 중에는 일반 재생/일시정지를 막는다
+    // (버튼 비활성 외에 Space 단축키 경로도 함께 차단).
+    if (isPhaseLocked()) return;
     if (useOnAirPlayer) {
       try {
         onAir.sendCommand({ type: isPlaying ? 'pause' : 'play', sessionId: entry.entryId });
@@ -754,18 +960,22 @@ export default function Dashboard() {
   };
 
   const handlePlaybackDelay = (marker, source) => {
-    if (!isCurrentRun(marker) || reportedDelayRef.current === marker.runId) return;
+    // finishing(끝으로 seek 직후 buffering이 흔함)·discarding·failed 중에는 지연
+    // 안내가 소음이다 — 전이 상태 표시가 우선한다.
+    if (!isCurrentRun(marker) || isPhaseLocked() || reportedDelayRef.current === marker.runId) return;
     reportedDelayRef.current = marker.runId;
     showToast(source + ' 재생이 지연되고 있습니다. 잠시 기다리거나 스킵으로 다음 곡을 재생하세요.', 'info');
   };
 
+  // 재생 오류 → failed 확정(§4-5). 자동 스킵하지 않는다 — 실패 곡을 몰래
+  // 건너뛰거나 완료 이력에 넣지 않고(INV-3), 재시도/버리기를 제시한다.
   const handleMediaFailure = (marker, source, detail = '') => {
     if (!isCurrentRun(marker) || reportedMediaIssueRef.current === marker.runId) return;
     reportedMediaIssueRef.current = marker.runId;
-    const reason = detail ? ' (' + detail + ')' : '';
-    showToast(source + '을(를) 재생할 수 없습니다' + reason + '. 현재 곡만 건너뜁니다.', 'error');
-    // NOTE(Stage 3 예정): failed phase + 재시도/버리기 제시로 교체될 자동 스킵.
-    setTimeout(() => handlePlayNextRef.current?.(marker), 400);
+    const failureDetail = source + ' 재생 실패' + (detail ? ': ' + detail : '');
+    setIsPlaying(false);
+    commitActivePhase(marker, 'failed', { failureDetail });
+    showToast(failureDetail + ' — 다시 재생하거나 현재 곡을 버릴 수 있습니다.', 'error');
   };
 
   const handleRemoveFromQueue = (entryId) => {
@@ -800,7 +1010,8 @@ export default function Dashboard() {
     ytPlayerRef.current = event.target;
     event.target.setVolume(volume);
     // starting 단계면 재생 시작을 시도한다. playing 확정은 onStateChange(1)에서.
-    if (activeRef.current?.phase !== 'paused') event.target.playVideo();
+    // paused 복원이나 finishing/discarding/failed 잠금 중에는 시작하지 않는다.
+    if (activeRef.current?.phase !== 'paused' && !isPhaseLocked()) event.target.playVideo();
   };
 
   togglePlaybackRef.current = handleTogglePlayback;
@@ -808,9 +1019,10 @@ export default function Dashboard() {
     if (payload.type === 'snapshot' || payload.type === 'transport') {
       const remoteTransport = payload.transport || {};
       const remoteSong = remoteTransport.song;
-      if (remoteSong?.id) {
+      if (remoteSong?.id && remoteSong.id !== lastDiscardedEntryIdRef.current) {
         // Worker transport 스냅숏 복원: load 시 내보낸 평면 곡(id=entryId)을
         // QueueEntry로 되감아 currentEntry/active를 재구성한다.
+        // 방금 버린 entryId는 되살리지 않는다 — discard 의도가 우선한다(§4-4).
         const restored = toQueueEntry(remoteSong, 'starting');
         if (restored) {
           const restoredActive = {
@@ -879,7 +1091,11 @@ export default function Dashboard() {
             room={room}
             publicKeyB64={signingKeys?.publicKeyB64}
             currentSong={currentSong}
-            onSkip={handlePlayNext}
+            activePhase={active?.phase || null}
+            failureDetail={active?.failureDetail || ''}
+            onSkip={handleSkipCurrent}
+            onDiscardCurrent={handleDiscardCurrent}
+            onRetryCurrent={handleRetryCurrent}
             isPlaying={isPlaying}
             onTogglePlay={handleTogglePlayback}
             volume={volume}

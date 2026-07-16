@@ -66,7 +66,18 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     ? {
         entryId: source.active.entryId,
         runId: source.active.runId,
-        phase: typeof source.active.phase === 'string' && source.active.phase ? source.active.phase : 'starting'
+        phase: typeof source.active.phase === 'string' && source.active.phase ? source.active.phase : 'starting',
+        // Stage 3 런타임 부속 정보 — finishing의 예정 완료 사유(§4-3),
+        // 스킵/바로 재생이 예약한 다음 전환 대상(§4-6), failed의 실패 사유(§4-5).
+        ...(typeof source.active.pendingCompletionReason === 'string' && source.active.pendingCompletionReason
+          ? { pendingCompletionReason: source.active.pendingCompletionReason }
+          : {}),
+        ...(typeof source.active.pendingNextEntryId === 'string' && source.active.pendingNextEntryId
+          ? { pendingNextEntryId: source.active.pendingNextEntryId }
+          : {}),
+        ...(typeof source.active.failureDetail === 'string' && source.active.failureDetail
+          ? { failureDetail: source.active.failureDetail }
+          : {})
       }
     : null;
 

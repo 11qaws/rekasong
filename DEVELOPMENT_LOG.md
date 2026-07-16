@@ -1,5 +1,32 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-17 — 생애주기 Stage 3: finishing / discarding / failed 전이
+
+기준: `docs/SONG_LIFECYCLE.md` §4-3/§4-4/§4-5, `docs/ux-audits/PHASE_08_COMBINED_REVIEW.md` §6 Stage 3. Stage 1(QueueEntry 스키마)·Stage 2(코디네이터 상태기계) 위에 종료 계열 전이만 얹었다. CSS/디자인 파일 무변경(기존 클래스 재사용), 프로토콜(Worker/OnAirPlayer) 무변경.
+
+- **스킵을 규범대로**: 스킵이 '다음 곡 직접 로드 + 즉시 completed'에서 `finishing → 실제 ended 확인 → completed`로 바뀌었다. 로컬 미디어는 duration이 확인될 때 끝으로 보내고(`el.currentTime = el.duration`), 동일 runId의 실제 `ended`에서만 이력 편입·다음 곡 승격이 일어난다(INV-2/3/4). 스킵 버튼의 '다음 곡으로' 의도는 `active.pendingNextEntryId` 예약으로 보존해 autoPlayNext OFF에서도 기존처럼 다음 곡이 승격된다.
+- **YouTube 광고 안전장치(§4-3)**: iframe 경로는 outputSafety를 확인할 수단이 없어(§2-4 unknown 고정) 광고 중 `seekTo(끝)`가 'finishing 고착'을 만들 수 있다. 길이/안전성 미확인 시 기존 '다음 곡 직접 로드' 폴백을 쓰되 completionReason='skipped'는 유지한다(오디오 프록시 Stage 6 전 과도기). On-Air 경로도 finish 명령이 없어(Stage 7) 같은 폴백을 쓴다.
+- **현재 곡 쓰레기통 재도입(§4-4)**: PlaybackPanel에 `btn-icon btn-icon-danger` 쓰레기통 버튼. 로컬은 명시 pause + 언마운트로 동기 확정, On-Air는 stop 송신 성공 시 확정(확인 이벤트는 Stage 7). 이력 없음·자동 다음 곡 없음(INV-3). 버린 entryId는 늦은 transport 스냅숏이 되살리지 못하게 가드.
+- **failed 자동 스킵 제거(§4-5)**: 재생 오류 시 400ms 뒤 자동 다음 곡이던 것을 `phase='failed'` 확정 + 재시도(같은 entry, 새 runId)/버리기 제시로 교체. 실패 사유는 `active.failureDetail`로 남겨 진행 바 자리에 표시(`mr-unavailable` 클래스 재사용).
+- **전이 중 조작 잠금**: finishing/discarding/failed 중 재생·일시정지·seek·스킵을 버튼 비활성 + 코디네이터 가드(Space/Ctrl+→ 단축키 경로 포함)로 이중 차단. 상태 배지가 `스킵 중…`/`취소 중…`/`재생 실패`를 표시. playing/paused 확인 이벤트는 이 잠금 phase를 되돌리지 못한다.
+- **바로 재생 복합 명령(§4-6)**: 재생 중 대기열 곡 바로 재생은 '선택 곡 예약 + 현재 곡 스킵 요청'(finishing 경유)이 됐다. failed 곡 위의 바로 재생은 '버리기 + 시작'으로, 실패 곡이 완료 이력에 들어가지 않는다.
+
+### 트러블슈팅 기록 (재발 방지 레퍼런스)
+
+1. **일시정지 중 `currentTime = duration` 만으로는 `ended`가 발화하지 않을 수 있다.** 끝으로 보내기 전에 `el.play()`로 재생을 재개해야 ended가 확실히 발화한다(끝 지점이라 청감상 무음). 반대로 ended 상태에서 `play()`를 먼저 부르면 처음으로 되감기므로 순서는 반드시 play → seek.
+2. **프로덕션 빌드는 `.env.production`의 `VITE_ON_AIR_BASE_URL`이 항상 주입되어 직접 재생(숨김 플레이어) 경로가 렌더되지 않는다.** 직접 재생 경로의 실렌더 검증은 vite dev 서버(개발 모드)로 해야 한다. preview(프로덕션 빌드)로 로컬 파일을 올리면 실제 배포 Worker에 세션/자산이 생성되니 주의.
+3. **`<audio>`를 React 언마운트만으로 정리하면 재생이 즉시 멎지 않을 수 있다.** discard는 언마운트 전에 명시적으로 `pause()`/`stopVideo()`를 부른다.
+
+### 검증
+
+- `vite build` / `oxlint` 통과(경고는 기존 6건 그대로, 변경 파일 무경고).
+- playwright-core + Chrome 실렌더 22개 체크 전부 통과: 스킵(재생/일시정지 중)→finishing→ended→completed, 쓰레기통(이력·자동 다음 곡 없음), failed(자동 스킵 제거·버튼/단축키 잠금·재시도 새 runId·버리기), 바로 재생 복합 명령.
+- 미검증: YouTube 폴백 스킵(네트워크 필요, 로직은 Stage 2의 기존 경로 재사용), On-Air 폴백(stop/load 송신 — 실제 Worker+플레이어 위젯 필요).
+
+### 호환성
+
+- 상태 스키마는 `active`에 선택 필드 3종(`pendingCompletionReason`, `pendingNextEntryId`, `failureDetail`)만 추가 — 구 상태를 읽을 때 없으면 무시되므로 하위 호환 유지. 버전 번호는 이번 지시 범위(버전/package.json 변경 금지)에 따라 올리지 않았다.
+
 ## 2026-07-16 — 반응형 통일 디자인 (UX Audit Phase 06)
 
 상세 계획·검증은 `docs/ux-audits/PHASE_06_RESPONSIVE_UNITY.md` 참조. CSS만 변경(JS/JSX 무변경).
