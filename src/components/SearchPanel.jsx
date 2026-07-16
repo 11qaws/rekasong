@@ -522,14 +522,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const isMeloming = platform === 'meloming';
       const isPlaylist = platform === 'youtube-playlist';
       const inputValue = isMeloming ? idValue : isPlaylist ? tempPlaylistUrl : tempSetlinkUrl;
-      const inputPlaceholder = isMeloming ? '예: 12345 (멜로밍 채널 ID)' : isPlaylist ? 'https://www.youtube.com/playlist?list=...' : 'https://setlink.jp/public/...';
+      const inputPlaceholder = isMeloming ? 'https://meloming.com/channel/채널경로 또는 ID' : isPlaylist ? 'https://www.youtube.com/playlist?list=...' : 'https://setlink.jp/public/...';
       const submitImport = isMeloming ? () => handleIntegrationConnect('meloming', idValue) : isPlaylist ? () => handlePlaylistImport(tempPlaylistUrl) : () => handleSetlinkImport(tempSetlinkUrl);
       const sourceError = isPlaylist ? playlistImportError : catalogImportError;
       const isImporting = isPlaylist ? isPlaylistLoading : !isMeloming && isSetlinkLoading;
       const handleInputChange = isMeloming ? setIdValue : isPlaylist ? setTempPlaylistUrl : setTempSetlinkUrl;
       const sourceName = isMeloming ? '멜로밍 노래책' : isPlaylist ? 'YouTube 플레이리스트' : 'Setlink 목록';
       const sourceHelp = isMeloming
-        ? '멜로밍 개발자 문서의 공개 채널 ID를 사용합니다.'
+        ? '멜로밍 채널 주소, 채널 경로(예: amoamoretto), 또는 숫자 ID를 입력하세요. 주소와 경로는 내부 ID로 자동 변환합니다.'
         : isPlaylist
           ? 'YouTube 플레이리스트 주소를 붙여 넣으면 영상 목록을 노래책으로 가져옵니다.'
           : 'Setlink 공개 페이지의 주소를 붙여넣으세요.';
