@@ -287,11 +287,11 @@
   padding: 2.5rem 1rem;
   text-align: center;
   color: var(--text-muted);
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
-  background: var(--bg-panel);
-  box-shadow: 0 -4px 10px rgba(0,0,0,0.1);
+  position: relative;
+  bottom: auto;
+  z-index: auto;
+  background: transparent;
+  box-shadow: none;
   transition: all 0.2s;
 }
 
@@ -865,7 +865,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .history-item.active { animation: fadeIn 0.3s ease-out; }
-.panel-title { position: sticky; top: -1px; z-index: 10; background: var(--bg-deep); padding: 0.5rem; margin-top: -0.5rem; border-radius: 8px 8px 0 0; }
+.panel-title { position: static; }
 .panel-heading { display: flex; align-items: center; gap: 0.45rem; margin: 0 0 0.65rem; font-size: 1rem; }
 .drop-zone { transition: all 0.2s; } .drop-zone:hover { border-color: var(--eureka-emerald); background: rgba(16, 255, 203, 0.05); }
 .drop-zone-placeholder.drag-over { border-color: var(--eureka-emerald); background: rgba(16, 255, 203, 0.12); box-shadow: 0 0 0 2px rgba(16, 255, 203, 0.22); }
@@ -1152,34 +1152,32 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 }
 
 /*
- * Stable viewport contract
+ * Single-document song selection
  *
- * The broadcast console must not become a document that shifts while a song
- * is being chosen.  The shell owns the viewport; only the queue and the
- * composer content are allowed to scroll.  These rules intentionally live
- * after the legacy layout declarations above so old automatic-height rules
- * cannot reintroduce a page scrollbar.
+ * The page is allowed to grow.  There is one scroll position (the document),
+ * and only the current playback surface stays visible while the streamer
+ * browses a long queue or songbook.
  */
-html,
-body,
-#root {
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
+body.dashboard-page {
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
+}
+
+body.dashboard-page #root {
+  height: auto;
+  min-height: 100dvh;
 }
 
 .dashboard-container {
   position: relative;
   isolation: isolate;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
-  min-height: 0;
-  max-height: 100vh;
-  max-height: 100dvh;
-  padding: 0;
-  overflow: hidden;
+  display: block;
+  height: auto;
+  min-height: 100dvh;
+  max-height: none;
+  padding: 0 0 1.25rem;
+  overflow: visible;
   overscroll-behavior: none;
 }
 
@@ -1212,21 +1210,21 @@ body,
 .dashboard-grid,
 .dashboard-container.staging-active .dashboard-grid {
   display: grid;
-  flex: 1 1 auto;
+  flex: none;
   width: min(1600px, 100%);
-  height: 100%;
+  height: auto;
   min-height: 0;
   max-width: none;
   margin: 0 auto;
   padding: 0 1rem 1rem;
   grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   grid-template-areas:
     'playback playback'
     'queue composer';
   gap: 1rem;
-  align-items: stretch;
-  overflow: hidden;
+  align-items: start;
+  overflow: visible;
   transition: none;
 }
 
@@ -1238,17 +1236,22 @@ body,
 }
 
 .playback-area {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   align-self: start;
+  padding-top: 0.5rem;
+  background: var(--bg-deep);
 }
 
 .queue-area,
 .composer-area {
-  display: flex;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
 }
 
-/* The now-playing panel is compact; the queue and composer consume the
-   remaining row without increasing the shell height. */
+/* The queue and composer grow with their contents.  The document owns the
+   scroll position; none of these surfaces may become a second scrollport. */
 .playback-area > .panel {
   height: auto;
   max-height: none;
@@ -1256,95 +1259,101 @@ body,
 
 .queue-area > .queue-panel,
 .composer-area > .song-composer {
-  flex: 1 1 auto;
   width: 100%;
-  height: 100%;
+  height: auto;
   min-width: 0;
   min-height: 0;
   max-height: none;
 }
 
 .queue-panel {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .queue-list {
-  flex: 1 1 auto;
+  flex: none;
   min-height: 0;
   max-height: none;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
+  padding-right: 0;
 }
 
+.queue-list:has(> .queue-empty) { grid-template-rows: none; }
+
 .history-accordion {
-  flex: 0 1 auto;
+  flex: none;
   min-height: 0;
-  max-height: 38%;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
 }
 
 .history-accordion .history-list {
   max-height: none;
   overflow: visible;
+  scrollbar-gutter: auto;
 }
 
-/* SongComposer is a fixed-size viewport.  Framer Motion may animate its
-   child, but cannot change the surrounding grid track or the page position. */
+/* Composer views are normal document-flow content.  Keeping this chain open
+   avoids a second scrollbar inside search, songbook, or song review. */
 .song-composer,
 .song-composer-viewport,
 .song-composer-view {
-  display: flex;
-  flex: 1 1 auto;
+  display: block;
+  flex: none;
   width: 100%;
+  height: auto;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .song-composer-view > .panel {
-  display: flex;
-  flex: 1 1 auto;
   width: 100%;
-  height: 100%;
+  height: auto;
   min-width: 0;
   min-height: 0;
   max-height: none;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .composer-area .search-panel {
-  gap: 0.8rem;
+  gap: 0;
+  padding: 0;
+  overflow: visible;
 }
 
-.composer-area .search-panel > .panel-title,
+.composer-source-nav,
 .composer-area .staging-panel-header,
 .composer-area .staging-panel-footer {
   flex: 0 0 auto;
 }
 
-.composer-area .tab-content,
+.composer-area .composer-content,
 .composer-area .staging-panel-content {
-  flex: 1 1 auto;
+  flex: none;
+  height: auto;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto !important;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
 }
 
-/* A single composer scrollport prevents the old page-scroll / nested-result
-   scroll combination from moving the selected item out of view. */
-.composer-area .tab-content > .search-results,
-.composer-area .tab-content > .songbook-list {
-  flex: 0 0 auto;
-  min-height: auto;
+/* Search, catalog, and review all remain in the document flow. */
+.composer-area .composer-content,
+.composer-area .songbook-list,
+.composer-area .search-results,
+.composer-area .staging-panel-content {
+  flex: none;
+  min-height: 0;
+  max-height: none;
   overflow: visible;
+  scrollbar-gutter: auto;
+  padding-right: 0;
 }
 
 .composer-area .drop-zone-placeholder,
@@ -1357,7 +1366,7 @@ body,
 }
 
 .composer-area .staging-panel-content {
-  padding-right: 0.2rem;
+  padding-right: 0;
 }
 
 .composer-area .staging-panel-footer {
@@ -1365,7 +1374,7 @@ body,
   gap: 0.65rem;
   padding-top: 0.7rem;
   border-top: 1px solid var(--glass-border);
-  background: var(--bg-mid);
+  background: transparent;
 }
 
 .staging-action-notices {
@@ -1392,29 +1401,46 @@ body,
   grid-column: 1 / -1;
 }
 
-/* Four sources are always peers on one row.  Labels ellipsize rather than
-   allowing Setlink (or any future label) to force a second line. */
+.composer-source-nav {
+  padding: 0.25rem 0.9rem 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+/* Four sources are always peers on one row.  They are navigation, not an
+   additional card: the active source is marked by a quiet underline. */
 .composer-area .source-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.3rem;
+  gap: 0;
   width: 100%;
   min-width: 0;
-  padding: 0.3rem;
+  padding: 0;
   border-bottom: 0;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  overflow: hidden;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
 .composer-area .source-tab {
   display: inline-flex;
   min-width: 0;
   width: 100%;
-  padding: 0.55rem 0.35rem;
+  padding: 0.72rem 0.35rem 0.66rem;
   gap: 0.35rem;
   overflow: hidden;
   white-space: nowrap;
+  border-radius: 0;
+}
+
+.composer-area .source-tab:hover {
+  background: transparent;
+  color: var(--chr-vest);
+}
+
+.composer-area .source-tab.active {
+  color: var(--chr-vest);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--eureka-emerald);
 }
 
 .composer-area .source-tab > svg {
@@ -1428,11 +1454,113 @@ body,
   white-space: nowrap;
 }
 
+.composer-area .composer-content {
+  display: block;
+  padding: 1rem;
+  overflow-anchor: none;
+}
+
+.composer-area .songbook-list { display: block; }
+
+.songbook-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.songbook-summary {
+  min-width: 0;
+  color: var(--eureka-azure);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.songbook-summary[data-source='meloming'] { color: var(--eureka-emerald); }
+
+.songbook-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+}
+
+.songbook-search {
+  flex: none;
+  margin-bottom: 0.8rem;
+}
+
+.songbook-connect {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 1.25rem 0 0.5rem;
+  text-align: center;
+}
+
+.songbook-connect-icon { display: block; margin: 0 auto 0.65rem; }
+.songbook-connect-title { margin: 0; color: var(--text-main); font-size: 1.05rem; }
+.songbook-connect-description { margin: 0.45rem 0 1rem; color: var(--text-muted); font-size: 0.86rem; line-height: 1.55; }
+
+.source-connect-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.source-connect-form .btn-primary { width: auto; min-width: 8rem; }
+.source-connect-help { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
+.source-connect-error { margin: 0.75rem 0 0; color: var(--accent-red); font-size: 0.8rem; }
+
+.composer-area .empty-state,
+.composer-area .composer-search-hint {
+  min-height: 0;
+  padding: 0.9rem 0 !important;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer-area .empty-state::after { display: none; }
+
+.composer-import-divider { margin: 1rem 0 0.55rem; }
+
+.composer-file-import {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 46px;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed var(--glass-border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.composer-file-import:hover,
+.composer-file-import:focus-visible {
+  border-color: var(--eureka-emerald);
+  background: rgba(16, 255, 203, 0.06);
+  color: var(--chr-vest);
+  outline: none;
+}
+
+.composer-file-import-label { min-width: 0; color: var(--text-main); font-size: 0.86rem; font-weight: 700; }
+.composer-file-import-help { min-width: 0; color: var(--text-muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-file-import-action { padding: 0.32rem 0.5rem; border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-main); font-size: 0.75rem; white-space: nowrap; }
+
 @media (max-width: 1100px) {
   .dashboard-grid,
   .dashboard-container.staging-active .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(8.25rem, 0.72fr) minmax(0, 1.28fr);
+    grid-template-rows: auto auto auto;
     grid-template-areas:
       'playback'
       'queue'
@@ -1448,7 +1576,7 @@ body,
   .song-composer,
   .song-composer-viewport,
   .song-composer-view {
-    height: 100%;
+    height: auto;
   }
 }
 
@@ -1462,7 +1590,7 @@ body,
   .dashboard-container.staging-active .dashboard-grid {
     padding: 0 0.5rem 0.5rem;
     gap: 0.65rem;
-    grid-template-rows: auto minmax(7.75rem, 0.72fr) minmax(0, 1.28fr);
+    grid-template-rows: auto auto auto;
   }
 
   .playback-panel,
@@ -1481,6 +1609,14 @@ body,
   .composer-area .source-tab-label {
     font-size: inherit;
   }
+
+  .composer-source-nav { padding: 0.2rem 0.55rem 0; }
+  .composer-area .composer-content { padding: 0.85rem; }
+  .songbook-toolbar { gap: 0.5rem; }
+  .source-connect-form { grid-template-columns: 1fr; }
+  .source-connect-form .btn-primary { width: 100%; }
+  .composer-file-import { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .composer-file-import-help { display: none; }
 
   .staging-action-buttons {
     gap: 0.4rem;

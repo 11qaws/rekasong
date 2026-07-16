@@ -33,6 +33,11 @@ const toDisplayState = (state) => ({
 });
 
 export default function Dashboard() {
+  useEffect(() => {
+    document.body.classList.add('dashboard-page');
+    return () => document.body.classList.remove('dashboard-page');
+  }, []);
+
   const [state, setSharedState] = useSyncState();
   const currentSong = state?.currentSong;
   const history = useMemo(() => Array.isArray(state?.history) ? state.history : [], [state?.history]);

@@ -492,20 +492,27 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         )}
       </div>
 
-      <div className="divider">또는 로컬 파일</div>
+      <div className="divider composer-import-divider">또는 로컬 파일</div>
 
-      <div 
-        className="drop-zone-placeholder"
+      <div
+        className="composer-file-import"
         onClick={() => fileInputRef.current?.click()}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleFileDrop}
-        style={{ cursor: 'pointer', position: 'relative', overflow: 'hidden' }}
         title="클릭하여 파일 선택"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
       >
-        <UploadCloud size={32} style={{ color: 'var(--eureka-emerald)', marginBottom: '10px' }} />
-        <p style={{ margin: 0, fontWeight: 500 }}>로컬 MR 파일(오디오/MP4) 추가하기</p>
-        <p style={{ margin: '5px 0 15px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>드래그 앤 드롭 또는 클릭하세요</p>
-        <button className="btn-secondary" style={{ pointerEvents: 'none' }}>파일 선택</button>
+        <UploadCloud size={20} aria-hidden="true" />
+        <span className="composer-file-import-label">로컬 MR 파일 추가</span>
+        <span className="composer-file-import-help">오디오 또는 MP4 · 드래그하거나 선택</span>
+        <span className="composer-file-import-action" aria-hidden="true">파일 선택</span>
       </div>
     </>
   );
@@ -527,31 +534,30 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           ? 'YouTube 플레이리스트 주소를 붙여 넣으면 영상 목록을 노래책으로 가져옵니다.'
           : 'Setlink 공개 페이지의 주소를 붙여넣으세요.';
       return (
-        <div className="onboarding" style={{textAlign:'center', marginTop:'2rem', padding:'2rem', background:'rgba(0,0,0,0.1)', borderRadius:'12px', border:'1px solid var(--glass-border)'}}>
-          {isMeloming ? <Music size={48} color="var(--eureka-emerald)" style={{margin:'0 auto 1rem'}} /> : <Link size={48} color="var(--eureka-azure)" style={{margin:'0 auto 1rem'}} />}
-          <h3 style={{marginBottom:'0.5rem', fontSize:'1.2rem', color:'var(--text-main)'}}>{sourceName} 추가</h3>
-          <p style={{fontSize:'0.9rem', color:'var(--text-muted)', marginBottom:'1.5rem', lineHeight:'1.5'}}>
+        <section className="songbook-connect">
+          {isMeloming ? <Music className="songbook-connect-icon" size={32} color="var(--eureka-emerald)" /> : <Link className="songbook-connect-icon" size={32} color="var(--eureka-azure)" />}
+          <h3 className="songbook-connect-title">{sourceName} 추가</h3>
+          <p className="songbook-connect-description">
             목록을 한 번 가져와 카탈로그에 첨부합니다.<br/>
             목록은 자동 갱신되지 않으며, 업데이트 시 새로고침할 수 있습니다.
           </p>
-          <form onSubmit={(event) => { event.preventDefault(); submitImport(); }} style={{display:'flex', gap:'0.5rem', flexDirection:'column', maxWidth:'520px', margin:'0 auto'}}>
+          <form className="source-connect-form" onSubmit={(event) => { event.preventDefault(); submitImport(); }}>
             <input 
               type={isMeloming ? 'text' : 'url'}
               placeholder={inputPlaceholder}
               className="glass-input"
               value={inputValue}
               onChange={(event) => handleInputChange(event.target.value)}
-              style={{textAlign:'center'}}
             />
-            <button type="submit" className="btn-primary" style={{padding:'0.8rem'}} disabled={isImporting || !inputValue.trim()}>
+            <button type="submit" className="btn-primary" disabled={isImporting || !inputValue.trim()}>
               {isImporting ? <><Loader2 className="spinner" size={16} /> 가져오는 중</> : '목록 가져오기'}
             </button>
-            <div style={{fontSize:'0.75rem', color:'var(--text-muted)', marginTop:'0.5rem'}}>
+            <div className="source-connect-help">
               {sourceHelp}
             </div>
           </form>
-          {sourceError && <p style={{fontSize:'0.8rem', color:'var(--accent-red)'}}>{sourceError}</p>}
-        </div>
+          {sourceError && <p className="source-connect-error">{sourceError}</p>}
+        </section>
       );
     }
 
@@ -575,9 +581,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     const displaySongs = filteredSongs.slice(0, 100);
 
     return (
-      <div className="songbook-list" style={{display:'flex', flexDirection:'column', flex:1}}>
-        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:'0.5rem', borderBottom:'1px solid var(--glass-border)', marginBottom:'1rem'}}>
-          <div style={{fontSize:'0.85rem', color: platform === 'meloming' ? 'var(--eureka-emerald)' : 'var(--eureka-azure)'}}>
+      <section className="songbook-list" aria-label="노래책 곡 목록">
+        <div className="songbook-toolbar">
+          <div className="songbook-summary" data-source={platform}>
             ✅ <strong>{platform === 'setlink' ? (setlinkCatalogMeta?.name || 'Setlink') : platform === 'youtube-playlist' ? (youtubePlaylistCatalogMeta?.name || 'YouTube 플레이리스트') : (hookData.source?.name || `멜로밍 ${isConnected}`)}</strong> 가져옴 ({songs.length}곡)
             {platform === 'youtube-playlist' && playlistTitleProgress.total > 0 && (
               <span style={{marginLeft:'0.5rem', color: playlistTitleProgress.active ? 'var(--eureka-azure)' : 'var(--eureka-emerald)'}}>
@@ -585,7 +591,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
               </span>
             )}
           </div>
-          <div style={{display:'flex', gap:'0.5rem'}}>
+          <div className="songbook-toolbar-actions">
             {platform === 'setlink' && setlinkSourceUrl && <button onClick={() => handleSetlinkImport(setlinkSourceUrl)} className="btn-icon" title="공개 목록 새로고침"><RefreshCw size={14} className={isSetlinkLoading ? 'spinner' : ''} /></button>}
             {platform === 'youtube-playlist' && youtubePlaylistSourceUrl && <button onClick={() => handlePlaylistImport(youtubePlaylistSourceUrl)} className="btn-icon" title="플레이리스트 새로고침"><RefreshCw size={14} className={isPlaylistLoading ? 'spinner' : ''} /></button>}
             {platform !== 'setlink' && platform !== 'youtube-playlist' && <button onClick={refresh} className="btn-icon" title="새로고침">
@@ -596,14 +602,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         </div>
 
         {error && (
-          <div className="empty-state" style={{color:'var(--accent-red)', padding:'1rem'}}>
+          <div className="empty-state composer-empty-state" style={{color:'var(--accent-red)'}}>
             <AlertCircle size={24} style={{margin:'0 auto 0.5rem'}}/>
             {error}
           </div>
         )}
 
         {/* 내 노래책 내에서 검색 */}
-        <div className="search-input-wrapper" style={{marginBottom: '1rem'}}>
+        <div className="search-input-wrapper songbook-search">
           <Search className="search-icon" size={16} />
           <input 
             type="text" 
@@ -623,10 +629,10 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
              </div>
           )}
           {!isLoading && songs.length === 0 && !error && (
-            <div className="empty-state">{emptyMessage}</div>
+            <div className="empty-state composer-empty-state">{emptyMessage}</div>
           )}
           {!isLoading && songs.length > 0 && filteredSongs.length === 0 && (
-            <div className="empty-state" style={{padding:'2rem 1rem'}}>
+            <div className="empty-state composer-empty-state">
               일치하는 곡이 없습니다.
             </div>
           )}
@@ -711,13 +717,13 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
              </div>
           )}
         </div>
-      </div>
+      </section>
     );
   };
 
   return (
-    <div className="panel search-panel glass-card" style={{display:'flex', flexDirection:'column'}}>
-      <div className="panel-title" style={{paddingBottom: 0}}>
+    <section className="panel search-panel">
+      <header className="composer-source-nav">
         <div
           className="tabs source-tabs"
           role="group"
@@ -769,9 +775,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             <span className="source-tab-label">Setlink</span>
           </button>
         </div>
-      </div>
+      </header>
       
-      <div className="tab-content" style={{marginTop:'1rem', display:'flex', flexDirection:'column', flex:1, overflowY:'auto'}}>
+      <main className="composer-content">
         {activeTab === 'youtube' && renderYoutubeTab()}
         {activeTab === 'meloming' && renderSongbook(
           'meloming', 
@@ -803,7 +809,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           () => {},
           '가져온 공개 목록에 곡이 없습니다.'
         )}
-      </div>
+      </main>
       <input
         ref={fileInputRef}
         type="file"
@@ -815,6 +821,6 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         }}
         className="hidden-file-input"
       />
-    </div>
+    </section>
   );
 }
