@@ -718,30 +718,55 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   return (
     <div className="panel search-panel glass-card" style={{display:'flex', flexDirection:'column'}}>
       <div className="panel-title" style={{paddingBottom: 0}}>
-        <div className="tabs" style={{display:'flex', gap:'0.5rem', borderBottom:'1px solid var(--glass-border)'}}>
-          <button 
-            className={`tab-btn ${activeTab === 'youtube' ? 'active' : ''}`}
+        <div
+          className="tabs source-tabs"
+          role="group"
+          aria-label="곡 추가 방식"
+          data-source-tab-count="4"
+        >
+          <button
+            type="button"
+            className={`tab-btn source-tab ${activeTab === 'youtube' ? 'active' : ''}`}
+            data-source="youtube"
+            aria-pressed={activeTab === 'youtube'}
+            title="유튜브 검색"
             onClick={() => handleTabChange('youtube')}
           >
-            <Search size={14}/> 유튜브 검색
-          </button>
-          <button 
-            className={`tab-btn ${activeTab === 'meloming' ? 'active' : ''}`}
-            onClick={() => handleTabChange('meloming')}
-          >
-            <Music size={14}/> 멜로밍
+            <Search size={14} aria-hidden="true" />
+            <span className="source-tab-label">유튜브 검색</span>
           </button>
           <button
-            className={`tab-btn ${activeTab === 'youtube-playlist' ? 'active' : ''}`}
+            type="button"
+            className={`tab-btn source-tab ${activeTab === 'meloming' ? 'active' : ''}`}
+            data-source="meloming"
+            aria-pressed={activeTab === 'meloming'}
+            title="멜로밍"
+            onClick={() => handleTabChange('meloming')}
+          >
+            <Music size={14} aria-hidden="true" />
+            <span className="source-tab-label">멜로밍</span>
+          </button>
+          <button
+            type="button"
+            className={`tab-btn source-tab ${activeTab === 'youtube-playlist' ? 'active' : ''}`}
+            data-source="youtube-playlist"
+            aria-pressed={activeTab === 'youtube-playlist'}
+            title="YouTube 목록"
             onClick={() => handleTabChange('youtube-playlist')}
           >
-            <Link size={14}/> YouTube 목록
+            <Link size={14} aria-hidden="true" />
+            <span className="source-tab-label">YouTube 목록</span>
           </button>
-          <button 
-            className={`tab-btn ${activeTab === 'setlink' ? 'active' : ''}`}
+          <button
+            type="button"
+            className={`tab-btn source-tab ${activeTab === 'setlink' ? 'active' : ''}`}
+            data-source="setlink"
+            aria-pressed={activeTab === 'setlink'}
+            title="Setlink"
             onClick={() => handleTabChange('setlink')}
           >
-            <Link size={14}/> Setlink
+            <Link size={14} aria-hidden="true" />
+            <span className="source-tab-label">Setlink</span>
           </button>
         </div>
       </div>

@@ -49,6 +49,14 @@
   scrollbar-color: var(--chr-silver) transparent;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -56,6 +64,7 @@ body {
   color: var(--text-main);
   background-color: var(--bg-deep); /* Default for dashboard */
   overflow: hidden; /* Prevent scrollbars in OBS */
+  overscroll-behavior: none;
 }
 
 /* Specific body style for OBS Widget */

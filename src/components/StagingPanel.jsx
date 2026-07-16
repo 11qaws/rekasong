@@ -30,7 +30,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
 
   return (
     <div className="panel staging-panel glass-card">
-      <div className="panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+      <header className="staging-panel-header panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
         <span>
           <span className="step-number">2</span> 곡 정보 확인
           {stagedItem.source === 'meloming' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-emerald)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Meloming</span>}
@@ -39,10 +39,11 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         <button onClick={onClearStaged} className="btn-icon" title="다른 곡 검색" style={{fontSize:'0.85rem'}}>
           <ArrowLeft size={16} /> 다른 곡 찾기
         </button>
-      </div>
+      </header>
 
-      <div className="staging-media-info">
-        <div className="preview-player preview-player-priority">
+      <div className="staging-panel-content">
+        <div className="staging-media-info">
+          <div className="preview-player preview-player-priority">
           {type === 'youtube' && (
             <div className="youtube-preview-wrapper">
               <YouTube
@@ -65,9 +66,9 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           {type === 'local' && stagedItem.mediaType !== 'video' && (
             <audio controls src={src} className="local-audio-preview" style={{width:'100%'}}/>
           )}
-        </div>
+          </div>
 
-        <div className="staging-song-info">
+          <div className="staging-song-info">
           <div className="ai-title-card">
             <div className="ai-title-icon"><Sparkles size={18} /></div>
             <div className="ai-title-copy">
@@ -114,7 +115,6 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
                 onChange={(e) => onAliasChange('title', e.target.value)}
                 className="glass-input search-input"
                 placeholder="곡명을 입력하세요"
-                autoFocus
               />
             </div>
             <p className="staging-title-help">
@@ -124,24 +124,27 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
               )}
             </p>
           </div>
+          </div>
         </div>
       </div>
 
-      <div className="staging-actions">
-        {type === 'local' && needsBroadcastAsset && (
-          <p className={`staging-asset-status ${stagedItem.assetStatus === 'error' ? 'is-error' : ''}`}>
-            {stagedItem.assetStatus === 'uploading'
-              ? `방송용 파일 준비 중… ${stagedItem.assetProgress || 0}%`
-              : stagedItem.assetError || '방송용 파일을 준비하지 못했습니다.'}
-          </p>
-        )}
-        {!hasPlayableMr ? (
-          <p className="mr-unavailable">재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.</p>
-        ) : type === 'local' ? (
-          <p className="mr-cache-note">내 파일은 이번 방송에서만 사용하며, 방송이 끝나면 자동으로 정리됩니다.</p>
-        ) : stagedItem.source !== 'youtube' && stagedItem.songbookId && !stagedItem.mrVerified ? (
-          <p className="mr-cache-note">대기열에 추가하면 이 MR 연결을 노래책에 저장해 다음 방송에도 바로 사용할 수 있습니다.</p>
-        ) : null}
+      <footer className="staging-panel-footer staging-actions">
+        <div className="staging-action-notices">
+          {type === 'local' && needsBroadcastAsset && (
+            <p className={`staging-asset-status ${stagedItem.assetStatus === 'error' ? 'is-error' : ''}`}>
+              {stagedItem.assetStatus === 'uploading'
+                ? `방송용 파일 준비 중… ${stagedItem.assetProgress || 0}%`
+                : stagedItem.assetError || '방송용 파일을 준비하지 못했습니다.'}
+            </p>
+          )}
+          {!hasPlayableMr ? (
+            <p className="mr-unavailable">재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.</p>
+          ) : type === 'local' ? (
+            <p className="mr-cache-note">내 파일은 이번 방송에서만 사용하며, 방송이 끝나면 자동으로 정리됩니다.</p>
+          ) : stagedItem.source !== 'youtube' && stagedItem.songbookId && !stagedItem.mrVerified ? (
+            <p className="mr-cache-note">대기열에 추가하면 이 MR 연결을 노래책에 저장해 다음 방송에도 바로 사용할 수 있습니다.</p>
+          ) : null}
+        </div>
 
         <div className="staging-action-buttons">
           <button
@@ -162,7 +165,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             </button>
           )}
         </div>
-      </div>
+      </footer>
     </div>
   );
 }

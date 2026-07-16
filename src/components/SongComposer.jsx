@@ -6,17 +6,33 @@ import StagingPanel from './StagingPanel';
 export default function SongComposer({ stagedItem, searchProps, stagingProps }) {
   return (
     <section className="song-composer" aria-label="곡 추가">
-      <AnimatePresence initial={false} mode="popLayout">
-        {stagedItem ? (
-          <motion.div key="review" layout initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, height: 0 }}>
-            <StagingPanel stagedItem={stagedItem} {...stagingProps} />
-          </motion.div>
-        ) : (
-          <motion.div key="add" layout initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, height: 0 }}>
-            <SearchPanel {...searchProps} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className="song-composer-viewport">
+        <AnimatePresence initial={false} mode="wait">
+          {stagedItem ? (
+            <motion.div
+              key="review"
+              className="song-composer-view is-staging"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+            >
+              <StagingPanel stagedItem={stagedItem} {...stagingProps} />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="add"
+              className="song-composer-view is-search"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+            >
+              <SearchPanel {...searchProps} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </section>
   );
 }

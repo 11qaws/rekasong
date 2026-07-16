@@ -1150,3 +1150,372 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   .obs-setup-dialog { padding: 1rem; }
   .obs-session-actions { align-items: flex-start; flex-direction: column; }
 }
+
+/*
+ * Stable viewport contract
+ *
+ * The broadcast console must not become a document that shifts while a song
+ * is being chosen.  The shell owns the viewport; only the queue and the
+ * composer content are allowed to scroll.  These rules intentionally live
+ * after the legacy layout declarations above so old automatic-height rules
+ * cannot reintroduce a page scrollbar.
+ */
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-container {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100vh;
+  max-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Keep the decorative wash inert.  The former 200%-sized rotating element
+   could change raster/scrollbar calculations while the layout was idle. */
+.dashboard-container::before {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  z-index: 0;
+  animation: none;
+  transform: none;
+}
+
+.dashboard-header,
+.dashboard-grid {
+  position: relative;
+  z-index: 1;
+}
+
+.dashboard-header {
+  flex: 0 0 auto;
+  margin: 0 0 1rem;
+  padding: 1.15rem 2rem 1.4rem;
+}
+
+.dashboard-grid,
+.dashboard-container.staging-active .dashboard-grid {
+  display: grid;
+  flex: 1 1 auto;
+  width: min(1600px, 100%);
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  margin: 0 auto;
+  padding: 0 1rem 1rem;
+  grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'playback playback'
+    'queue composer';
+  gap: 1rem;
+  align-items: stretch;
+  overflow: hidden;
+  transition: none;
+}
+
+.playback-area,
+.queue-area,
+.composer-area {
+  min-width: 0;
+  min-height: 0;
+}
+
+.playback-area {
+  align-self: start;
+}
+
+.queue-area,
+.composer-area {
+  display: flex;
+  overflow: hidden;
+}
+
+/* The now-playing panel is compact; the queue and composer consume the
+   remaining row without increasing the shell height. */
+.playback-area > .panel {
+  height: auto;
+  max-height: none;
+}
+
+.queue-area > .queue-panel,
+.composer-area > .song-composer {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+}
+
+.queue-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.history-accordion {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 38%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.history-accordion .history-list {
+  max-height: none;
+  overflow: visible;
+}
+
+/* SongComposer is a fixed-size viewport.  Framer Motion may animate its
+   child, but cannot change the surrounding grid track or the page position. */
+.song-composer,
+.song-composer-viewport,
+.song-composer-view {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.song-composer-view > .panel {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.composer-area .search-panel {
+  gap: 0.8rem;
+}
+
+.composer-area .search-panel > .panel-title,
+.composer-area .staging-panel-header,
+.composer-area .staging-panel-footer {
+  flex: 0 0 auto;
+}
+
+.composer-area .tab-content,
+.composer-area .staging-panel-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* A single composer scrollport prevents the old page-scroll / nested-result
+   scroll combination from moving the selected item out of view. */
+.composer-area .tab-content > .search-results,
+.composer-area .tab-content > .songbook-list {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+.composer-area .drop-zone-placeholder,
+.composer-area .drop-zone {
+  position: static;
+}
+
+.composer-area .staging-panel {
+  gap: 0.8rem;
+}
+
+.composer-area .staging-panel-content {
+  padding-right: 0.2rem;
+}
+
+.composer-area .staging-panel-footer {
+  display: grid;
+  gap: 0.65rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--glass-border);
+  background: var(--bg-mid);
+}
+
+.staging-action-notices {
+  min-width: 0;
+}
+
+/* Action labels must stay usable when the "add to queue" and "play next"
+   choices are both present.  Equal tracks and a zero min-width keep either
+   label inside the review panel instead of widening the dashboard. */
+.staging-action-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+}
+
+.staging-action-buttons .go-live-btn {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.staging-action-buttons .go-live-btn:only-child {
+  grid-column: 1 / -1;
+}
+
+/* Four sources are always peers on one row.  Labels ellipsize rather than
+   allowing Setlink (or any future label) to force a second line. */
+.composer-area .source-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.3rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.3rem;
+  border-bottom: 0;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.composer-area .source-tab {
+  display: inline-flex;
+  min-width: 0;
+  width: 100%;
+  padding: 0.55rem 0.35rem;
+  gap: 0.35rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.composer-area .source-tab > svg {
+  flex: 0 0 auto;
+}
+
+.composer-area .source-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-grid,
+  .dashboard-container.staging-active .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(8.25rem, 0.72fr) minmax(0, 1.28fr);
+    grid-template-areas:
+      'playback'
+      'queue'
+      'composer';
+  }
+
+  .queue-area,
+  .composer-area {
+    min-height: 0;
+  }
+
+  .queue-panel,
+  .song-composer,
+  .song-composer-viewport,
+  .song-composer-view {
+    height: 100%;
+  }
+}
+
+@media (max-width: 650px) {
+  .dashboard-header {
+    margin: 0 0 0.75rem;
+    padding: 0.8rem 1rem 1rem;
+  }
+
+  .dashboard-grid,
+  .dashboard-container.staging-active .dashboard-grid {
+    padding: 0 0.5rem 0.5rem;
+    gap: 0.65rem;
+    grid-template-rows: auto minmax(7.75rem, 0.72fr) minmax(0, 1.28fr);
+  }
+
+  .playback-panel,
+  .queue-panel,
+  .composer-area .search-panel,
+  .composer-area .staging-panel {
+    padding: 0.85rem;
+  }
+
+  .composer-area .source-tab {
+    padding: 0.48rem 0.2rem;
+    gap: 0.25rem;
+    font-size: 0.72rem;
+  }
+
+  .composer-area .source-tab-label {
+    font-size: inherit;
+  }
+
+  .staging-action-buttons {
+    gap: 0.4rem;
+  }
+
+  .staging-action-buttons .go-live-btn {
+    padding: 0.72rem 0.35rem;
+    font-size: 0.86rem;
+    line-height: 1.25;
+  }
+}
+
+@media (max-height: 720px) {
+  .dashboard-header {
+    margin-bottom: 0.65rem;
+    padding-top: 0.72rem;
+    padding-bottom: 0.82rem;
+  }
+
+  .dashboard-header .logo {
+    font-size: 1.8rem;
+  }
+
+  .dashboard-header .subtitle {
+    margin: 0.28rem 0 0;
+    font-size: 0.82rem;
+  }
+
+  .dashboard-grid,
+  .dashboard-container.staging-active .dashboard-grid {
+    gap: 0.65rem;
+  }
+
+  .playback-panel {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+}
