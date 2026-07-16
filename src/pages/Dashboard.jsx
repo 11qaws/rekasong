@@ -5,6 +5,7 @@ import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/u
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
 import { useOnAirSession } from '../hooks/useOnAirSession';
 import { createQueueEntry, newId, toLegacySong, toQueueEntry } from '../lib/queueEntry';
+import { collectBlobSrcs, isBlobReferenced, isLocalBlobSong, revokeBlobSrcs } from '../lib/blobLifecycle';
 import { apiUrl } from '../lib/api';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
@@ -129,12 +130,17 @@ export default function Dashboard() {
 
   // Clean up ObjectURLs to prevent memory leaks.
   // 같은 blob을 연속 재생(다시 예약)할 때는 src가 같아 revoke되지 않는다.
-  const currentLocalBlobSrc = !useOnAirPlayer && currentEntry?.song?.type === 'local' && currentEntry.song.src.startsWith('blob:')
+  const currentLocalBlobSrc = !useOnAirPlayer && isLocalBlobSong(currentEntry?.song)
     ? currentEntry.song.src
     : null;
   useEffect(() => {
     if (!currentLocalBlobSrc) return undefined;
     return () => {
+      // Stage 4 (D-02): 곡 전환·discard로 현재 곡에서 내려가도, 같은 blob src를
+      // 다른 entry(다시 예약된 대기열 항목, 이력의 완료 항목)가 아직 참조하면
+      // revoke하지 않는다. cleanup 시점의 stateRef.current는 전환이 반영된 최신
+      // 상태다(이력 편입·큐 승격 포함). 마지막 참조가 사라졌을 때만 회수한다.
+      if (isBlobReferenced(currentLocalBlobSrc, stateRef.current)) return;
       URL.revokeObjectURL(currentLocalBlobSrc);
     };
   }, [currentLocalBlobSrc]);
@@ -190,6 +196,26 @@ export default function Dashboard() {
   };
 
   const [stagedItem, setStagedItem] = useState(null);
+  // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
+  const stagedItemRef = useRef(null);
+  stagedItemRef.current = stagedItem;
+
+  // Stage 4 (INV-8, D-31): 창 닫힘 시 참조 중인 blob을 revoke해 메모리 누수를
+  // 막는다. 상태는 localStorage에 남으므로 다음 로드에서 Stage 1의 로컬 곡
+  // 소실 안내(D-04)로 이어진다 — revoke는 멱등이라 이중 정리에도 안전하다.
+  // bfcache 보존(event.persisted)일 때는 페이지가 되살아날 수 있어 회수하지 않는다.
+  useEffect(() => {
+    const handlePageHide = (event) => {
+      if (event.persisted) return;
+      const srcs = collectBlobSrcs(stateRef.current);
+      const staged = stagedItemRef.current;
+      if (staged?.type === 'local' && staged.src?.startsWith('blob:')) srcs.add(staged.src);
+      revokeBlobSrcs(srcs);
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, []);
+
   const {
     aiStatusMessage,
     cancelAiExtraction,
@@ -412,7 +438,13 @@ export default function Dashboard() {
     cancelAiExtraction();
     setAiStatus('');
     setStagedItem((previous) => {
-      if (previous?.type === 'local' && previous.src?.startsWith('blob:')) URL.revokeObjectURL(previous.src);
+      // Stage 4 (D-02 동일 규칙): 대기열/현재 곡/이력이 같은 blob src를 쓰고
+      // 있으면 유지한다. (스테이징 blob은 파일 드롭마다 새로 만들어져 실제로
+      // 겹칠 일이 없지만, 참조 검사 하나로 규칙을 통일한다.)
+      if (previous?.type === 'local' && previous.src?.startsWith('blob:') &&
+        !isBlobReferenced(previous.src, stateRef.current)) {
+        URL.revokeObjectURL(previous.src);
+      }
       return null;
     });
     showToast('선택한 곡을 취소했습니다.', 'info');
@@ -629,7 +661,12 @@ export default function Dashboard() {
 
     cancelAiExtraction();
     setStagedItem((previous) => {
-      if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:')) URL.revokeObjectURL(previous.src);
+      // On-Air 송출 항목은 assetId(R2 자산)를 참조하므로 미리보기 blob은 여기서
+      // 회수한다. 직접 재생 모드는 entry가 이 blob src 자체를 쓰므로 유지된다.
+      if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:') &&
+        !isBlobReferenced(previous.src, stateRef.current)) {
+        URL.revokeObjectURL(previous.src);
+      }
       return null;
     });
   };
@@ -948,6 +985,18 @@ export default function Dashboard() {
 
   const handleEndBroadcastSession = () => {
     if (!useOnAirPlayer) {
+      // §4-7/INV-8: 세션 종료 확정 — 재생을 먼저 멈추고, 현재 곡·대기열·이력이
+      // 참조하는 임시 blob을 일괄 revoke한 뒤 목록을 정리한다(abandoned).
+      // 이후 currentEntry cleanup effect가 같은 src를 다시 만나도 revoke는
+      // 멱등이라 이중 정리가 안전하다.
+      try {
+        audioRef.current?.pause();
+        videoRef.current?.pause();
+        ytPlayerRef.current?.stopVideo?.();
+      } catch {
+        // 파괴된 플레이어 참조 — 언마운트가 마저 정리한다.
+      }
+      revokeBlobSrcs(collectBlobSrcs(stateRef.current));
       setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
       setIsPlaying(false);
       return;
@@ -989,6 +1038,17 @@ export default function Dashboard() {
       ...prev,
       queue: (prev.queue || []).filter((item) => item.entryId !== entryId)
     }));
+
+    // Stage 4 (D-02 동일 규칙): 제거로 마지막 참조가 사라진 blob은 회수한다.
+    // 단, 아래 되돌리기 토스트(5초)가 항목을 복구할 수 있으므로 즉시 회수하면
+    // 복구된 곡이 조용히 재생 불가가 된다(D-02의 변종). 토스트 수명보다 긴
+    // 유예 뒤, 그 시점의 최신 상태에서 여전히 미참조일 때만 회수한다.
+    if (isLocalBlobSong(removedEntry.song)) {
+      const removedSrc = removedEntry.song.src;
+      setTimeout(() => {
+        if (!isBlobReferenced(removedSrc, stateRef.current)) URL.revokeObjectURL(removedSrc);
+      }, 6000);
+    }
 
     showToast('“' + removedEntry.song.title + '”을 대기열에서 제거했습니다.', 'info', {
       label: '되돌리기',
@@ -1065,6 +1125,9 @@ export default function Dashboard() {
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
+      // INV-8: On-Air 로컬 곡은 R2 자산(assetId) 참조라 revoke 대상이 아니지만,
+      // 직접 재생 시절의 blob 항목이 이력·대기열에 남아 있을 수 있어 함께 회수한다.
+      revokeBlobSrcs(collectBlobSrcs(stateRef.current));
       setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
       showToast('방송 세션을 종료하고 임시 파일 정리를 예약했습니다.', 'info');
     }
