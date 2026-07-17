@@ -34,6 +34,33 @@ const toDisplayState = (state) => ({
   history: Array.isArray(state?.history) ? state.history.map(toDisplaySong).filter(Boolean).slice(-100) : []
 });
 
+// Stage 5 (N-08/D-14): 원격 위젯 발행 projection.
+// 공개 ntfy 토픽(rekasong-{room})은 서명으로 위변조만 막을 뿐 열람은 못 막으므로
+// (PHASE_08 §3-1), payload 자체가 '시청자에게 보여도 되는 것'만 담아야 한다.
+// 위젯이 실제 표시하는 필드만 화이트리스트로 내보낸다 — 대기열(시청자 비공개
+// 설계, Widget.jsx 주석)·노래책 카탈로그·멜로밍 채널 ID·MR 캐시·설정은 어떤
+// 발행 경로(BroadcastChannel/localStorage/dev API/ntfy)에도 싣지 않는다.
+const WIDGET_HISTORY_LIMIT = 50; // D-29/D-14: 발행 history 상한 — payload 비대 방지
+
+const toWidgetSong = (entry, extra = {}) => {
+  const song = entry?.song;
+  if (!entry?.entryId || !song?.title) return null;
+  const type = song.type === 'youtube' ? 'youtube' : 'local';
+  return {
+    // 구버전 위젯 하위호환: entryId를 구 스키마의 id 자리에 넣는다(toLegacySong 규약).
+    id: String(entry.entryId),
+    title: String(song.title),
+    artist: typeof song.artist === 'string' ? song.artist : '',
+    type,
+    // 로컬 src(blob:/세션 자산 id)는 위젯에서 재생 불가·정보 노출만 된다 — youtube id만.
+    src: type === 'youtube' ? String(song.src || '') : '',
+    tags: Array.isArray(song.tags) ? song.tags : [],
+    source: typeof song.source === 'string' && song.source ? song.source : type,
+    completionReason: entry.completionReason || null,
+    ...extra
+  };
+};
+
 // On-Air transport status → 생애주기 phase (§2-1) 근사 매핑.
 const onAirStatusToPhase = (status) => {
   if (status === 'playing') return 'playing';
@@ -55,7 +82,8 @@ export default function Dashboard() {
   // 하위호환 투영: 위젯·On-Air display·기존 패널 표시는 평면 곡을 소비한다.
   const currentSong = useMemo(() => (currentEntry ? toLegacySong(currentEntry) : null), [currentEntry]);
   const legacyHistory = useMemo(() => history.map(toLegacySong).filter(Boolean), [history]);
-  const legacyQueue = useMemo(() => (Array.isArray(state?.queue) ? state.queue : []).map(toLegacySong).filter(Boolean), [state?.queue]);
+  // (Stage 5) 큐의 평면 투영은 더 이상 만들지 않는다 — 대기열은 시청자 비공개
+  // 설계라 원격 발행 payload에 절대 싣지 않는다(N-08).
 
   const onAirEventHandlerRef = useRef(null);
   const onAir = useOnAirSession((payload) => onAirEventHandlerRef.current?.(payload));
@@ -259,18 +287,24 @@ export default function Dashboard() {
     }
   }, [signingKeys]);
 
-  // Update remote widget when state changes.
-  // 위젯(room&key 구독)은 평면 currentSong/history를 소비하므로 발행 시점에
-  // v2 QueueEntry를 구 스키마 모양으로 투영해 하위호환을 유지한다.
+  // Stage 5 위젯 projection (INV-9): 확정 상태만, 위젯이 쓰는 필드만 발행한다.
+  // 위젯(room&key 구독)은 평면 currentSong/history를 소비하므로 v2 QueueEntry를
+  // 구 스키마 모양으로 투영해 하위호환을 유지한다.
+  // D-18 잔존 해소: isPlaying과 currentSong.phase를 포함해 위젯이 일시정지·
+  // 스킵 중·재생 실패를 추측 없이(§5-1) 표시할 수 있게 한다.
+  const widgetProjection = useMemo(() => ({
+    currentSong: currentEntry ? toWidgetSong(currentEntry, { phase: active?.phase || null }) : null,
+    history: history.slice(-WIDGET_HISTORY_LIMIT).map((entry) => toWidgetSong(entry)).filter(Boolean),
+    isPlaying
+  }), [currentEntry, active?.phase, history, isPlaying]);
+
   useEffect(() => {
     if (room && signingKeys) {
-      const payload = {
-        state: { ...state, currentSong, queue: legacyQueue, history: legacyHistory },
-        timestamp: Date.now()
-      };
-      publishSync(payload, room, signingKeys.privateKey);
+      // D-12(늦게 연 위젯의 빈 화면 — ntfy since= 재생/접속 스냅숏)는 이번 단계
+      // 미포함, Stage 5 후속으로 남긴다. 지금은 다음 상태 변경 시 채워진다.
+      publishSync({ state: widgetProjection, timestamp: Date.now() }, room, signingKeys.privateKey);
     }
-  }, [state, currentSong, legacyQueue, legacyHistory, room, signingKeys]);
+  }, [widgetProjection, room, signingKeys]);
 
   useEffect(() => {
     if (!useOnAirPlayer || !onAirDisplayToken || onAirConnectionState !== 'connected') return;

@@ -220,3 +220,15 @@
   - manual 항목은 '다시 부르기' 버튼 disabled + 툴팁 안내(재생 정보 없음). 실제 완료 곡의 다시 부르기·삭제는 기존 동작 유지.
 - **하위 호환**: 저장된 v1/v2 상태는 기존 경로 그대로 통과(회귀 없음). manual 항목은 새 스키마 확장이라 구버전 데이터에 영향 없음. 위젯은 `toLegacySong` 평면 투영의 title만 소비하므로 무수정 호환.
 - **검증**: vite build·oxlint 통과. playwright-core 실렌더 12/12 통과(추가·저장·재정렬·교차 드롭 가드·삭제·새로고침 보존·requeue 활성/비활성 구분) + dev 서버 `/api/sync` 경유 위젯 setlist에 수동 항목 제목 표시 확인.
+
+## 2026-07-17 (2)
+**생애주기 Stage 5 — 위젯 projection 축소(N-08) + isPlaying/phase 발행(D-18) + history 상한(D-29) + 직접모드 위젯 URL 복원(N-01)**
+- **N-08 프라이버시 (핵심)**: `Dashboard.jsx`가 원격 발행 시 `state` 전체(setlinkCatalog·youtubePlaylistCatalog·songbookMrCache·melomingChannelId·**시청자 비공개 설계인 queue**)를 공개 ntfy 토픽(`rekasong-{room}`)에 서명-평문으로 올리던 것을, 위젯이 실제 표시하는 필드만 담은 축소 projection `{ currentSong{id,title,artist,type,src(youtube만),tags,source,phase,completionReason}, history[≤50], isPlaying }`으로 교체. `toWidgetSong` 화이트리스트 팩토리로 구성 — 발행 경로 4곳(BroadcastChannel/localStorage/dev `/api/sync`/ntfy) 전부 `publishSync` 하나를 지나므로 일괄 축소.
+  - 로컬 곡 src(blob:/세션 자산 id)는 발행하지 않음(`src:''`) — 위젯에서 재생 불가·정보 노출만 됨.
+  - `legacyQueue` 평면 투영 제거(발행 전용이었음). 로컬 UI(QueuePanel)는 `state.queue` 그대로 사용.
+- **D-18 잔존**: `isPlaying`과 `currentSong.phase`를 payload에 포함. `Widget.jsx`가 phase 우선(§5-1 상태 추측 금지)으로 `일시정지/스킵 중…/취소 중…/재생 시작 중…/버퍼링…/재생 실패` 배지를 기존 출처 배지(Meloming/Setlink)와 같은 인라인 최소 텍스트 형식으로 표시. phase·isPlaying 둘 다 없는 구버전 payload에서는 배지 미표시.
+- **D-29/D-14**: 발행 history를 최근 50곡으로 cap(`WIDGET_HISTORY_LIMIT`). state 자체 cap은 미도입(발행 cap만으로 payload 비대 해소).
+- **N-01**: PlaybackPanel이 미사용으로 받던 `room/publicKeyB64` props를 배선. On-Air `unconfigured`(직접 재생 모드)일 때 OBS 설정 다이얼로그의 '화면 정보 위젯' 단계가 disabled 버튼 대신 `#/widget?room=…&key=…` 주소 복사 버튼(`btn-copy` 재사용)을 노출. 구버전 room&key 위젯 URL 형식과 동일.
+- **범위 외로 명시 이월**: D-12(늦게 연 위젯 빈 화면 — ntfy `since=`/접속 스냅숏)는 코드 주석으로 후속 표기. 코디네이터 상태기계·재생 로직·On-Air display 프로토콜(`toDisplayState`) 무변경.
+- **하위 호환**: 구버전 위젯이 소비하는 평면 필드 계약(id=entryId, title/type/src/source/tags) 유지 — 축소 payload로도 현재곡·setlist 표시 지속. 큐 표시는 원래 설계상 비공개라 지원 범위 밖임을 명확화.
+- **검증**: vite build·oxlint 통과(신규 경고 0). playwright-core + dev `/api/sync` 실렌더 22/22 통과 — payload 키가 {currentSong,history,isPlaying}뿐(카탈로그·큐·채널ID·MR캐시·blob: 부재를 발행 JSON 문자열 검사로 확인), history 50 cap·completionReason 포함, 위젯 현재곡/수동 항목/완료 이력 표시, 일시정지 시 payload(phase=paused)와 위젯 배지 반영, 직접모드 복사 버튼 활성·복사 URL로 위젯 구동.

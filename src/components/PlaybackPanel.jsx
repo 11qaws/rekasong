@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 
 export default function PlaybackPanel({
+  room,
+  publicKeyB64,
   currentSong,
   activePhase,
   failureDetail,
@@ -33,6 +35,13 @@ export default function PlaybackPanel({
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
+  // N-01 (Stage 5): 직접 재생 모드(On-Air 미설정)의 화면 정보 위젯 주소.
+  // 구버전 room&key 위젯과 동일한 형식이라 예전에 복사해 둔 주소도 계속 동작하며,
+  // 이 주소가 구독하는 발행 payload는 축소 projection(N-08)뿐이다.
+  const isDirectMode = onAirStatus === 'unconfigured';
+  const directWidgetUrl = room && publicKeyB64
+    ? `${window.location.origin}${window.location.pathname}#/widget?room=${encodeURIComponent(room)}&key=${encodeURIComponent(publicKeyB64)}`
+    : '';
 
   // 생애주기 전이 중/실패 상태(§2-1) — 일반 재생 조작을 잠그고 상태를 드러낸다.
   // finishing: 쓰레기통만 허용(§4-3) · discarding: 중복 조작 방지(§4-4)
@@ -201,9 +210,23 @@ export default function PlaybackPanel({
                 <div>
                   <strong>화면 정보 위젯</strong>
                   <p>OBS 브라우저 소스로 추가하고, 오디오는 끕니다.</p>
-                  <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay || onAirStatus === 'unconfigured'}>
-                    {isPreparingDisplay ? '준비 중…' : <><Copy size={14} /> {displayUrl ? '주소 복사' : '위젯 준비 후 주소 복사'}</>}
-                  </button>
+                  {isDirectMode ? (
+                    // N-01: On-Air 서버가 없는 직접 재생 모드에서는 room&key 구독형
+                    // 위젯 주소를 복사한다. 표시 내용은 축소 projection(현재 곡·setlist)뿐이다.
+                    <button
+                      type="button"
+                      onClick={() => copyUrl(directWidgetUrl, '화면 정보 위젯 주소를 복사했습니다.')}
+                      className="btn-copy"
+                      disabled={!directWidgetUrl}
+                      title={directWidgetUrl ? '이 브라우저에서 재생하는 동안 현재 곡·setlist를 보여 주는 위젯 주소' : '위젯 키를 준비하는 중입니다. 잠시 후 다시 시도해 주세요.'}
+                    >
+                      <Copy size={14} /> {directWidgetUrl ? '주소 복사' : '위젯 키 준비 중…'}
+                    </button>
+                  ) : (
+                    <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay}>
+                      {isPreparingDisplay ? '준비 중…' : <><Copy size={14} /> {displayUrl ? '주소 복사' : '위젯 준비 후 주소 복사'}</>}
+                    </button>
+                  )}
                 </div>
               </li>
               <li>

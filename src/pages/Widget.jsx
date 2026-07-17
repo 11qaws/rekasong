@@ -59,11 +59,25 @@ export default function Widget() {
     return <OnAirPlayer apiBaseUrl={apiBaseUrl} room={session} token={token} />;
   }
 
-  const { currentSong, history = [] } = state;
+  const { currentSong, history = [], isPlaying } = state;
   // The broadcast-facing list is the songs already sung plus the song that is
   // currently on air. The dashboard queue is deliberately kept private so it
   // does not reveal upcoming requests to viewers.
   const setlist = [...history, ...(currentSong ? [currentSong] : [])];
+
+  // Stage 5 (D-18 잔존): 발행 payload의 currentSong.phase/isPlaying으로 일시정지·
+  // 스킵 중·재생 실패를 표시한다. phase가 우선 진실이고, isPlaying은 phase가 없는
+  // 과도기 payload의 일시정지 판정에만 보조로 쓴다. 둘 다 없는 구버전 payload는
+  // 배지를 아예 보이지 않는다 — 상태를 추측해 보이지 않는다(SONG_LIFECYCLE §5-1).
+  const phase = currentSong?.phase;
+  const playbackStatusText =
+    phase === 'failed' ? '재생 실패'
+      : phase === 'finishing' ? '스킵 중…'
+      : phase === 'discarding' ? '취소 중…'
+      : phase === 'starting' ? '재생 시작 중…'
+      : phase === 'buffering' ? '버퍼링…'
+      : (phase === 'paused' || (isPlaying === false && phase !== 'playing')) ? '일시정지'
+      : '';
 
   return (
     <div className="widget-container">
@@ -114,6 +128,12 @@ export default function Widget() {
               <div className="current-song-text" style={{display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start'}}>
                 {currentSong.source === 'meloming' && <div style={{fontSize:'12px', background:'var(--eureka-emerald)', color:'#fff', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>Meloming</div>}
                 {currentSong.source === 'setlink' && <div style={{fontSize:'12px', background:'var(--eureka-azure)', color:'#fff', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>Setlink</div>}
+                {/* Stage 5: 재생 상태 배지 — 기존 출처 배지와 같은 최소 텍스트 형식. */}
+                {playbackStatusText && (
+                  <div style={{fontSize:'12px', background:'rgba(0,0,0,0.55)', color:'rgba(255,255,255,0.9)', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>
+                    {playbackStatusText}
+                  </div>
+                )}
                 <span>{currentSong.title}</span>
                 {currentSong.tags && currentSong.tags.length > 0 && (
                   <div style={{fontSize:'12px', color:'rgba(255,255,255,0.7)', marginTop:'2px'}}>
