@@ -81,23 +81,26 @@ const mediaResponse = (object) => {
   return new Response(object.body, { headers });
 };
 
-// [/v1/audio 인증 설계]
+// [/v1/audio · /v1/prepare(대시보드 구간) 공용 인증 설계]
 // 캐시(audio/{videoId})는 전역이지만 세션·토큰은 방 단위라는 불일치를,
-// "재생 자격 = 활성 방송의 player 토큰 보유"로 조화시킨다. 요청자는
+// "자격 = 활성 방송의 player 토큰 보유"로 조화시킨다. 요청자는
 // ?room=...&token=... 으로 자기 방을 지목하고, 해당 SessionRoom이
 // streamAsset과 동일한 player 검증을 대행한다. 어느 방의 토큰이든 다른 방이
 // 준비한 캐시를 읽을 수 있는데, 이는 의도된 동작이다 — 캐시가 전역 공유인
 // 것이 이 파이프라인의 존재 이유이고(§1), 토큰 검증의 목적은 방 간 격리가
 // 아니라 오픈 프록시 차단이다(§3).
+// 큐잉(POST /v1/prepare)도 같은 게이트를 쓴다: 재생할 수 없으면 큐잉도 할 수
+// 없어야 한다. 무인증 큐잉은 VPS의 yt-dlp 요청량을 임의로 부풀려 "고유
+// 영상당 평생 1회"라는 봇월 회피 전제(§0, §6) 자체를 무너뜨린다.
 // 트레이드오프: 세션 없는 직접 재생(개발)은 지원하지 않는다. <audio src>는
 // 헤더를 못 붙이므로 PREPARE_TOKEN 우회로를 열면 쿼리스트링으로 VPS 토큰이
 // 새는 경로가 된다. 대시보드는 세션 생성 시 playerToken을 이미 받으므로
 // (POST /v1/sessions 응답) 개발 재생도 세션만 있으면 이 경로로 충분하다.
-const streamPreparedAudio = async (request, env, videoId) => {
+const verifyRoomPlayerToken = async (request, env) => {
   const url = new URL(request.url);
   const room = url.searchParams.get('room') || '';
   const token = url.searchParams.get('token') || '';
-  if (!/^[a-f0-9-]{8,64}$/i.test(room) || !token) return json({ error: 'Unauthorized' }, 401);
+  if (!/^[a-f0-9-]{8,64}$/i.test(room) || !token) return false;
 
   const stub = env.SESSION_ROOM.get(env.SESSION_ROOM.idFromName(room));
   const verified = await stub.fetch(new Request('https://session.internal/verify-media-token', {
@@ -105,7 +108,11 @@ const streamPreparedAudio = async (request, env, videoId) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token })
   }));
-  if (!verified.ok) return json({ error: 'Unauthorized' }, 401);
+  return verified.ok;
+};
+
+const streamPreparedAudio = async (request, env, videoId) => {
+  if (!(await verifyRoomPlayerToken(request, env))) return json({ error: 'Unauthorized' }, 401);
 
   const object = await env.MEDIA_BUCKET.get(audioKey(videoId), { range: request.headers });
   if (!object) return json({ error: 'Audio not prepared' }, 404);
@@ -122,6 +129,13 @@ export default {
     if (audioMatch && request.method === 'GET') return streamPreparedAudio(request, env, audioMatch[1]);
 
     if (url.pathname === '/v1/prepare' || url.pathname.startsWith('/v1/prepare/')) {
+      // 대시보드 구간(큐잉·폴링)은 /v1/audio와 동일한 room+player 토큰 게이트.
+      // claim/bytes/fail/heartbeat/stats는 DO 내부의 Bearer(PREPARE_TOKEN)가 담당.
+      const dashboardRoute = (request.method === 'POST' && url.pathname === '/v1/prepare')
+        || (request.method === 'GET' && /^\/v1\/prepare\/[A-Za-z0-9_-]{11}$/.test(url.pathname));
+      if (dashboardRoute && !(await verifyRoomPlayerToken(request, env))) {
+        return json({ error: 'Unauthorized' }, 401);
+      }
       // 준비 상태는 전역 싱글턴이 보유한다 — 캐시는 모든 방이 공유한다. (§2)
       const stub = env.PREPARE_QUEUE.get(env.PREPARE_QUEUE.idFromName('global'));
       return stub.fetch(request);
@@ -560,11 +574,19 @@ export class PrepareQueue {
     if (job?.status === 'ready') {
       // 수동/TTL 정리로 바이트만 사라진 ready는 거짓 안전이다. 폴링(GET)이 아닌
       // 스테이징 시점에만 실존을 확인해 R2 head 비용을 요청 1회로 묶는다.
+      // force도 여기엔 적용하지 않는다 — 실존하는 바이트를 다시 받을 이유가 없다.
       if (await this.env.MEDIA_BUCKET.head(audioKey(videoId))) return json(this.publicJob(job));
       return json(this.publicJob(await this.enqueue(videoId, job)), 202);
     }
 
     if (job?.status === 'failed') {
+      // force는 사용자의 명시적 재시도 전용 문이다. failed(unavailable 포함)를
+      // 지우고 재큐하되, 자동 경로(claim)의 정책은 그대로다 — unavailable을
+      // 기계가 계속 긁으면 죽은 영상 요청이 봇월을 부른다. 시도 이력도 초기화해
+      // 백오프가 새로 시작된다.
+      if (body?.force === true) {
+        return json(this.publicJob(await this.enqueue(videoId, { createdAt: job.createdAt })), 202);
+      }
       // unavailable은 영구 실패 — 재큐 금지. 그 외에는 백오프가 지난 뒤에만
       // 재큐한다(스테이징 재시도가 botwall 백오프를 우회하면 안 된다).
       if (job.failureKind === 'unavailable') return json(this.publicJob(job));
