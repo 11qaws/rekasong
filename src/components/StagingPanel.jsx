@@ -45,6 +45,9 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         <div className="staging-media-info">
           <div className="preview-player preview-player-priority">
           {type === 'youtube' && (
+            /* 사적 미리듣기 전용 iframe(autoplay 0) — 스트리머가 방송 전에 확인하는
+               용도라 광고가 방송에 나가지 않는다. 방송 출력(currentEntry 재생)은
+               Dashboard의 프록시 <audio>만 사용하며 이 요소와 절대 연결되지 않는다. */
             <div className="youtube-preview-wrapper">
               <YouTube
                 videoId={src}
