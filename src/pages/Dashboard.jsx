@@ -301,7 +301,12 @@ export default function Dashboard() {
         }
         getPrepareAuth()
           .then((auth) => fetchPrepareStatus(videoId, auth))
-          .then((next) => notePrepare(videoId, next))
+          .then((next) => {
+            // Worker의 작업 레코드가 정리돼 absent가 되면 GET만 반복해서는 영원히
+            // '준비 중'에 갇힌다 — 예약을 지워 다음 틱이 다시 큐잉하게 한다.
+            if (next.status === 'absent') prepareRequestedRef.current.delete(videoId);
+            notePrepare(videoId, next);
+          })
           .catch(() => notePrepare(videoId, { status: 'unreachable' }));
       });
     }, 5000);
