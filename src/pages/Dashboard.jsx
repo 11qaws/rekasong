@@ -6,7 +6,14 @@ import { useOnAirSession } from '../hooks/useOnAirSession';
 import { createQueueEntry, newId, toLegacySong, toQueueEntry } from '../lib/queueEntry';
 import { collectBlobSrcs, isBlobReferenced, isLocalBlobSong, revokeBlobSrcs } from '../lib/blobLifecycle';
 import { apiUrl } from '../lib/api';
-import { audioProxyStreamUrl, isAudioProxyConfigured, prefetchAudioProxy } from '../lib/audioProxy';
+import {
+  YOUTUBE_ID_PATTERN,
+  fetchPrepareStatus,
+  isPrepareConfigured,
+  prepareBlockMessage,
+  requestPrepare,
+  songPrepareState
+} from '../lib/preparePipeline';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
 import PlaybackPanel from '../components/PlaybackPanel';
@@ -101,9 +108,11 @@ export default function Dashboard() {
   });
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  // Stage 6 불변식: 방송 출력(숨김 라이브 플레이어)은 광고가 나올 수 있는 어떤
-  // 경로(YouTube iframe 등)도 절대 사용하지 않는다. YouTube 곡은 오직 광고 없는
-  // 오디오 프록시 <audio>로만 재생하고, 확정할 수 없으면 재생하지 않는다(fail-safe).
+  // Stage 6c 불변식: 방송 출력은 광고가 나올 수 있는 어떤 경로(YouTube iframe
+  // 등)도 절대 사용하지 않는다. YouTube 곡은 준비 파이프라인이 `ready`로 확정한
+  // R2 오디오로만 재생한다 — On-Air 위젯(OnAirPlayer)이 담당하고, 세션 없는
+  // 직접 재생 모드는 YouTube를 지원하지 않는다(계약 §7, 의도된 단절). 이 숨김
+  // 플레이어는 직접 재생 모드의 로컬 파일 전용이다.
   // 사적 미리듣기(StagingPanel의 iframe, autoplay 0)는 방송 출력과 무관하므로 예외.
   const audioRef = useRef(null);
   const videoRef = useRef(null);
@@ -111,10 +120,6 @@ export default function Dashboard() {
   const togglePlaybackRef = useRef(null);
   const reportedMediaIssueRef = useRef(null);
   const reportedDelayRef = useRef(null);
-  // Stage 6: 프록시 run의 canplaythrough(ready 실증) 기록(시작 타임아웃 해제용)
-  // / 다음 곡 프리페치 중복 방지.
-  const proxyReadyRunRef = useRef(null);
-  const prefetchedVideoIdRef = useRef(null);
   // §4-4: 버린 곡의 entryId — 늦은 On-Air transport 스냅숏이 되살리지 못하게 한다.
   const lastDiscardedEntryIdRef = useRef(null);
 
@@ -210,7 +215,6 @@ export default function Dashboard() {
       return;
     }
     if (audioRef.current) {
-      // 프록시 오디오도 이 경로다 — 임의 탐색은 백엔드의 Range/206 지원이 전제.
       audioRef.current.currentTime = time;
     }
     if (videoRef.current) {
@@ -223,6 +227,101 @@ export default function Dashboard() {
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
   stagedItemRef.current = stagedItem;
+
+  // Stage 6c (계약 §5): videoId별 준비 상태 — Worker 전역 캐시의 로컬 거울.
+  // 게이팅의 근거이므로 네트워크 실패는 'unreachable'로만 기록되고, 어떤 경로로도
+  // 실제 응답 없이 'ready'가 되지 않는다(INV-6).
+  const [prepareStates, setPrepareStates] = useState({});
+  const prepareStatesRef = useRef(prepareStates);
+  prepareStatesRef.current = prepareStates;
+  // POST /v1/prepare는 멱등이지만, 같은 곡에 대한 반복 요청 소음을 억제한다.
+  const prepareRequestedRef = useRef(new Set());
+  // 폴링 interval(watchedVideoIds 의존)이 세션 갱신마다 재설치되지 않게 하는 거울.
+  const ensureSessionRef = useRef(onAir.ensureSession);
+  ensureSessionRef.current = onAir.ensureSession;
+
+  const notePrepare = (videoId, info) => {
+    setPrepareStates((previous) => ({
+      ...previous,
+      [videoId]: { ...info, checkedAt: Date.now() }
+    }));
+  };
+
+  // prepare API는 room+playerToken 게이트다(무인증이면 아무나 VPS에 다운로드를
+  // 큐잉해 봇월 압력이 폭증한다). 세션이 아직 없으면 여기서 만든다 — 스테이징
+  // 시점에 세션을 확보하는 것이 준비 파이프라인의 전제다.
+  const getPrepareAuth = async () => {
+    const activeSession = await ensureSessionRef.current();
+    return { room: activeSession.room, token: activeSession.playerToken };
+  };
+
+  const ensurePrepareRequested = (videoId, { force = false } = {}) => {
+    if (!isPrepareConfigured() || !videoId || prepareRequestedRef.current.has(videoId)) return;
+    prepareRequestedRef.current.add(videoId);
+    getPrepareAuth()
+      .then((auth) => requestPrepare(videoId, auth, { force }))
+      .then((info) => notePrepare(videoId, info))
+      .catch(() => {
+        // 다음 폴링 틱이 다시 요청할 수 있게 예약을 되돌린다.
+        prepareRequestedRef.current.delete(videoId);
+        notePrepare(videoId, { status: 'unreachable' });
+      });
+  };
+
+  // 준비를 지켜볼 YouTube 곡: 스테이징(준비 시작 시점) + 대기열 + 현재 곡.
+  // 문자열로 합쳐 effect 의존성을 안정화한다(순서·중복 무관).
+  const watchedVideoIds = useMemo(() => {
+    const ids = new Set();
+    const collect = (song) => {
+      if (song?.type === 'youtube' && YOUTUBE_ID_PATTERN.test(song.src || '')) ids.add(song.src);
+    };
+    if (stagedItem?.type === 'youtube') collect(stagedItem);
+    (state?.queue || []).forEach((entry) => collect(entry.song));
+    collect(currentEntry?.song);
+    return [...ids].sort().join(' ');
+  }, [stagedItem, state?.queue, currentEntry]);
+
+  // 스테이징 시점에 준비를 시작하고(§5 — 방송까지의 시간을 전부 준비에 쓴다),
+  // ready·영구 실패 전까지 폴링한다. failed도 계속 본다 — Worker가 백오프로
+  // 재시도해 ready가 될 수 있다(§2). 서버 미응답은 틱마다 짧게 실패하고 끝난다.
+  useEffect(() => {
+    if (!isPrepareConfigured() || !watchedVideoIds) return undefined;
+    const ids = watchedVideoIds.split(' ');
+    ids.forEach((videoId) => ensurePrepareRequested(videoId));
+    const interval = setInterval(() => {
+      ids.forEach((videoId) => {
+        const info = prepareStatesRef.current[videoId];
+        if (info?.status === 'ready') return;
+        if (info?.failureKind === 'unavailable') return; // 영구 실패 — 재폴링 무의미(§2)
+        // 연결 불가는 폴링 주기를 늘려(15초) 실패 요청 소음을 줄인다.
+        if (info?.status === 'unreachable' && Date.now() - (info.checkedAt || 0) < 15000) return;
+        if (!prepareRequestedRef.current.has(videoId)) {
+          ensurePrepareRequested(videoId);
+          return;
+        }
+        getPrepareAuth()
+          .then((auth) => fetchPrepareStatus(videoId, auth))
+          .then((next) => notePrepare(videoId, next))
+          .catch(() => notePrepare(videoId, { status: 'unreachable' }));
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+    // eslint 참고: ensurePrepareRequested/notePrepare는 ref·setState만 쓰는 안정적 로직.
+  }, [watchedVideoIds]);
+
+  // 준비 실패 곡의 명시적 '다시 시도' — force:true로 백오프·영구 실패(unavailable)를
+  // 넘어 즉시 재큐잉한다. 사용자가 의도한 1회 행동에만 열리는 문이다.
+  const handleRetryPrepare = (videoId) => {
+    if (!videoId) return;
+    prepareRequestedRef.current.delete(videoId);
+    setPrepareStates((previous) => {
+      const next = { ...previous };
+      delete next[videoId];
+      return next;
+    });
+    ensurePrepareRequested(videoId, { force: true });
+    showToast('곡 준비를 다시 시도합니다.', 'info');
+  };
 
   // Stage 4 (INV-8, D-31): 창 닫힘 시 참조 중인 blob을 revoke해 메모리 누수를
   // 막는다. 상태는 localStorage에 남으므로 다음 로드에서 Stage 1의 로컬 곡
@@ -480,26 +579,35 @@ export default function Dashboard() {
     showToast('선택한 곡을 취소했습니다.', 'info');
   };
 
+  // §2-4 outputSafety, Stage 6c 확정(계약 §5): 곡별 증거 기반 판정.
+  // R2에 준비된 바이트가 확인된(`ready`) YouTube 곡만 'safe', 그 외 전부
+  // 'blocked' — 준비 중·실패·서버 미응답·미설정을 구분하지 않고 전부 재생 불가다.
+  // "프록시가 설정돼 있으면 safe"라는 설정 플래그 판정은 폐기했다(INV-6).
+  const getYoutubeOutputSafety = (entry) => {
+    const song = entry?.song;
+    if (song?.type !== 'youtube') return 'safe';
+    if (!isPrepareConfigured()) return 'blocked';
+    return prepareStatesRef.current[song.src]?.status === 'ready' ? 'safe' : 'blocked';
+  };
+
   // 새 PlaybackRun 시작 (§1: runId는 재생 시도마다 발급).
   // setState updater 밖에서만 호출한다(D-10) — On-Air 명령 송신 같은 I/O가 있다.
   // 직접 재생 모드의 실제 시작은 숨김 플레이어의 key={runId} 리마운트 + autoPlay가
   // 담당하므로 여기서는 run 기술자만 만든다(D-06 구조 해소).
   //
-  // Stage 6 불변식(fail-safe): 직접 재생되는 YouTube 곡은 광고 없는 오디오
-  // 프록시로만 시작할 수 있다. 프록시 미설정이면 run을 만들지 않고 던진다 —
-  // 모든 호출자가 catch→토스트로 처리하므로 '광고가 나가는 재생'은 어떤 경로로도
-  // 시작되지 않는다(재생이 안 되는 편이 광고보다 낫다).
+  // Stage 6c 불변식(계약 §5): `ready`가 아닌 YouTube 곡은 방송 출력에 절대
+  // 올라가지 않는다 — 모드(직접/On-Air) 불문. run을 만들지 않고 던지며, 모든
+  // 호출자가 catch→토스트로 처리한다(재생이 안 되는 편이 광고보다 낫다).
   const beginPlaybackRun = (entry) => {
-    if (!useOnAirPlayer && entry.song?.type === 'youtube' && !isAudioProxyConfigured()) {
-      throw new Error('광고 없는 재생 서버가 설정되지 않아 YouTube 곡을 재생할 수 없습니다.');
+    if (entry.song?.type === 'youtube' && getYoutubeOutputSafety(entry) !== 'safe') {
+      throw new Error(prepareBlockMessage(songPrepareState(entry.song, prepareStatesRef.current).kind));
     }
     const runId = newId();
     setCurrentTime(0);
     setDuration(0);
     if (useOnAirPlayer) {
-      // Stage 6b 접합점(후속): On-Air Worker 경로의 프록시 확장은 이 load 명령에
-      // 프록시 스트림 URL을 실어 보내는 방식으로 붙는다 — 이번 단계 미포함.
-      // (On-Air 위젯의 YouTube iframe 재생을 프록시 오디오로 대체하는 작업 포함.)
+      // OnAirPlayer가 song.src(videoId)로 준비된 오디오 URL을 스스로 구성하므로
+      // (자기 player 토큰 사용) load 명령의 프로토콜은 변경 없다.
       onAir.sendCommand({
         type: 'load',
         sessionId: entry.entryId, // On-Air 프로토콜의 sessionId = entryId 매핑
@@ -615,12 +723,16 @@ export default function Dashboard() {
       showToast(stagedItem.assetError || '방송용 로컬 파일을 준비 중입니다.', 'info');
       return;
     }
-    // Stage 6 fail-safe: 방송 출력은 광고 없는 프록시 오디오뿐이다(outputSafety
-    // 'blocked', §2-4). 서버 미설정 상태의 YouTube 곡은 대기열에 넣어도 재생할 수
-    // 없으므로 가장 이른 지점(송출 버튼)에서 명확히 막는다 — 절대 iframe으로
-    // 재생하지 않는다.
-    if (!useOnAirPlayer && stagedItem.type === 'youtube' && !isAudioProxyConfigured()) {
-      showToast('광고 없는 재생 서버가 설정되지 않아 YouTube 곡을 재생할 수 없습니다. (VITE_AUDIO_PROXY_BASE_URL 설정 필요 — 로컬 파일은 계속 사용할 수 있어요.)', 'error');
+    // Stage 6c 게이팅(계약 §5): `ready`가 아닌 YouTube 곡은 방송 출력에 올리지
+    // 않는다. 영구 실패(unavailable)·서버 미설정(blocked)은 대기열에 넣어도
+    // 소용이 없으므로 가장 이른 지점에서 막는다. 준비 중·일시 실패는 대기열
+    // 예약을 허용한다 — 준비는 백그라운드로 계속되고, 실패가 방송 전에
+    // 대기열에서 눈에 띄는 것이 이 설계의 존재 이유다. iframe 재생은 없다.
+    const stagedPrepare = stagedItem.type === 'youtube'
+      ? songPrepareState({ type: 'youtube', src: stagedItem.src }, prepareStates)
+      : { kind: 'ready' };
+    if (stagedPrepare.kind === 'blocked' || stagedPrepare.kind === 'unavailable') {
+      showToast(prepareBlockMessage(stagedPrepare.kind), 'error');
       return;
     }
 
@@ -673,7 +785,12 @@ export default function Dashboard() {
       : null;
 
     // D-10: 재생 I/O와 토스트를 setState updater 밖에서 수행한다.
-    const willPlayImmediately = !stateRef.current?.currentEntry;
+    // 준비가 안 끝난 곡은 즉시 재생 대신 대기열로 예약한다 — StagingPanel 버튼
+    // 라벨이 같은 조건으로 '대기열에 추가 (준비 중)'을 표시하므로 사용자가 누른
+    // 것과 일어나는 일이 일치하고, 아래 토스트가 다음 행동을 안내한다.
+    const hadCurrentEntry = Boolean(stateRef.current?.currentEntry);
+    const deferredByPrepare = !hadCurrentEntry && stagedPrepare.kind !== 'ready';
+    const willPlayImmediately = !hadCurrentEntry && !deferredByPrepare;
     let nextActive = null;
     if (willPlayImmediately) {
       try {
@@ -704,7 +821,11 @@ export default function Dashboard() {
     showToast(
       willPlayImmediately
         ? '새 곡의 재생을 시작합니다.'
-        : insertAtTop ? '대기열 최상단에 곡이 예약되었습니다.' : '대기열 끝에 곡이 예약되었습니다.',
+        : deferredByPrepare
+          ? (stagedPrepare.kind === 'failed'
+            ? '준비에 실패한 곡을 대기열에 담았습니다. 대기열에서 다시 시도할 수 있습니다.'
+            : '곡을 준비하는 중이라 대기열에 담았습니다. 준비가 끝나면 대기열에서 바로 재생을 누르세요.')
+          : insertAtTop ? '대기열 최상단에 곡이 예약되었습니다.' : '대기열 끝에 곡이 예약되었습니다.',
       willPlayImmediately ? 'success' : 'info'
     );
 
@@ -771,13 +892,6 @@ export default function Dashboard() {
     return true;
   };
 
-  // §2-4 outputSafety, Stage 6 확정: YouTube 직접 재생은 광고 없는 오디오
-  // 프록시가 설정된 경우에만 가능하고 그때는 광고가 구조적으로 없으므로 'safe'.
-  // 미설정이면 'blocked' — 재생 자체를 열지 않는다(beginPlaybackRun이 던짐).
-  // 'unknown'(광고 여부 미상)으로 재생하는 경로는 더 이상 존재하지 않는다.
-  const getYoutubeOutputSafety = () =>
-    isAudioProxyConfigured() ? 'safe' : 'blocked';
-
   // §4-3 스킵의 1단계: 플레이어를 실제 끝으로 보내고 finishing으로 전이한다.
   // 성공 시 true — 이후 동일 runId의 실제 ended(handleConfirmedEnded)에서만
   // completed+승격이 일어난다. 길이를 모르면 열지 않는다(호출자가 폴백 판단).
@@ -806,12 +920,12 @@ export default function Dashboard() {
     const marker = { entryId: act.entryId, runId: act.runId };
     const song = current.song;
 
-    // §4-3 안전장치: YouTube 곡은 출력 안전성이 'safe'(=프록시 오디오)일 때만
-    // 완료 처리 경로를 연다. Stage 6 이후 이 조건은 재생 존재 자체와 동치지만
-    // (blocked면 run이 시작되지 않음), 규범 게이트로 명시해 둔다.
-    if (song.type === 'youtube' && getYoutubeOutputSafety() !== 'safe') return false;
+    // §4-3 안전장치: YouTube 곡은 출력 안전성이 'safe'(=준비된 오디오)일 때만
+    // 완료 처리 경로를 연다. 이 조건은 재생 존재 자체와 동치지만(blocked면
+    // run이 시작되지 않음), 규범 게이트로 명시해 둔다.
+    if (song.type === 'youtube' && getYoutubeOutputSafety(current) !== 'safe') return false;
 
-    // Stage 6: YouTube 프록시 곡도 로컬 음원과 같은 <audio> 요소로 재생되므로
+    // 준비된 YouTube 오디오도 로컬 음원과 같은 <audio> 요소로 재생되므로
     // 단일 규범 경로다 — el.currentTime=duration → 결정적 ended → completed
     // (PHASE_07 §4 재생 엔진 통일).
     const el = song.type === 'local' && song.mediaType === 'video' ? videoRef.current : audioRef.current;
@@ -1071,41 +1185,9 @@ export default function Dashboard() {
     showToast(failureDetail + ' — 다시 재생하거나 현재 곡을 버릴 수 있습니다.', 'error');
   };
 
-  // Stage 6 fail-safe: 프록시 <audio>가 starting에서 오래 머물면(스트림 응답
-  // 없음 등 onError조차 안 오는 경우) 타임아웃으로 failed를 확정한다. iframe
-  // 재시도 같은 '광고가 나갈 수 있는 폴백'은 존재하지 않는다 — 실패는 항상
-  // 무음/failed다. canplaythrough(ready 실증)가 이미 왔다면 자동재생 정책 등
-  // 재생 지연일 뿐이므로 실패 처리하지 않는다.
-  const activePhase = active?.phase || null;
-  const proxyStartingWatch = Boolean(
-    !useOnAirPlayer && activeRunId && activePhase === 'starting' &&
-    currentEntry?.song?.type === 'youtube' && currentEntry.entryId === active?.entryId
-  );
-  useEffect(() => {
-    if (!proxyStartingWatch) return undefined;
-    const act = activeRef.current;
-    if (!act || act.runId !== activeRunId) return undefined;
-    const marker = { entryId: act.entryId, runId: act.runId };
-    const timer = setTimeout(() => {
-      if (proxyReadyRunRef.current === marker.runId) return;
-      handleMediaFailure(marker, '광고 없는 오디오', '재생 서버가 응답하지 않음');
-    }, 12000);
-    return () => clearTimeout(timer);
-    // eslint 참고: handleMediaFailure는 ref 기반 가드(1회 보고)라 재생성돼도 동작이 같다.
-  }, [activeRunId, proxyStartingWatch]);
-
-  // Stage 6: 대기열 다음 곡이 youtube+프록시면 백그라운드 사전 해석을 요청해
-  // 곡 전환 지연을 완화한다(202 응답, 실패 무시). On-Air 모드는 프록시 경로를
-  // 쓰지 않으므로 제외(Stage 6b 후속).
-  const nextQueuedVideoId = !useOnAirPlayer && isAudioProxyConfigured() &&
-    state?.queue?.[0]?.song?.type === 'youtube'
-    ? state.queue[0].song.src
-    : null;
-  useEffect(() => {
-    if (!nextQueuedVideoId || prefetchedVideoIdRef.current === nextQueuedVideoId) return;
-    prefetchedVideoIdRef.current = nextQueuedVideoId;
-    prefetchAudioProxy(nextQueuedVideoId);
-  }, [nextQueuedVideoId]);
+  // (Stage 6의 프록시 시작 타임아웃·프리페치는 준비 파이프라인으로 대체됐다.
+  //  On-Air 경로의 시작 타임아웃은 OnAirPlayer가 자체 보유하고, 대기열 곡의
+  //  사전 준비는 스테이징 시점 prepare + 폴링이 담당한다.)
 
   const handleRemoveFromQueue = (entryId) => {
     const queue = stateRef.current?.queue || [];
@@ -1211,6 +1293,11 @@ export default function Dashboard() {
     ? currentEntry.song
     : null;
 
+  // 스테이징 곡의 준비 상태(YouTube만 해당) — StagingPanel의 안내문·버튼 라벨 근거.
+  const stagedPrepareState = stagedItem?.type === 'youtube'
+    ? songPrepareState({ type: 'youtube', src: stagedItem.src }, prepareStates)
+    : null;
+
   return (
     <div className={`dashboard-container ${stagedItem ? 'staging-active' : ''}`}>
       <header className="dashboard-header">
@@ -1257,6 +1344,8 @@ export default function Dashboard() {
               onRemoveFromQueue={handleRemoveFromQueue}
               autoPlayNext={Boolean(state?.autoPlayNext)}
               setSharedState={setSharedState}
+              prepareStates={prepareStates}
+              onRetryPrepare={handleRetryPrepare}
             />
           </ErrorBoundary>
         </div>
@@ -1279,6 +1368,8 @@ export default function Dashboard() {
                 isAiLoading,
                 aiStatusMessage,
                 onRetryAiExtraction: handleRetryAiExtraction,
+                prepareState: stagedPrepareState,
+                onRetryPrepare: handleRetryPrepare,
                 showToast
               }}
             />
@@ -1307,41 +1398,12 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Hidden Live Players — key={runId}: 같은 src 연속 재생도 리마운트+autoPlay */}
+      {/* Hidden Live Players — key={runId}: 같은 src 연속 재생도 리마운트+autoPlay.
+          Stage 6c 불변식: YouTube 곡은 여기서 절대 재생되지 않는다 — 준비된
+          오디오는 On-Air 위젯(OnAirPlayer)이 재생하고, 세션 없는 직접 재생
+          모드에서는 beginPlaybackRun이 YouTube run 생성 자체를 막는다(blocked).
+          iframe 등 광고가 나갈 수 있는 폴백 경로는 존재하지 않는다. */}
       <div className="live-players-hidden">
-        {/* Stage 6 불변식: YouTube 곡의 방송 출력은 광고 없는 오디오 프록시
-            <audio>뿐이다 — iframe(YouTube 플레이어)은 광고를 코드로 막을 수 없어
-            방송 출력 경로에서 완전히 제거했다. 프록시 실패는 iframe 재시도가 아니라
-            failed(무음)로 끝난다. 기존 로컬 <audio> 이벤트 배선과 동일 규약.
-            crossOrigin은 설정하지 않는다(단순 재생은 CORS 불요 — audioProxy.js 주석). */}
-        {liveSong?.type === 'youtube' && (
-          <audio
-            key={runMarker.runId}
-            ref={bindMediaElement(audioRef)}
-            src={audioProxyStreamUrl(liveSong.src)}
-            preload="auto"
-            autoPlay
-            onCanPlayThrough={() => {
-              // §3 preparing→ready의 최소 실증: 끝까지 재생 가능한 버퍼 확보를
-              // 기록해 시작 타임아웃이 실패 처리하지 않게 한다.
-              if (isCurrentRun(runMarker)) proxyReadyRunRef.current = runMarker.runId;
-            }}
-            onPlaying={() => handleConfirmedPlaying(runMarker)}
-            onPause={() => handleConfirmedPaused(runMarker)}
-            onEnded={() => handleConfirmedEnded(runMarker, 'natural')}
-            onWaiting={() => handlePlaybackDelay(runMarker, '광고 없는 오디오')}
-            onError={() => {
-              const errorCode = audioRef.current?.error?.code;
-              const details = {
-                1: '가져오기가 중단됨',
-                2: '재생 서버에 연결할 수 없음',
-                3: '스트림이 손상되었거나 지원되지 않음',
-                4: '스트림을 열 수 없음(서버 주소·응답 확인 필요)'
-              };
-              handleMediaFailure(runMarker, '광고 없는 오디오', details[errorCode] || '재생 오류');
-            }}
-          />
-        )}
         {liveSong?.type === 'local' && liveSong.mediaType === 'video' && (
           <video
             key={runMarker.runId}

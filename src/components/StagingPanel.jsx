@@ -1,8 +1,9 @@
 import React from 'react';
 import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music } from 'lucide-react';
 import YouTube from 'react-youtube';
+import { prepareBlockMessage } from '../lib/preparePipeline';
 
-export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction }) {
+export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, onRetryAiExtraction, prepareState, onRetryPrepare }) {
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
@@ -18,6 +19,14 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
   const hasPlayableMr = type === 'local' ? Boolean(src) : type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(src || '');
   const needsBroadcastAsset = type === 'local' && stagedItem.assetStatus && stagedItem.assetStatus !== 'local';
   const isBroadcastAssetReady = !needsBroadcastAsset || stagedItem.assetStatus === 'ready';
+  // Stage 6c(계약 §5): YouTube 곡의 준비 상태가 송출 버튼의 동작을 결정한다.
+  // 로컬 파일은 준비가 필요 없다(prepareKind='ready') — 소스 불문 같은 규칙.
+  const prepareKind = type === 'youtube' ? (prepareState?.kind || 'preparing') : 'ready';
+  // 영구 실패·서버 미설정은 대기열에 넣어도 소용이 없어 송출 자체를 막는다.
+  const prepareBlocksGoLive = prepareKind === 'blocked' || prepareKind === 'unavailable';
+  // 준비가 안 끝난 곡의 '즉시 재생'은 대기열 예약으로 바뀐다(Dashboard와 동일
+  // 조건) — 버튼 라벨이 실제 일어날 일을 먼저 말한다.
+  const goLiveWillQueue = hasCurrentSong || (type === 'youtube' && prepareKind !== 'ready');
   const analysisPhase = (() => {
     if (!isAiLoading) return 0;
     if (/한국어|번역|매칭/.test(aiStatusMessage)) return 3;
@@ -140,6 +149,22 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
                 : stagedItem.assetError || '방송용 파일을 준비하지 못했습니다.'}
             </p>
           )}
+          {/* Stage 6c: 준비 상태 안내 — 실패는 방송 전에 여기서 먼저 보인다.
+              문구는 광고가 아니라 '준비'의 언어로(계약 §5). */}
+          {type === 'youtube' && hasPlayableMr && prepareKind === 'preparing' && (
+            <p className="mr-cache-note"><Loader2 size={12} className="spinner" /> 방송용 오디오를 준비하는 중입니다. 대기열에 담아 두면 준비가 끝난 뒤 바로 재생할 수 있어요.</p>
+          )}
+          {type === 'youtube' && hasPlayableMr && prepareKind === 'unreachable' && (
+            <p className="mr-cache-note">{prepareBlockMessage('unreachable')}</p>
+          )}
+          {type === 'youtube' && hasPlayableMr && (prepareKind === 'failed' || prepareKind === 'unavailable' || prepareKind === 'blocked') && (
+            <p className="mr-unavailable">
+              {prepareBlockMessage(prepareKind)}
+              {(prepareKind === 'failed' || prepareKind === 'unavailable') && (
+                <button type="button" className="ai-retry-button" onClick={() => onRetryPrepare(src)}>다시 시도</button>
+              )}
+            </p>
+          )}
           {!hasPlayableMr ? (
             <p className="mr-unavailable">재생 가능한 MR을 선택하거나 로컬 파일을 추가한 뒤 대기열에 넣을 수 있습니다.</p>
           ) : type === 'local' ? (
@@ -153,16 +178,18 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           <button
             className="btn-primary go-live-btn"
             onClick={() => onGoLive(false)}
-            disabled={!title.trim() || !hasPlayableMr || !isBroadcastAssetReady}
+            disabled={!title.trim() || !hasPlayableMr || !isBroadcastAssetReady || prepareBlocksGoLive}
           >
-            {hasCurrentSong ? <><ListPlus size={20} /> 대기열에 추가</> : <><Play size={20} /> 즉시 재생 (방송 송출)</>}
+            {goLiveWillQueue
+              ? <><ListPlus size={20} /> 대기열에 추가{!hasCurrentSong && prepareKind === 'preparing' ? ' (준비 중)' : ''}</>
+              : <><Play size={20} /> 즉시 재생 (방송 송출)</>}
           </button>
           {hasCurrentSong && (
             <button
               className="btn-primary go-live-btn go-live-next"
               onClick={() => onGoLive(true)}
               title="대기열 1순위로 새치기"
-              disabled={!title.trim() || !hasPlayableMr || !isBroadcastAssetReady}
+              disabled={!title.trim() || !hasPlayableMr || !isBroadcastAssetReady || prepareBlocksGoLive}
             >
               <><Play size={20} /> 바로 다음 곡으로</>
             </button>
