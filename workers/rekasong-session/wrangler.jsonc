@@ -9,13 +9,22 @@
       {
         "name": "SESSION_ROOM",
         "class_name": "SessionRoom"
+      },
+      {
+        "name": "PREPARE_QUEUE",
+        "class_name": "PrepareQueue"
       }
     ]
   },
+  // PREPARE_TOKEN은 `wrangler secret put PREPARE_TOKEN`으로 주입한다(VPS 준비 워커 인증).
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["SessionRoom"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["PrepareQueue"]
     }
   ],
   "r2_buckets": [

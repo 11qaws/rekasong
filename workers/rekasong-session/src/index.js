@@ -3,6 +3,12 @@ const SESSION_INITIAL_GRACE_MS = 30 * 60 * 1000;
 const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
+const PREPARE_LEASE_MS = 120 * 1000;
+// YouTube videoId는 정확히 11자다. 이 검증이 R2 키(audio/{videoId}) 오염과
+// /v1/prepare/{stats|claim} 리터럴 라우트 충돌을 동시에 막는다.
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const FAILURE_KINDS = ['botwall', 'unavailable', 'network', 'upload', 'unknown'];
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -28,6 +34,17 @@ const hashToken = async (token) => {
 const parseBearer = (request) => request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '') || '';
 
 const assetKey = (room, assetId) => `sessions/${room}/${assetId}`;
+
+// 준비 캐시는 세션 자산(sessions/{room}/...)과 별개의 영구 네임스페이스다.
+// deleteAssets()가 세션 종료 시 세션 경로를 지우므로, 여기에 섞이면 방송마다
+// 캐시가 사라져 봇월 압력이 되돌아온다. (PREPARE_PIPELINE.md §1)
+const audioKey = (videoId) => `audio/${videoId}`;
+
+// botwall은 재시도 자체가 압력이므로 일반 백오프보다 훨씬 길게(5분→30분).
+const retryDelayMs = (failureKind, attempts) => {
+  if (failureKind === 'botwall') return attempts <= 1 ? 5 * 60 * 1000 : 30 * 60 * 1000;
+  return Math.min(30 * 60 * 1000, 60 * 1000 * 2 ** Math.max(0, attempts - 1));
+};
 
 const displaySong = (song) => {
   if (!song || typeof song !== 'object' || !song.id || !song.title) return null;
@@ -64,11 +81,52 @@ const mediaResponse = (object) => {
   return new Response(object.body, { headers });
 };
 
+// [/v1/audio 인증 설계]
+// 캐시(audio/{videoId})는 전역이지만 세션·토큰은 방 단위라는 불일치를,
+// "재생 자격 = 활성 방송의 player 토큰 보유"로 조화시킨다. 요청자는
+// ?room=...&token=... 으로 자기 방을 지목하고, 해당 SessionRoom이
+// streamAsset과 동일한 player 검증을 대행한다. 어느 방의 토큰이든 다른 방이
+// 준비한 캐시를 읽을 수 있는데, 이는 의도된 동작이다 — 캐시가 전역 공유인
+// 것이 이 파이프라인의 존재 이유이고(§1), 토큰 검증의 목적은 방 간 격리가
+// 아니라 오픈 프록시 차단이다(§3).
+// 트레이드오프: 세션 없는 직접 재생(개발)은 지원하지 않는다. <audio src>는
+// 헤더를 못 붙이므로 PREPARE_TOKEN 우회로를 열면 쿼리스트링으로 VPS 토큰이
+// 새는 경로가 된다. 대시보드는 세션 생성 시 playerToken을 이미 받으므로
+// (POST /v1/sessions 응답) 개발 재생도 세션만 있으면 이 경로로 충분하다.
+const streamPreparedAudio = async (request, env, videoId) => {
+  const url = new URL(request.url);
+  const room = url.searchParams.get('room') || '';
+  const token = url.searchParams.get('token') || '';
+  if (!/^[a-f0-9-]{8,64}$/i.test(room) || !token) return json({ error: 'Unauthorized' }, 401);
+
+  const stub = env.SESSION_ROOM.get(env.SESSION_ROOM.idFromName(room));
+  const verified = await stub.fetch(new Request('https://session.internal/verify-media-token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  }));
+  if (!verified.ok) return json({ error: 'Unauthorized' }, 401);
+
+  const object = await env.MEDIA_BUCKET.get(audioKey(videoId), { range: request.headers });
+  if (!object) return json({ error: 'Audio not prepared' }, 404);
+  return mediaResponse(object);
+};
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
 
     const url = new URL(request.url);
+
+    const audioMatch = url.pathname.match(/^\/v1\/audio\/([A-Za-z0-9_-]{11})$/);
+    if (audioMatch && request.method === 'GET') return streamPreparedAudio(request, env, audioMatch[1]);
+
+    if (url.pathname === '/v1/prepare' || url.pathname.startsWith('/v1/prepare/')) {
+      // 준비 상태는 전역 싱글턴이 보유한다 — 캐시는 모든 방이 공유한다. (§2)
+      const stub = env.PREPARE_QUEUE.get(env.PREPARE_QUEUE.idFromName('global'));
+      return stub.fetch(request);
+    }
+
     if (request.method === 'POST' && url.pathname === '/v1/sessions') {
       const room = crypto.randomUUID();
       const controlToken = randomToken();
@@ -111,6 +169,7 @@ export class SessionRoom {
   async fetch(request) {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/init') return this.initialize(request);
+    if (request.method === 'POST' && url.pathname === '/verify-media-token') return this.verifyMediaToken(request);
     if (url.pathname.endsWith('/ws')) return this.openSocket(request);
     if ((url.pathname === '/display-token' || url.pathname.endsWith('/display-token')) && request.method === 'POST') return this.issueDisplayToken(request);
     if (url.pathname.endsWith('/assets') && request.method === 'POST') return this.uploadAsset(request);
@@ -158,6 +217,18 @@ export class SessionRoom {
     session.display = session.display || { currentSong: null, history: [] };
     await this.ctx.storage.put('session', session);
     return json({ displayToken });
+  }
+
+  // streamPreparedAudio가 전역 캐시 접근 자격을 이 방에 위임할 때 쓰는 내부
+  // 라우트. streamAsset과 동일한 player 검증만 통과시킨다 — control/display로
+  // 넓히면 위젯 URL 유출만으로 오디오가 열리는 표면이 생긴다.
+  async verifyMediaToken(request) {
+    const session = await this.getSession();
+    const { token } = await request.json().catch(() => ({}));
+    if (!session || session.status !== 'active' || !(await this.authenticate(session, token, 'player'))) {
+      return json({ error: 'Unauthorized' }, 401);
+    }
+    return json({ ok: true });
   }
 
   async authenticate(session, token, role) {
@@ -380,5 +451,287 @@ export class SessionRoom {
     } catch {
       // Closed sockets are removed by the runtime.
     }
+  }
+}
+
+// 전역 싱글턴(idFromName('global')). 방 단위가 아니다 — 준비 캐시와 큐는
+// 모든 방송이 공유한다. (PREPARE_PIPELINE.md §2)
+export class PrepareQueue {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/v1/prepare' && request.method === 'POST') return this.requestPrepare(request);
+    if (url.pathname === '/v1/prepare/claim' && request.method === 'POST') return this.claim(request);
+    if (url.pathname === '/v1/prepare/stats' && request.method === 'GET') return this.stats(request);
+
+    const match = url.pathname.match(/^\/v1\/prepare\/([A-Za-z0-9_-]{11})(?:\/(bytes|fail|heartbeat))?$/);
+    if (!match) return json({ error: 'Not found' }, 404);
+    const [, videoId, action] = match;
+    if (!action && request.method === 'GET') return this.status(videoId);
+    if (action === 'bytes' && request.method === 'PUT') return this.uploadBytes(request, videoId);
+    if (action === 'fail' && request.method === 'POST') return this.markFailed(request, videoId);
+    if (action === 'heartbeat' && request.method === 'POST') return this.heartbeat(request, videoId);
+    return json({ error: 'Not found' }, 404);
+  }
+
+  // 시크릿 미설정 상태에서 열려버리는 fail-open을 막기 위해 env 부재도 거부한다.
+  async verifyWorker(request) {
+    const token = parseBearer(request);
+    if (!token || !this.env.PREPARE_TOKEN) return false;
+    return (await hashToken(token)) === (await hashToken(this.env.PREPARE_TOKEN));
+  }
+
+  async getJob(videoId) {
+    return this.ctx.storage.get(`job:${videoId}`);
+  }
+
+  async putJob(job) {
+    await this.ctx.storage.put(`job:${job.videoId}`, job);
+  }
+
+  async listJobs() {
+    const stored = await this.ctx.storage.list({ prefix: 'job:' });
+    return [...stored.values()];
+  }
+
+  async bumpCounters(update) {
+    const counters = await this.getCounters();
+    update(counters);
+    await this.ctx.storage.put('counters', counters);
+  }
+
+  async getCounters() {
+    return await this.ctx.storage.get('counters') || {
+      claims: 0,
+      ready: 0,
+      leaseExpired: 0,
+      failures: { botwall: 0, unavailable: 0, network: 0, upload: 0, unknown: 0 }
+    };
+  }
+
+  publicJob(job) {
+    if (!job) return { status: 'absent' };
+    const view = { status: job.status, videoId: job.videoId, attempts: job.attempts || 0 };
+    if (job.status === 'preparing') {
+      view.claimedAt = job.claimedAt;
+      view.leaseUntil = job.leaseUntil;
+    }
+    if (job.status === 'ready') {
+      view.size = job.size;
+      view.contentType = job.contentType;
+      view.preparedAt = job.preparedAt;
+    }
+    if (job.status === 'failed') {
+      view.failureKind = job.failureKind;
+      view.reason = job.reason;
+      view.failedAt = job.failedAt;
+      view.nextRetryAt = job.nextRetryAt;
+    }
+    return view;
+  }
+
+  async enqueue(videoId, previous) {
+    const now = Date.now();
+    const job = {
+      videoId,
+      status: 'queued',
+      createdAt: previous?.createdAt || now,
+      queuedAt: now,
+      attempts: previous?.attempts || 0
+    };
+    await this.putJob(job);
+    return job;
+  }
+
+  // 멱등: ready면 작업을 만들지 않고 즉시 반환한다(캐시 히트 = YouTube 미접촉).
+  async requestPrepare(request) {
+    const body = await request.json().catch(() => ({}));
+    const videoId = String(body?.videoId || '');
+    if (!VIDEO_ID_PATTERN.test(videoId)) return json({ error: 'Invalid videoId' }, 400);
+
+    const job = await this.getJob(videoId);
+    if (job?.status === 'queued' || job?.status === 'preparing') return json(this.publicJob(job));
+
+    if (job?.status === 'ready') {
+      // 수동/TTL 정리로 바이트만 사라진 ready는 거짓 안전이다. 폴링(GET)이 아닌
+      // 스테이징 시점에만 실존을 확인해 R2 head 비용을 요청 1회로 묶는다.
+      if (await this.env.MEDIA_BUCKET.head(audioKey(videoId))) return json(this.publicJob(job));
+      return json(this.publicJob(await this.enqueue(videoId, job)), 202);
+    }
+
+    if (job?.status === 'failed') {
+      // unavailable은 영구 실패 — 재큐 금지. 그 외에는 백오프가 지난 뒤에만
+      // 재큐한다(스테이징 재시도가 botwall 백오프를 우회하면 안 된다).
+      if (job.failureKind === 'unavailable') return json(this.publicJob(job));
+      if ((job.nextRetryAt || 0) > Date.now()) return json(this.publicJob(job));
+      return json(this.publicJob(await this.enqueue(videoId, job)), 202);
+    }
+
+    return json(this.publicJob(await this.enqueue(videoId, null)), 202);
+  }
+
+  async status(videoId) {
+    return json(this.publicJob(await this.getJob(videoId)));
+  }
+
+  // DO는 이벤트 단위 직렬 실행이므로 이 안의 조회→갱신이 곧 원자적 claim이다.
+  async claim(request) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+
+    const now = Date.now();
+    let candidate = null;
+    let candidateAt = Infinity;
+    for (const job of await this.listJobs()) {
+      const eligible = job.status === 'queued'
+        || (job.status === 'failed' && job.failureKind !== 'unavailable' && (job.nextRetryAt || 0) <= now);
+      if (!eligible) continue;
+      const at = job.queuedAt ?? job.nextRetryAt ?? job.createdAt;
+      if (at < candidateAt) {
+        candidate = job;
+        candidateAt = at;
+      }
+    }
+    if (!candidate) return new Response(null, { status: 204, headers: corsHeaders });
+
+    const claimed = {
+      videoId: candidate.videoId,
+      status: 'preparing',
+      createdAt: candidate.createdAt,
+      attempts: (candidate.attempts || 0) + 1,
+      claimedAt: now,
+      leaseUntil: now + PREPARE_LEASE_MS
+    };
+    await this.putJob(claimed);
+    await this.bumpCounters((counters) => { counters.claims += 1; });
+    await this.scheduleLeaseAlarm();
+    return json({ videoId: claimed.videoId, leaseUntil: claimed.leaseUntil, attempts: claimed.attempts });
+  }
+
+  async uploadBytes(request, videoId) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+    const job = await this.getJob(videoId);
+    if (!job) return json({ error: 'Unknown prepare job' }, 404);
+
+    // R2 스트리밍 put은 길이를 알아야 한다 — 청크 전송이면 여기서 걸러진다.
+    const declaredSize = Number(request.headers.get('Content-Length'));
+    if (!request.body || !Number.isFinite(declaredSize) || declaredSize <= 0 || declaredSize > MAX_UPLOAD_BYTES) {
+      return json({ error: 'Unsupported upload size' }, 400);
+    }
+
+    const contentType = request.headers.get('Content-Type') || 'audio/mp4';
+    const object = await this.env.MEDIA_BUCKET.put(audioKey(videoId), request.body, {
+      httpMetadata: { contentType },
+      customMetadata: { videoId }
+    });
+    if (!object) return json({ error: 'Upload failed' }, 500);
+
+    // 리스 만료로 재큐된 뒤 도착한 업로드도 받는다 — 바이트가 실존하면 ready가
+    // 진실이고, 이 상태 모델의 판정 기준은 "실제로 존재하는 바이트"다.
+    await this.putJob({
+      videoId,
+      status: 'ready',
+      createdAt: job.createdAt,
+      attempts: job.attempts || 0,
+      size: object.size,
+      contentType,
+      preparedAt: Date.now()
+    });
+    await this.bumpCounters((counters) => { counters.ready += 1; });
+    await this.scheduleLeaseAlarm();
+    return json({ ok: true, size: object.size });
+  }
+
+  async markFailed(request, videoId) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+    const job = await this.getJob(videoId);
+    if (!job) return json({ error: 'Unknown prepare job' }, 404);
+    // 리스 만료 후 다른 워커가 이미 완성했다면, 죽은 줄 알았던 워커의 늦은
+    // 실패 보고가 실존하는 바이트를 강등시키면 안 된다.
+    if (job.status === 'ready') return json({ ok: true, ignored: 'already ready' });
+
+    const body = await request.json().catch(() => ({}));
+    const failureKind = FAILURE_KINDS.includes(body?.failureKind) ? body.failureKind : 'unknown';
+    const now = Date.now();
+    const nextRetryAt = failureKind === 'unavailable'
+      ? null
+      : now + retryDelayMs(failureKind, job.attempts || 1);
+
+    await this.putJob({
+      videoId,
+      status: 'failed',
+      createdAt: job.createdAt,
+      attempts: job.attempts || 0,
+      failureKind,
+      reason: String(body?.reason || '').slice(0, 500),
+      failedAt: now,
+      nextRetryAt
+    });
+    await this.bumpCounters((counters) => { counters.failures[failureKind] += 1; });
+    await this.scheduleLeaseAlarm();
+    return json({ ok: true, failureKind, nextRetryAt });
+  }
+
+  async heartbeat(request, videoId) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+    const job = await this.getJob(videoId);
+    // 리스가 이미 만료돼 다른 워커가 잡았을 수 있다 — 409로 원래 워커가 중단하게 한다.
+    if (!job || job.status !== 'preparing') return json({ error: 'Lease lost' }, 409);
+
+    job.leaseUntil = Date.now() + PREPARE_LEASE_MS;
+    await this.putJob(job);
+    await this.scheduleLeaseAlarm();
+    return json({ leaseUntil: job.leaseUntil });
+  }
+
+  async stats(request) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+
+    const counts = { queued: 0, preparing: 0, ready: 0, failed: 0 };
+    for (const job of await this.listJobs()) {
+      if (counts[job.status] !== undefined) counts[job.status] += 1;
+    }
+    const counters = await this.getCounters();
+    const failureTotal = Object.values(counters.failures).reduce((sum, value) => sum + value, 0);
+    const resolved = counters.ready + failureTotal;
+    return json({
+      counts,
+      counters,
+      // 쿠키 투입 여부의 판단 근거(§6): 처리 결과(ready+실패) 대비 botwall 비율.
+      botwallRate: resolved ? counters.failures.botwall / resolved : 0
+    });
+  }
+
+  // 워커가 죽어도 작업이 영원히 잠기지 않도록, 만료된 리스를 queued로 되돌린다.
+  async alarm() {
+    const now = Date.now();
+    for (const job of await this.listJobs()) {
+      if (job.status !== 'preparing' || (job.leaseUntil || 0) > now) continue;
+      await this.putJob({
+        videoId: job.videoId,
+        status: 'queued',
+        createdAt: job.createdAt,
+        queuedAt: now,
+        attempts: job.attempts || 0
+      });
+      await this.bumpCounters((counters) => { counters.leaseExpired += 1; });
+    }
+    await this.scheduleLeaseAlarm();
+  }
+
+  async scheduleLeaseAlarm() {
+    let earliest = Infinity;
+    for (const job of await this.listJobs()) {
+      if (job.status === 'preparing' && (job.leaseUntil || 0) < earliest) earliest = job.leaseUntil;
+    }
+    if (earliest === Infinity) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(earliest);
   }
 }
