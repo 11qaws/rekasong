@@ -26,9 +26,21 @@ export const sanitizeSongDef = (song) => {
     songbookId: source.songbookId || null,
     mediaType: source.mediaType === 'video' ? 'video' : 'audio',
     // On-Air(원격 플레이어) 로컬 곡은 blob 대신 세션 자산 id를 참조한다.
-    ...(source.assetId ? { assetId: source.assetId } : {})
+    ...(source.assetId ? { assetId: source.assetId } : {}),
+    // 표시 전용(수동) 항목 마커 — setlist 표기용으로 직접 입력한 곡(재생 src 없음).
+    ...(source.manual === true ? { manual: true } : {})
   };
 };
+
+// 수동(표시 전용) 항목 판정: 스트리머가 setlist 표기용으로 직접 입력한 곡.
+// 재생 src가 없어 isPlayableSongDef는 통과하지 못하지만, 완료 이력에서는
+// 제목 표기를 위해 보존해야 한다(재생 경로 진입은 UI·정규화에서 차단).
+export const isManualSongDef = (song) =>
+  Boolean(
+    song && typeof song === 'object' &&
+    song.manual === true &&
+    typeof song.title === 'string' && song.title.trim().length > 0
+  );
 
 export const isPlayableSongDef = (song) =>
   Boolean(
@@ -46,17 +58,39 @@ export const createQueueEntry = (songDef) => ({
   createdAt: Date.now()
 });
 
+// 표시 전용(수동) 완료 항목 — 잘못 올라간 setlist를 손으로 고치기 위한 직접
+// 입력 경로. 재생을 거치지 않으므로 곧바로 completed 이력으로 태어난다.
+export const createManualEntry = (title, artist = '') => ({
+  entryId: newId(),
+  song: sanitizeSongDef({
+    type: 'local',
+    src: '',
+    title: String(title ?? '').trim(),
+    artist: String(artist ?? '').trim(),
+    source: 'manual',
+    manual: true
+  }),
+  phase: 'completed',
+  completionReason: null,
+  createdAt: Date.now()
+});
+
 // v1(평면 song 객체) → v2(QueueEntry) 승격 겸 무결성 정규화.
 // 재생 불가 항목은 null을 돌려 목록에서 정리한다.
 // 구 항목의 id는 entryId로 재사용해 반복 정규화에도 정체성이 흔들리지 않게 한다.
 export const toQueueEntry = (item, fallbackPhase = 'queued') => {
   if (!item || typeof item !== 'object') return null;
   if (typeof item.entryId === 'string' && item.entryId && item.song && typeof item.song === 'object') {
-    if (!isPlayableSongDef(item.song)) return null;
+    const phase = typeof item.phase === 'string' && item.phase ? item.phase : fallbackPhase;
+    if (!isPlayableSongDef(item.song)) {
+      // 수동(표시 전용) 항목은 완료 이력에서만 유효하다. 대기열·현재 곡 등
+      // 다른 위치로 흘러들면 재생 불가 유령이 되므로 구조적으로 걸러낸다.
+      if (!(isManualSongDef(item.song) && phase === 'completed')) return null;
+    }
     return {
       entryId: item.entryId,
       song: sanitizeSongDef(item.song),
-      phase: typeof item.phase === 'string' && item.phase ? item.phase : fallbackPhase,
+      phase,
       completionReason: typeof item.completionReason === 'string' ? item.completionReason : null,
       createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now()
     };

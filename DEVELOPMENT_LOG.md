@@ -205,3 +205,18 @@
 
 **4. UI 디테일 및 피드백 강화**
 - 3단 패널(Search, Staging, Live) 간의 상호작용(예: 버튼 클릭 시 애니메이션, 성공 토스트 알림 등) 추가로 조작 직관성 향상.
+
+## 2026-07-17
+**이전 재생 곡(setlist) 편집 기능 — history 재정렬·표시 전용(수동) 항목 직접 추가**
+- **배경**: history(완료 QueueEntry)는 OBS 위젯 setlist로 송출되지만 편집 불가였음. 잘못 올라간 곡의 순서 교정·수기 추가가 필요.
+- **스키마 (`src/lib/queueEntry.js`)**:
+  - `song.manual: true` 마커 도입 — setlist 표기 전용, 재생 src 없음. `sanitizeSongDef`가 화이트리스트에 보존.
+  - `isManualSongDef` 추가, `createManualEntry(title, artist)` 헬퍼(phase `completed`, `source:'manual'`, src `''`).
+  - `toQueueEntry`: 재생 불가 항목이라도 **manual + phase completed** 조합만 보존. 대기열·현재 곡 위치로 흘러들면 정규화 단계에서 구조적으로 폐기(재생 불가 유령 방지). manual 아닌 src-less 항목은 기존대로 폐기.
+- **UI (`src/components/QueuePanel.jsx`, CSS 파일 무변경 — 기존 클래스 재사용)**:
+  - history 아코디언에 직접 추가 폼(제목 필수 + 가수 선택, `glass-input`/`queue-play-action` 재사용, 레이아웃만 인라인 flex).
+  - history 항목 드래그 재정렬 — queue의 D-21 방식(entryId 식별, 드롭 시점 재계산) 그대로 이식. 드래그 하이라이트는 기존 `.queue-item.draggable.drag-over` 클래스 조건부 부여로 해결.
+  - dataTransfer 타입 가드(`queueentryid`/`historyentryid`)로 대기열↔이력 교차 드롭·외부 드래그 오작동 차단.
+  - manual 항목은 '다시 부르기' 버튼 disabled + 툴팁 안내(재생 정보 없음). 실제 완료 곡의 다시 부르기·삭제는 기존 동작 유지.
+- **하위 호환**: 저장된 v1/v2 상태는 기존 경로 그대로 통과(회귀 없음). manual 항목은 새 스키마 확장이라 구버전 데이터에 영향 없음. 위젯은 `toLegacySong` 평면 투영의 title만 소비하므로 무수정 호환.
+- **검증**: vite build·oxlint 통과. playwright-core 실렌더 12/12 통과(추가·저장·재정렬·교차 드롭 가드·삭제·새로고침 보존·requeue 활성/비활성 구분) + dev 서버 `/api/sync` 경유 위젯 setlist에 수동 항목 제목 표시 확인.
