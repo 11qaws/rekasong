@@ -359,7 +359,11 @@ export class SessionRoom {
     }
 
     session.transport = nextTransport;
-    await this.ctx.storage.put('session', session);
+    // seek 은 position 만 바꾸는 자기보정 값이다(플레이어 position 이벤트가 곧
+    // 덮어씀) — 재생바 드래그가 seek 명령을 연발하므로 영속하면 DO 쓰기가 폭증한다.
+    // 브로드캐스트는 유지해 플레이어가 즉시 반응하되, 스토리지에는 남기지 않는다.
+    // (Antigravity f461686 은 position 이벤트만 막았고 이 명령 쪽 폭풍은 놓쳤다.)
+    if (command.type !== 'seek') await this.ctx.storage.put('session', session);
     this.broadcast({ type: 'command', command: { ...command, sessionId: nextTransport.sessionId } }, 'player');
     this.broadcast({ type: 'transport', transport: nextTransport }, 'control');
     this.send(socket, { type: 'command_ack', commandId: command.commandId });
