@@ -33,15 +33,25 @@ export function useOnAirSession(onEvent) {
   const [session, setSession] = useState(readStoredSession);
   const [connectionState, setConnectionState] = useState(SESSION_BASE_URL ? 'connecting' : 'unconfigured');
   const [transport, setTransport] = useState({ status: 'idle', song: null, position: 0, volume: 100 });
+  // OBS 위젯(player·display)의 실제 연결 여부 — connectionState(대시보드↔서버)와
+  // 별개의 진실이다. 스냅숏의 presence 로 초기화하고 이후 presence 이벤트로 갱신한다.
+  const [widgetPresence, setWidgetPresence] = useState({ player: false, display: false });
   const socketRef = useRef(null);
   const reconnectRef = useRef(null);
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
+  // 최신 세션 거울 + 생성 중 프라미스: 동시 호출(스테이징 자동 준비 ↔ '주소 복사')이
+  // 겹쳐도 세션은 반드시 하나만 만든다. 두 개가 생기면 위젯과 대시보드가 서로 다른
+  // 세션에 붙어 "주소를 넣었는데 초록불이 안 켜지는" 고아 세션이 된다(라이브 실측).
+  const sessionRef = useRef(session);
+  const createInFlightRef = useRef(null);
 
   const clearSession = useCallback(() => {
     persistSession(null);
+    sessionRef.current = null;
     setSession(null);
     setTransport({ status: 'idle', song: null, position: 0, volume: 100 });
+    setWidgetPresence({ player: false, display: false });
   }, []);
 
   const createSession = useCallback(async () => {
@@ -50,11 +60,19 @@ export function useOnAirSession(onEvent) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '방송 세션을 만들지 못했습니다.');
     persistSession(data);
+    sessionRef.current = data;
     setSession(data);
     return data;
   }, []);
 
-  const ensureSession = useCallback(async () => session || createSession(), [createSession, session]);
+  const ensureSession = useCallback(async () => {
+    // state 대신 ref 를 읽는다 — 렌더 클로저의 낡은 session 으로 중복 생성하지 않게.
+    if (sessionRef.current) return sessionRef.current;
+    if (!createInFlightRef.current) {
+      createInFlightRef.current = createSession().finally(() => { createInFlightRef.current = null; });
+    }
+    return createInFlightRef.current;
+  }, [createSession]);
 
   const sendCommand = useCallback((command) => {
     const socket = socketRef.current;
@@ -114,6 +132,17 @@ export function useOnAirSession(onEvent) {
         try {
           const payload = JSON.parse(event.data);
           if (payload.transport) setTransport(payload.transport);
+          if (payload.type === 'snapshot') {
+            // 재접속 포함 — 스냅숏이 위젯 presence 의 기준 진실이다.
+            // (구버전 Worker 스냅숏에 presence 가 없으면 안전하게 false.)
+            setWidgetPresence({
+              player: Boolean(payload.presence?.player),
+              display: Boolean(payload.presence?.display)
+            });
+          }
+          if (payload.type === 'presence' && (payload.role === 'player' || payload.role === 'display')) {
+            setWidgetPresence((previous) => ({ ...previous, [payload.role]: Boolean(payload.connected) }));
+          }
           if (payload.type === 'session_ended') {
             clearSession();
             setConnectionState('ended');
@@ -126,6 +155,10 @@ export function useOnAirSession(onEvent) {
       socket.onclose = (event) => {
         if (socketRef.current === socket) socketRef.current = null;
         if (disposed) return;
+        // control 소켓이 끊기면 위젯 상태를 관측할 수 없다 — 낙관적 잔상(stale
+        // presence) 대신 미확인=false 로 되돌린다. 재접속 시 스냅숏이 즉시 복원한다.
+        // (disposed=의도된 소켓 교체는 새 스냅숏이 바로 재동기화하므로 제외.)
+        setWidgetPresence({ player: false, display: false });
         if (event.code === 1008 || event.code === 1011) {
           clearSession();
           setConnectionState('ended');
@@ -169,6 +202,7 @@ export function useOnAirSession(onEvent) {
 
     const upgradedSession = { ...activeSession, displayToken: data.displayToken };
     persistSession(upgradedSession);
+    sessionRef.current = upgradedSession;
     setSession(upgradedSession);
     return upgradedSession;
   }, []);
@@ -182,6 +216,9 @@ export function useOnAirSession(onEvent) {
   return {
     configured: Boolean(SESSION_BASE_URL),
     connectionState,
+    // OBS 위젯의 실제 연결 여부(서버 presence 근거) — connectionState 와 혼동 금지.
+    playerConnected: widgetPresence.player,
+    displayConnected: widgetPresence.display,
     transport,
     session,
     playerUrl,

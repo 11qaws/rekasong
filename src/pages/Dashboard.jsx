@@ -607,6 +607,12 @@ export default function Dashboard() {
     if (entry.song?.type === 'youtube' && getYoutubeOutputSafety(entry) !== 'safe') {
       throw new Error(prepareBlockMessage(songPrepareState(entry.song, prepareStatesRef.current).kind));
     }
+    // 진실성 게이트(모든 재생 시작 경로 공통 — 대기열 바로 재생·재시도·자동 다음
+    // 곡 포함): player 위젯이 실제로 연결돼 있지 않으면 run 을 만들지 않는다.
+    // 모든 호출자가 catch→토스트로 처리한다.
+    if (useOnAirPlayer && !onAir.playerConnected) {
+      throw new Error('OBS On-Air 플레이어가 연결되지 않았습니다. OBS에 플레이어 소스를 추가하세요.');
+    }
     const runId = newId();
     setCurrentTime(0);
     setDuration(0);
@@ -720,10 +726,11 @@ export default function Dashboard() {
 
   const handleGoLive = (insertAtTop = false) => {
     if (!stagedItem) return;
-    if (useOnAirPlayer && onAir.connectionState !== 'connected') {
-      showToast('OBS On-Air 위젯이 연결된 뒤 방송 재생을 시작할 수 있습니다.', 'error');
-      return;
-    }
+    // 진실성 게이트는 beginPlaybackRun 안에 있다(player 위젯 실제 연결 여부) —
+    // 여기서 함수 전체를 막지 않는 이유: 이 함수는 '대기열에 추가'도 담당하므로,
+    // OBS를 아직 안 연 상태에서도 setlist 예약은 허용해야 한다(송출만 막는다).
+    // 예전의 control 연결 게이트는 대시보드 자신의 서버 연결만 봐서 위젯 없이도
+    // 통과시키는 거짓 게이트였다.
     if (useOnAirPlayer && stagedItem.type === 'local' && !stagedItem.assetId) {
       showToast(stagedItem.assetError || '방송용 로컬 파일을 준비 중입니다.', 'info');
       return;
@@ -1334,6 +1341,8 @@ export default function Dashboard() {
             onAirPlayerUrl={onAir.playerUrl}
             onAirDisplayUrl={onAir.displayUrl}
             onAirStatus={onAir.connectionState}
+            onAirPlayerConnected={onAir.playerConnected}
+            onAirDisplayConnected={onAir.displayConnected}
             onPrepareOnAir={onAir.preparePlayer}
             onPrepareOnAirDisplay={onAir.prepareDisplay}
             onEndBroadcastSession={handleEndBroadcastSession}

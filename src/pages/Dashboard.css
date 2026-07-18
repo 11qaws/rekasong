@@ -1040,8 +1040,15 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .obs-setup-steps strong { display: block; font-size: 0.91rem; }
 .obs-setup-steps p { margin: 0.24rem 0 0.55rem; color: var(--text-muted); font-size: 0.79rem; line-height: 1.45; }
 .obs-setup-steps .btn-copy { display: inline-flex; width: auto; align-items: center; gap: 0.35rem; }
-.obs-player-status { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.55rem; color: var(--text-muted); font-size: 0.76rem; }
-.obs-player-status.is-connected { color: var(--chr-vest); }
+.obs-player-status { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.55rem; color: var(--text-muted); font-size: 0.76rem; transition: color 0.2s ease; }
+/* 위젯 연결 성공 — 초록은 여기(성공 상태)에만 절제해서 쓴다. */
+.obs-player-status.is-on { color: var(--chr-vest); font-weight: 700; }
+.obs-player-status.is-waiting { color: var(--text-muted); }
+/* 대기 표시등: 회색 점. 연결되면 칩 전체가 초록 텍스트+체크로 바뀐다. */
+.obs-status-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.45; }
+/* 대시보드↔서버(control) 상태 — 위젯 연결 칩과 혼동되지 않게 무채색 한 줄. */
+.obs-server-note { display: flex; align-items: center; gap: 0.4rem; margin: -0.35rem 0 0.75rem; color: var(--text-muted); font-size: 0.76rem; }
+.obs-server-note .obs-status-dot.is-live { background: var(--chr-vest); opacity: 0.75; }
 .obs-session-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--glass-border); }
 .obs-session-actions p { margin: 0; color: var(--text-muted); font-size: 0.75rem; line-height: 1.45; }
 /* 대기열 패널: 그리드 셀 높이를 정확히 채우고, 리스트만 넘칠 때 내부 스크롤 */

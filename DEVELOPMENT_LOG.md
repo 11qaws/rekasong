@@ -268,3 +268,14 @@
   3. VPS 워커의 `unavailable` 조기 중단 최적화 → YouTube는 **클라이언트별 접근 가능성이 갈린다**(그래서 `_CLIENT_ATTEMPTS`가 여럿). `unavailable`은 자동 재시도가 없어 오분류 비용이 영구적이다. 계약 §4대로 전 클라이언트 시도 후 확정으로 철회 + 회귀 테스트 고정. **아끼는 건 몇 초, 잃는 건 곡이다.**
 - **하위 호환(의도된 단절, 그래서 0.0.6 → 0.1.0)**: `VITE_AUDIO_PROXY_BASE_URL` 스트리밍 경로 제거(병존 시 준비 안 된 곡이 새어나가는 우회로가 된다 — 계약 §7). **세션 없는 직접 재생 모드의 YouTube 재생은 지원하지 않는다** — `<audio src>`는 헤더를 못 붙여 PREPARE_TOKEN 우회로를 열면 쿼리스트링으로 VPS 토큰이 샌다. 운영은 항상 On-Air라 실사용 영향 없음. 로컬 파일·대기열·이력·On-Air 세션 프로토콜은 무변경.
 - **검증**: vite build·oxlint 통과(신규 경고 0). Worker(`f33a70b`)와 프론트(`971f5f7`) 교차 검증 — 게이트·`force` body·`publicJob` 응답 형태 일치. 그 과정에서 발견한 absent 고착 엣지는 `67d06c8`로 해소. 브라우저 런타임 검증은 playwright 부재로 미실시(정적 시나리오 검토로 대체) — **실배포 후 실측 필요.**
+
+## 2026-07-18 — v0.1.1
+**On-Air↔OBS 연결 진실성(presence) + OBS 설정 안내 UX (`docs/ONAIR_CONNECTION.md`)**
+- **문제(실측)**: PlaybackPanel의 "OBS 플레이어 연결됨" 칩이 `onAir.connectionState`(대시보드 자신의 control 소켓)에 근거 — **OBS 위젯을 열지 않아도 초록불이 켜졌고**, 재생 게이트도 control만 확인해 위젯 0개 상태에서 load가 허공으로 나갔다.
+- **Worker**: `openSocket` 스냅숏에 `presence:{player,display}` 추가(`ctx.getWebSockets()` attachment role 런타임 집계 — **DO 스토리지 스키마 불변, 마이그레이션 없음**). display 연결/해제도 control로 브로드캐스트(player와 대칭). `webSocketClose`는 같은 역할의 **다른 소켓이 남아 있으면 connected:true**를 보낸다(위젯 새로고침 시 새/구 소켓 겹침 → 거짓 false 방지). `hasConnectedPlayer(excluded)`로 닫히는 소켓을 명시 제외.
+- **프론트**: `useOnAirSession`이 `playerConnected/displayConnected` 반환(스냅숏 초기화 + presence 이벤트 갱신). control 소켓이 **비의도적으로** 끊기면 presence를 false로 리셋(관측 불가=미확인, 재접속 스냅숏이 즉시 복원) — 의도된 소켓 교체(세션 업그레이드)는 리셋하지 않아 칩 깜빡임 없음.
+- **재생 게이트 이동**: `beginPlaybackRun`에 위젯 presence 게이트(모든 시작 경로 공통: 즉시 재생·대기열 바로 재생·재시도·자동 다음 곡). `handleGoLive` 상단의 control 게이트는 **제거** — 이 함수는 '대기열에 추가'도 담당하므로 OBS를 아직 안 연 상태의 setlist 예약을 막으면 안 된다(송출만 막는다).
+- **트러블슈팅 — 고아 세션 레이스(라이브 검증으로 발견)**: `ensureSession()`이 state 클로저 기반이라 스테이징 자동 준비(prepare 폴링)와 '주소 복사'가 겹치면 **세션이 2개** 만들어졌다 → 위젯은 세션 A, 대시보드는 세션 B에 붙어 "주소를 넣었는데 초록불이 안 켜짐" + 명령 허공 송출. `sessionRef` + in-flight 프라미스 합류로 단일화. 헤드리스 검증이 아니었으면 실방송에서야 발견됐을 결함.
+- **UX**: 설정 다이얼로그 칩을 실제 presence 기반으로 — 미연결=회색 점 "OBS에 주소를 넣으면 여기 초록불이 켜집니다" / 연결=✓ 초록(`--chr-vest`, 성공 상태에만 절제). display 단계에도 동일 칩 신설. 대시보드↔서버(control) 상태는 무채색 한 줄(`obs-server-note`)로 **위젯 연결과 시각 구분**. 초심자 흐름: 소스 2개·순서 번호·'로컬 파일' 체크 해제 경고·화면 정보=무음(1920×1080)·플레이어=오디오 믹서에 이 소스만. **넣는 즉시 칩이 초록으로 바뀌는 것이 행동이 먹혔다는 즉각 피드백.** 직접 재생 모드(N-01) room&key 흐름 무변경.
+- **검증(라이브 16/16)**: 배포 Worker + production preview + 헤드리스 위젯/대시보드. (a) 위젯 전 presence false (b) 위젯 연결→presence true 전이 (c) **위젯 선연결+control 재연결→스냅숏만으로 즉시 true** (d) 위젯 종료→false 전이 (e) player 미연결 즉시 재생→토스트 차단·재생 미진입. 추가: display presence 대칭, 다이얼로그 칩 회색→초록 실전이, 위젯 연결 후 같은 버튼으로 실재생(과차단 없음), 위젯 실제 오디오 진행. vite build·oxlint 신규 경고 0.
+- **하위 호환**: 구 Worker 스냅숏(presence 없음)은 안전하게 false로 강등, 구 프론트는 새 presence 메시지를 무시 — 어느 방향 배포 순서든 안전. 스토리지·relay/transport 의미 불변.

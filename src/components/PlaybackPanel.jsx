@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 
+// 위젯 연결 칩 — 서버가 중계하는 **실제 위젯 presence**에만 근거한다(진실성).
+// 초록은 연결 성공에만 절제해서 쓰고, 대기 상태는 회색 점으로 둔다.
+// 주소를 OBS에 넣는 즉시 초록으로 바뀌는 것이 "행동이 먹혔다"는 즉각 피드백이다.
+function WidgetStatusChip({ connected, connectedLabel, waitingLabel }) {
+  return (
+    <span className={`obs-player-status ${connected ? 'is-on' : 'is-waiting'}`} role="status">
+      {connected ? <Check size={13} /> : <span className="obs-status-dot" aria-hidden="true" />}
+      {connected ? connectedLabel : waitingLabel}
+    </span>
+  );
+}
+
 export default function PlaybackPanel({
   room,
   publicKeyB64,
@@ -22,6 +34,8 @@ export default function PlaybackPanel({
   onAirPlayerUrl,
   onAirDisplayUrl,
   onAirStatus,
+  onAirPlayerConnected,
+  onAirDisplayConnected,
   onEndBroadcastSession,
   onPrepareOnAir,
   onPrepareOnAirDisplay
@@ -202,14 +216,31 @@ export default function PlaybackPanel({
               <button type="button" className="btn-icon" onClick={() => setIsObsSetupOpen(false)} aria-label="닫기"><X size={18} /></button>
             </header>
 
-            <p className="obs-setup-intro">화면 정보와 재생은 같은 방송 세션으로 연결됩니다. 화면 정보 위젯은 무음으로, 오디오는 선택한 재생기 소스에서만 OBS에 넣습니다.</p>
+            <p className="obs-setup-intro">
+              OBS에 브라우저 소스 <strong>2개</strong>를 아래 순서대로 추가하면 끝납니다.
+              소스 추가 창에서 <strong>‘로컬 파일’은 체크 해제</strong>한 채 주소(URL) 칸에 붙여넣으세요.
+              소리는 2번(On-Air 플레이어) 소스에서만 나옵니다.
+            </p>
+
+            {/* 대시보드↔서버(control) 상태 — 아래 위젯 연결 칩과는 별개의 정보라
+                무채색 한 줄로 구분한다. "서버 준비"를 위젯 연결로 오해하지 않게. */}
+            {!isDirectMode && (
+              <p className="obs-server-note">
+                <span className={`obs-status-dot ${onAirStatus === 'connected' ? 'is-live' : ''}`} aria-hidden="true" />
+                {onAirStatus === 'connected'
+                  ? '방송 서버 연결됨 — OBS 위젯 연결 여부는 각 단계의 표시등으로 확인하세요.'
+                  : (playerUrl || displayUrl)
+                    ? '방송 서버에 연결하는 중입니다…'
+                    : '아래에서 주소를 만들면 방송 서버에 연결됩니다.'}
+              </p>
+            )}
 
             <ol className="obs-setup-steps">
               <li>
                 <span className="obs-setup-step-icon"><MonitorUp size={18} /></span>
                 <div>
-                  <strong>화면 정보 위젯</strong>
-                  <p>OBS 브라우저 소스로 추가하고, 오디오는 끕니다.</p>
+                  <strong>1. 화면 정보 위젯 — 곡 정보를 화면에 보여줍니다</strong>
+                  <p>브라우저 소스로 추가하고 크기는 방송 화면 전체(예: 1920×1080)로 맞춥니다. 소리가 나지 않는 무음 위젯입니다.</p>
                   {isDirectMode ? (
                     // N-01: On-Air 서버가 없는 직접 재생 모드에서는 room&key 구독형
                     // 위젯 주소를 복사한다. 표시 내용은 축소 projection(현재 곡·setlist)뿐이다.
@@ -223,21 +254,41 @@ export default function PlaybackPanel({
                       <Copy size={14} /> {directWidgetUrl ? '주소 복사' : '위젯 키 준비 중…'}
                     </button>
                   ) : (
-                    <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay}>
-                      {isPreparingDisplay ? '준비 중…' : <><Copy size={14} /> {displayUrl ? '주소 복사' : '위젯 준비 후 주소 복사'}</>}
-                    </button>
+                    <>
+                      <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay}>
+                        {isPreparingDisplay ? '준비 중…' : <><Copy size={14} /> {displayUrl ? '주소 복사' : '위젯 준비 후 주소 복사'}</>}
+                      </button>
+                      {/* 실제 위젯 presence 기반 — OBS에 넣는 즉시 초록으로 바뀐다. */}
+                      <WidgetStatusChip
+                        connected={Boolean(onAirDisplayConnected)}
+                        connectedLabel="화면 정보 위젯 연결됨"
+                        waitingLabel="OBS에 주소를 넣으면 여기 초록불이 켜집니다"
+                      />
+                    </>
                   )}
                 </div>
               </li>
               <li>
                 <span className="obs-setup-step-icon"><Radio size={18} /></span>
                 <div>
-                  <strong>On-Air 플레이어</strong>
-                  <p>별도 브라우저 소스로 추가하고, 이 소스만 OBS 오디오 믹서에 남깁니다.</p>
+                  <strong>2. On-Air 플레이어 — 노랫소리를 방송에 싣습니다</strong>
+                  <p>브라우저 소스를 하나 더 추가합니다. 화면에는 보이지 않으니 크기는 그대로 둬도 됩니다. OBS 오디오 믹서에는 이 소스 하나만 남기세요.</p>
                   <button type="button" onClick={copyPlayerUrl} className="btn-copy" disabled={isPreparingPlayer || onAirStatus === 'unconfigured'}>
                     {isPreparingPlayer ? '준비 중…' : <><Copy size={14} /> {playerUrl ? '주소 복사' : '플레이어 준비 후 주소 복사'}</>}
                   </button>
-                  <span className={`obs-player-status is-${onAirStatus || 'unconfigured'}`}><Check size={13} /> {onAirStatus === 'connected' ? 'OBS 플레이어 연결됨' : onAirStatus === 'connecting' ? '플레이어 연결 중' : onAirStatus === 'unconfigured' ? 'On-Air 서버를 연결하면 주소를 준비할 수 있습니다' : '주소를 OBS에 넣으면 연결됩니다'}</span>
+                  {isDirectMode ? (
+                    <span className="obs-player-status is-waiting">
+                      <span className="obs-status-dot" aria-hidden="true" /> On-Air 서버를 연결하면 주소를 준비할 수 있습니다
+                    </span>
+                  ) : (
+                    // 과거에는 대시보드 자신의 서버 연결(onAirStatus)로 "연결됨"을
+                    // 표시해 위젯 없이도 초록불이 켜졌다. 이제 실제 presence 만 믿는다.
+                    <WidgetStatusChip
+                      connected={Boolean(onAirPlayerConnected)}
+                      connectedLabel="OBS 플레이어 연결됨 — 재생을 시작할 수 있습니다"
+                      waitingLabel="OBS에 주소를 넣으면 여기 초록불이 켜집니다"
+                    />
+                  )}
                 </div>
               </li>
             </ol>

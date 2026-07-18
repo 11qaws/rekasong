@@ -278,9 +278,15 @@ export class SessionRoom {
       type: 'snapshot',
       transport: session.transport,
       display: session.display || { currentSong: null, history: [] },
+      // 현재 위젯 연결 상태(런타임 소켓 집계 — 스토리지 스키마 불변).
+      // control 이 언제 붙거나 재접속해도 이미 연결된 위젯을 즉시 안다.
+      presence: this.connectedWidgetPresence(),
       session: { room: session.room, status: session.status }
     });
-    if (role === 'player') this.broadcast({ type: 'presence', role, connected: true }, 'control');
+    // 위젯(player·display) 연결은 control 에, control 연결은 player 에 알린다.
+    // display 도 대칭으로 브로드캐스트한다 — OBS 설정 흐름에서 화면 정보 위젯이
+    // 실제로 들어왔는지 대시보드가 확인해야 하기 때문.
+    if (role === 'player' || role === 'display') this.broadcast({ type: 'presence', role, connected: true }, 'control');
     if (role === 'control') this.broadcast({ type: 'presence', role, connected: true }, 'player');
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -415,8 +421,13 @@ export class SessionRoom {
 
   async webSocketClose(socket) {
     const role = socket.deserializeAttachment()?.role;
-    this.broadcast({ type: 'presence', role, connected: false });
-    if (!this.hasConnectedPlayer()) {
+    // 같은 역할의 다른 소켓이 남아 있으면(위젯 새로고침 시 새/구 연결 겹침 등)
+    // connected 는 여전히 true 다 — 닫히는 소켓 자신은 집계에서 제외한다.
+    // (거짓 false 로 대시보드 표시가 깜빡이거나 재생 게이트가 오작동하지 않게.)
+    const stillConnected = this.ctx.getWebSockets()
+      .some((other) => other !== socket && other.deserializeAttachment()?.role === role);
+    this.broadcast({ type: 'presence', role, connected: stillConnected });
+    if (!this.hasConnectedPlayer(socket)) {
       await this.ctx.storage.setAlarm(Date.now() + SESSION_GRACE_MS);
     }
   }
@@ -455,8 +466,25 @@ export class SessionRoom {
     }
   }
 
-  hasConnectedPlayer() {
-    return this.ctx.getWebSockets().some((socket) => socket.deserializeAttachment()?.role === 'player');
+  // excluded: webSocketClose 중인 소켓 — 런타임 버전에 따라 닫히는 소켓이
+  // getWebSockets() 에 아직 남아 있을 수 있어 명시적으로 제외한다.
+  hasConnectedPlayer(excluded) {
+    return this.ctx.getWebSockets()
+      .some((socket) => socket !== excluded && socket.deserializeAttachment()?.role === 'player');
+  }
+
+  // 스냅숏용 presence 집계 — 위젯 두 역할의 "지금 실제 연결" 여부.
+  // 스토리지에 아무것도 쓰지 않는다(런타임 소켓 상태가 유일한 진실).
+  // 참고: OBS 브라우저 소스가 얼어도 소켓이 안 닫힐 수 있다. 재생 중에는
+  // player 의 position 이벤트가 암묵 하트비트지만, 유휴 시 감지가 필요해지면
+  // 서버 주기 ping / last-seen 방식을 여기에 더할 수 있다(이번 범위 밖).
+  connectedWidgetPresence() {
+    const presence = { player: false, display: false };
+    for (const socket of this.ctx.getWebSockets()) {
+      const role = socket.deserializeAttachment()?.role;
+      if (role === 'player' || role === 'display') presence[role] = true;
+    }
+    return presence;
   }
 
   send(socket, message) {
