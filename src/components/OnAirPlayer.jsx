@@ -23,6 +23,45 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   // 시작 타임아웃 해제 근거: 어느 sessionId의 미디어가 실제로 열렸는지 기록.
   const mediaReadySessionRef = useRef(null);
 
+  // ── 프리버퍼(pre-buffer) 캐시 ──────────────────────────────────────────
+  // 대시보드의 prefetch 힌트(다가오는 곡 videoId, 최대 2개)를 받아 준비된
+  // 오디오를 미리 통째로 받아 둔다: videoId → objectURL. 곡 전환을 즉시 만들기
+  // 위한 순수 최적화로, 실패·미스는 항상 기존 스트리밍 URL 재생으로 무손실
+  // 폴백된다 — 재생 이벤트 경로는 blob이든 스트리밍이든 완전히 동일하다.
+  const prefetchCacheRef = useRef(new Map()); // videoId → objectURL (최대 2곡 — 긴 메들리 blob은 수십 MB라 메모리 방어)
+  const prefetchInFlightRef = useRef(new Set());
+  // applyCommand(소켓 핸들러)가 props를 직접 캡처하지 않게 하는 거울 ref —
+  // 소켓 effect는 기존처럼 [apiBaseUrl, room, token]에만 의존한다(값은 동일).
+  const prefetchAuthRef = useRef({ apiBaseUrl, room, token });
+  prefetchAuthRef.current = { apiBaseUrl, room, token };
+  const prefetchWantedRef = useRef([]); // 마지막으로 받은 prefetch 힌트 목록
+  // 이 곡(sessionId)의 재생 src 확정값 — 곡당 1회, 첫 렌더에서 결정(sticky).
+  const playbackSrcRef = useRef({ sessionId: null, videoId: null, src: '' });
+  // blob 도착을 렌더에 반영하는 카운터. src 선택은 sessionId당 1회로 고정되므로
+  // 재생 중 곡의 src가 뒤바뀌는 일은 없다(아래 렌더 주석 참조).
+  const [, setPrefetchVersion] = useState(0);
+
+  // 최신 힌트 목록에 없는 캐시를 회수한다. 지금 재생에 물린 URL만 보류 —
+  // 재생 중 revokeObjectURL은 미디어 fetch를 끊을 수 있다. 보류분은 곡이 바뀐
+  // 뒤의 sweep(sessionId effect)에서 회수된다.
+  const sweepPrefetchCache = () => {
+    const cache = prefetchCacheRef.current;
+    for (const [videoId, url] of [...cache.entries()]) {
+      if (prefetchWantedRef.current.includes(videoId)) continue;
+      if (url && url === playbackSrcRef.current.src) continue;
+      URL.revokeObjectURL(url);
+      cache.delete(videoId);
+    }
+  };
+
+  // 세션 종료·언마운트용 전체 회수(멱등).
+  const clearPrefetchCache = () => {
+    prefetchWantedRef.current = [];
+    playbackSrcRef.current = { sessionId: null, videoId: null, src: '' };
+    prefetchCacheRef.current.forEach((url) => URL.revokeObjectURL(url));
+    prefetchCacheRef.current.clear();
+  };
+
   useEffect(() => {
     transportRef.current = transport;
   }, [transport]);
@@ -36,6 +75,36 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
 
   const applyCommand = (command) => {
     if (command.sessionId && transportRef.current.sessionId && command.sessionId !== transportRef.current.sessionId && command.type !== 'load') return;
+    if (command.type === 'prefetch') {
+      // 다가오는 곡의 준비된 오디오를 미리 통째로 받는다(최대 2곡).
+      // transport는 일절 건드리지 않는다 — 이 명령은 캐시 힌트일 뿐이다.
+      const wanted = (Array.isArray(command.videoIds) ? command.videoIds : [])
+        .filter((id) => typeof id === 'string' && id)
+        .slice(0, 2);
+      prefetchWantedRef.current = wanted;
+      sweepPrefetchCache();
+      wanted.forEach((videoId) => {
+        if (prefetchCacheRef.current.has(videoId) || prefetchInFlightRef.current.has(videoId)) return;
+        prefetchInFlightRef.current.add(videoId);
+        const auth = prefetchAuthRef.current;
+        fetch(prepareAudioUrl(auth.apiBaseUrl, videoId, { room: auth.room, token: auth.token }))
+          .then((response) => {
+            if (!response.ok) throw new Error(`prefetch ${response.status}`);
+            return response.blob();
+          })
+          .then((blob) => {
+            // 받는 사이 힌트가 바뀌었으면 버린다 — 캐시 2곡 상한 유지.
+            if (!prefetchWantedRef.current.includes(videoId)) return;
+            prefetchCacheRef.current.set(videoId, URL.createObjectURL(blob));
+            setPrefetchVersion((version) => version + 1);
+          })
+          .catch(() => {
+            // 실패는 조용히 무시 — 재생은 기존 스트리밍 경로로 무손실 폴백.
+          })
+          .finally(() => prefetchInFlightRef.current.delete(videoId));
+      });
+      return;
+    }
     if (command.type === 'load') {
       setTransport((previous) => ({
         ...previous,
@@ -89,6 +158,7 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
           if (payload.type === 'command') applyCommand(payload.command || {});
           if (payload.type === 'session_ended') {
             mediaRef.current?.pause?.();
+            clearPrefetchCache(); // 세션 종료 — 프리버퍼 blob 전부 회수
             setTransport({ status: 'stopped', song: null, position: 0, volume: 100, sessionId: null });
           }
         } catch {
@@ -120,6 +190,20 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     }, 1000);
     return () => window.clearInterval(interval);
   }, [transport.status, transport.sessionId]);
+
+  // 곡 전환·정지 시 프리버퍼 캐시 정리: 직전 곡 재생에 보류돼 있던 blob 등
+  // 최신 힌트에 없는 항목을 회수한다. key={sessionId} 리마운트로 이전 <audio>가
+  // 이미 내려간 뒤(커밋 후)라 revoke가 진행 중 재생을 건드리지 않는다.
+  useEffect(() => {
+    if (playbackSrcRef.current.sessionId !== transport.sessionId) {
+      playbackSrcRef.current = { sessionId: transport.sessionId, videoId: null, src: '' };
+    }
+    sweepPrefetchCache();
+    // eslint 참고: sweepPrefetchCache는 ref만 읽는 안정적 로직 — sessionId 전환에만 반응한다.
+  }, [transport.sessionId]);
+
+  // 언마운트 시 프리버퍼 blob 전부 회수(메모리 누수 방지).
+  useEffect(() => () => clearPrefetchCache(), []);
 
   // 같은 곡을 다시 load(재시도 run)하면 key/src가 그대로라 요소가 리마운트되지
   // 않고 canplay도 다시 오지 않는다 — 이미 열려 있는 미디어면 즉시 ready 경로를
@@ -208,6 +292,19 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   if (!transport.song) return <div className="on-air-player-idle" aria-label="On-Air player waiting" />;
 
   if (transport.song.type === 'youtube') {
+    // 프리버퍼 적용: 이 곡의 재생 src는 곡(sessionId)당 1회, 첫 렌더에서
+    // 확정한다(sticky — 렌더당 멱등한 지연 초기화라 StrictMode에도 안전).
+    // 재생 도중 캐시가 뒤늦게 채워져도 src를 바꾸지 않는다 — <audio src> 교체는
+    // 요소를 리셋해 재생을 처음부터 다시 시작시키기 때문. 캐시 미스·프리페치
+    // 실패는 기존 스트리밍 URL 그대로(무손실 폴백)이며, 이벤트 배선·시작
+    // 타임아웃·위치복원(positionAppliedRef)은 두 경로가 완전히 동일하다.
+    if (playbackSrcRef.current.sessionId !== transport.sessionId) {
+      playbackSrcRef.current = {
+        sessionId: transport.sessionId,
+        videoId: transport.song.src,
+        src: prefetchCacheRef.current.get(transport.song.src) || ''
+      };
+    }
     // key={sessionId}: 곡(entry)이 바뀌면 요소를 새로 만들어 이전 곡의 늦은
     // 이벤트·버퍼가 새 곡을 오염시키지 않게 한다(구 iframe과 동일 규약).
     return (
@@ -215,7 +312,7 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
         key={transport.sessionId}
         ref={mediaRef}
         className="on-air-player"
-        src={preparedAudioSrc}
+        src={playbackSrcRef.current.src || preparedAudioSrc}
         preload="auto"
         onCanPlay={onMediaReady}
         onPlay={onMediaEvent('playing')}

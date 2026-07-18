@@ -1,5 +1,24 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-18 — On-Air 위젯 프리버퍼(pre-buffer): 다음 곡 미리 받기
+
+대기열의 다가오는 곡(준비 완료된 YouTube 곡, 최대 2개)을 On-Air 위젯이 미리 blob으로 통째로 받아 두어 곡 전환이 즉시 되게 했다. 순수 최적화·복원력 작업으로, 프리페치 실패·미스는 항상 기존 스트리밍 재생으로 무손실 폴백된다(기능 변경·회귀 없음).
+
+- **Worker(`handleCommand`)**: `prefetch` 명령을 player로 **broadcast만** 하는 순수 릴레이 추가. transport/세션 상태 불변, **`storage.put` 절대 없음** — 직전 DO 무료 티어 쓰기 한도 초과 사고의 재발 방지가 최우선 제약. videoId는 11자 패턴 검증 + 최대 2개로 잘라 릴레이.
+- **위젯(`OnAirPlayer.jsx`)**: `Map<videoId, objectURL>` 캐시(최대 2곡 — 긴 메들리 blob은 수십 MB라 메모리 방어). 힌트 목록에서 빠진 항목은 revoke, 언마운트·세션 종료 시 전부 revoke. 재생 src는 곡(sessionId)당 1회 첫 렌더에서 확정(sticky): 캐시 히트면 blob URL, 아니면 기존 스트리밍 URL.
+- **코디네이터(`Dashboard.jsx`)**: 큐에서 `ready`인 YouTube 곡을 순서대로 최대 2개 골라 prefetch 힌트 전송. 같은 목록 중복 전송 억제(ref), 위젯 재연결 시 기억을 지워 재전송(위젯 캐시가 비므로). 빈 목록도 보낸다 — 위젯의 불필요 blob 회수 신호.
+
+### 트러블슈팅 기록 (재발 방지 레퍼런스)
+
+1. **재생 중 `<audio src>` 교체는 요소를 리셋해 재생을 처음부터 다시 시작시킨다.** blob이 뒤늦게 도착했을 때 src를 '업그레이드'하면 회귀다 — src 선택은 sessionId당 1회로 고정(sticky)하고, 늦은 blob은 그냥 버려지게(다음 사용처가 없으면 sweep) 설계했다.
+2. **재생에 물린 objectURL을 revoke하면 미디어 fetch가 끊길 수 있다.** sweep은 현재 재생 src와 같은 URL을 보류하고, 곡이 바뀐 뒤(sessionId effect — key 리마운트로 이전 `<audio>`가 내려간 커밋 후)에 회수한다. 따라서 순간 최대 메모리는 '프리페치 2곡 + 재생 중 1곡'이다(재생 중 blob은 어차피 요소가 쥐고 있어 줄일 수 없는 몫).
+3. **oxlint exhaustive-deps는 effect가 참조하는 함수가 props를 캡처하는 순간 경고를 낸다.** `applyCommand`(소켓 핸들러)에 prefetch fetch를 넣자 `apiBaseUrl/room/token` 캡처로 신규 경고 발생 — 소켓 effect가 이미 같은 deps로 재연결되므로 거울 ref(`prefetchAuthRef`)로 읽어 함수를 다시 '안정'으로 만들었다(기존 `onMediaReadyRef` 패턴과 동일).
+
+### 검증
+
+- `vite build` 통과, `oxlint` 변경 파일 3종 신규 경고 0.
+- **라이브 미검증**: DO 쓰기 한도 소진으로 세션 생성이 500이라 위젯 실재생 검증 불가. 한도 회복 후 코디네이터가 (a) prefetch 릴레이 수신, (b) blob 재생 전환 즉시성, (c) 폴백(캐시 미스 시 스트리밍) 라이브 확인 필요. Worker는 미배포 상태(코드만 커밋).
+
 ## 2026-07-17 — 생애주기 Stage 3: finishing / discarding / failed 전이
 
 기준: `docs/SONG_LIFECYCLE.md` §4-3/§4-4/§4-5, `docs/ux-audits/PHASE_08_COMBINED_REVIEW.md` §6 Stage 3. Stage 1(QueueEntry 스키마)·Stage 2(코디네이터 상태기계) 위에 종료 계열 전이만 얹었다. CSS/디자인 파일 무변경(기존 클래스 재사용), 프로토콜(Worker/OnAirPlayer) 무변경.

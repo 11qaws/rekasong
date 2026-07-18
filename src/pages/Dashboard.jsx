@@ -328,6 +328,45 @@ export default function Dashboard() {
     showToast('곡 준비를 다시 시도합니다.', 'info');
   };
 
+  // ── 프리버퍼(pre-buffer) 힌트 ──────────────────────────────────────────
+  // 대기열의 다가오는 곡 중 준비 완료(ready)된 YouTube 곡을 순서대로 최대 2개
+  // 골라 On-Air 위젯에 prefetch 명령으로 알린다. Worker는 이 명령을 위젯으로
+  // 릴레이만 하고(DO storage 쓰기 0) 위젯이 오디오를 미리 통째로 받아 두므로,
+  // 곡 전환이 즉시 되고 프리페치가 실패해도 기존 스트리밍 재생으로 무손실
+  // 폴백된다. ready가 아닌 곡은 넣지 않는다 — R2에 바이트가 없어 받을 수 없다.
+  // 문자열로 합쳐 폴링 틱(checkedAt 갱신)마다 effect가 재발화하지 않게 한다.
+  const prefetchTargetIds = useMemo(() => {
+    const ids = [];
+    for (const entry of state?.queue || []) {
+      const song = entry?.song;
+      if (song?.type !== 'youtube' || !YOUTUBE_ID_PATTERN.test(song.src || '')) continue;
+      if (prepareStates[song.src]?.status !== 'ready') continue;
+      if (!ids.includes(song.src)) ids.push(song.src);
+      if (ids.length >= 2) break;
+    }
+    return ids.join(' ');
+  }, [state?.queue, prepareStates]);
+
+  // 같은 목록의 연발 전송 억제 — prefetch는 DO에 쓰지 않지만 소음은 줄인다.
+  const lastPrefetchSentRef = useRef('');
+  useEffect(() => {
+    if (!useOnAirPlayer) return;
+    if (!onAir.playerConnected) {
+      // 위젯이 새로 붙으면(OBS 재시작 포함) 캐시가 비어 있으므로,
+      // 재연결 시 같은 목록이라도 다시 보내도록 기억을 지운다.
+      lastPrefetchSentRef.current = '';
+      return;
+    }
+    if (lastPrefetchSentRef.current === prefetchTargetIds) return;
+    try {
+      // 빈 목록도 보낸다 — 위젯이 더는 필요 없는 blob을 회수하는 신호다.
+      sendOnAirCommand({ type: 'prefetch', videoIds: prefetchTargetIds ? prefetchTargetIds.split(' ') : [] });
+      lastPrefetchSentRef.current = prefetchTargetIds;
+    } catch {
+      // 소켓 미연결 등 — 프리페치는 최적화일 뿐이라 다음 상태 변화에서 다시 시도한다.
+    }
+  }, [useOnAirPlayer, onAir.playerConnected, prefetchTargetIds, sendOnAirCommand]);
+
   // Stage 4 (INV-8, D-31): 창 닫힘 시 참조 중인 blob을 revoke해 메모리 누수를
   // 막는다. 상태는 localStorage에 남으므로 다음 로드에서 Stage 1의 로컬 곡
   // 소실 안내(D-04)로 이어진다 — revoke는 멱등이라 이중 정리에도 안전하다.

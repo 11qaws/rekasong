@@ -334,6 +334,20 @@ export class SessionRoom {
       return;
     }
 
+    // 프리버퍼 힌트: 다가오는 곡의 videoId(최대 2개)를 player 위젯에 릴레이만
+    // 한다 — 위젯이 준비된 오디오를 미리 통째로 받아 곡 전환을 즉시 만들기 위함.
+    // ★ 순수 릴레이: transport/세션 상태를 일절 바꾸지 않고 storage.put 도 절대
+    // 하지 않는다. 큐가 바뀔 때마다 올 수 있는 힌트라 영속하면 DO 쓰기가 다시
+    // 폭증한다(무료 티어 쓰기 한도 초과 사고 재발 방지). 힌트가 유실·실패해도
+    // 위젯은 기존 스트리밍 재생으로 폴백하므로 신뢰성 요구가 없다.
+    if (command.type === 'prefetch') {
+      const videoIds = (Array.isArray(command.videoIds) ? command.videoIds : [])
+        .filter((id) => typeof id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id))
+        .slice(0, 2);
+      this.broadcast({ type: 'command', command: { type: 'prefetch', commandId: command.commandId, videoIds } }, 'player');
+      return this.send(socket, { type: 'command_ack', commandId: command.commandId });
+    }
+
     const nextTransport = { ...session.transport };
     if (command.type === 'load') {
       nextTransport.song = command.song || null;
