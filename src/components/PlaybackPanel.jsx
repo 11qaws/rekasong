@@ -41,6 +41,14 @@ export default function PlaybackPanel({
   onPrepareOnAirDisplay
 }) {
   const [previousVolume, setPreviousVolume] = useState(100);
+  // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
+  // 미리보기(로컬 상태)만 갱신하고 놓을 때 한 번만 실제 명령을 보낸다 — On-Air
+  // seek/volume 명령 연발이 DO 쓰기 폭풍(무료 티어 한도)과 재생 재요청을 일으키던
+  // 것을 뿌리에서 없앤다. (Worker 는 seek 을 이미 영속하지 않는다.)
+  const [seekDraft, setSeekDraft] = useState(null);
+  const [volumeDraft, setVolumeDraft] = useState(null);
+  const commitSeek = () => { if (seekDraft !== null) { onSeek(seekDraft); setSeekDraft(null); } };
+  const commitVolume = () => { if (volumeDraft !== null) { onVolumeChange(volumeDraft); setVolumeDraft(null); } };
   const [isObsSetupOpen, setIsObsSetupOpen] = useState(false);
   const [isPreparingPlayer, setIsPreparingPlayer] = useState(false);
   const [preparedPlayerUrl, setPreparedPlayerUrl] = useState('');
@@ -163,7 +171,7 @@ export default function PlaybackPanel({
             <button type="button" onClick={toggleMute} className="btn-icon" title={isMuted ? '음소거 해제' : '음소거'}>
               {isMuted ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
             </button>
-            <input aria-label="볼륨" type="range" min="0" max="100" value={volume} onChange={(event) => onVolumeChange(Number(event.target.value))} className="volume-slider" />
+            <input aria-label="볼륨" type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" />
             {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
             <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={controlsLocked} title={isFinishing ? '스킵 확인 중 — 곡이 끝나면 다음 곡으로 넘어갑니다' : isFailed ? '실패한 곡은 다시 재생하거나 버려 주세요' : '다음 곡으로 스킵'}><SkipForward size={17} /></button>
             {isFailed && (
@@ -196,7 +204,7 @@ export default function PlaybackPanel({
           ) : (
             <div className="playback-progress">
               <span>{formatTime(currentTime)}</span>
-              <input aria-label="재생 위치" type="range" min="0" max={duration || 100} value={currentTime} onChange={(event) => onSeek(Number(event.target.value))} className="progress-slider" disabled={controlsLocked} />
+              <input aria-label="재생 위치" type="range" min="0" max={duration || 100} value={seekDraft ?? currentTime} onChange={(event) => setSeekDraft(Number(event.target.value))} onPointerUp={commitSeek} onKeyUp={commitSeek} onBlur={commitSeek} className="progress-slider" disabled={controlsLocked} />
               <span>{formatTime(duration)}</span>
             </div>
           )}
