@@ -279,3 +279,22 @@
 - **UX**: 설정 다이얼로그 칩을 실제 presence 기반으로 — 미연결=회색 점 "OBS에 주소를 넣으면 여기 초록불이 켜집니다" / 연결=✓ 초록(`--chr-vest`, 성공 상태에만 절제). display 단계에도 동일 칩 신설. 대시보드↔서버(control) 상태는 무채색 한 줄(`obs-server-note`)로 **위젯 연결과 시각 구분**. 초심자 흐름: 소스 2개·순서 번호·'로컬 파일' 체크 해제 경고·화면 정보=무음(1920×1080)·플레이어=오디오 믹서에 이 소스만. **넣는 즉시 칩이 초록으로 바뀌는 것이 행동이 먹혔다는 즉각 피드백.** 직접 재생 모드(N-01) room&key 흐름 무변경.
 - **검증(라이브 16/16)**: 배포 Worker + production preview + 헤드리스 위젯/대시보드. (a) 위젯 전 presence false (b) 위젯 연결→presence true 전이 (c) **위젯 선연결+control 재연결→스냅숏만으로 즉시 true** (d) 위젯 종료→false 전이 (e) player 미연결 즉시 재생→토스트 차단·재생 미진입. 추가: display presence 대칭, 다이얼로그 칩 회색→초록 실전이, 위젯 연결 후 같은 버튼으로 실재생(과차단 없음), 위젯 실제 오디오 진행. vite build·oxlint 신규 경고 0.
 - **하위 호환**: 구 Worker 스냅숏(presence 없음)은 안전하게 false로 강등, 구 프론트는 새 presence 메시지를 무시 — 어느 방향 배포 순서든 안전. 스토리지·relay/transport 의미 불변.
+
+## 2026-07-18 (2) — DO 쓰기 한도 소진 확인 + 최적화 병합 (Antigravity f461686)
+
+**실측 확정: Cloudflare Durable Objects 무료 티어 쓰기 한도 초과.**
+- Worker 예외: `Exceeded allowed rows written in Durable Objects free tier.` (index.js fetch)
+- 증상: DO를 쓰는 모든 엔드포인트가 500(`/v1/sessions`·`/v1/prepare/stats`). `/v1/audio`(401)·404는 정상.
+- 원인: `handlePlayerEvent`가 **position 이벤트(초당 1회)마다 `storage.put`** → 2시간 방송 세션당 ~7200 쓰기. 이번 세션의 다수 재생 테스트가 오늘치 무료 한도를 소진.
+- **Antigravity(Gemini)가 자기 세션에서 이 문제를 진단하고 `f461686`로 선제 수정.** 본 커밋은 그 수정을 현재(presence 반영) Worker에 병합한 것.
+
+**병합 내용 (f461686 → 현재 Worker):**
+- `this.sessionState` 인메모리 세션 캐시(DO 단일 스레드라 경합 없음).
+- `handlePlayerEvent`: `event.type !== 'position'` 일 때만 `storage.put` — 순수 진행도는 영속 안 함(브로드캐스트는 유지, 캐시에는 반영, 다음 상태변경에서 함께 영속).
+- `webSocketClose`: 플레이어(위젯) 전원 끊김 시 재생 중 상태를 `paused`로 내려 대시보드 반영(presence 로직과 병합).
+- presence 스냅숏/브로드캐스트(내 작업)와 충돌 없음.
+
+**복구·후속:**
+- 무료 티어 DO 쓰기 한도는 **매일(UTC) 리셋** → 자동 복구. 현재는 소진 상태라 On-Air/prepare 500.
+- 최적화 후 실사용은 곡당 상태변경 몇 회(로드/재생/일시정지/종료)만 쓰므로 한도 근처도 안 간다. 테스트가 소진의 주범이었음.
+- 다중 스트리머·완전한 안정성이 필요하면 **Workers Paid($5/월)** 로 무료 티어 한도 자체를 제거하는 것이 근본책(사용자 결정).

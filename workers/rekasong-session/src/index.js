@@ -178,6 +178,10 @@ export class SessionRoom {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
+    // 세션 인메모리 캐시(Gemini f461686). position 이벤트의 storage.put 을 건너뛰는
+    // 최적화가 안전하려면, 미영속 변경(진행도)이 같은 인스턴스 내 후속 읽기에
+    // 일관되게 보여야 한다 — DO 는 단일 스레드라 이 캐시가 경합 없이 성립한다.
+    this.sessionState = null;
   }
 
   async fetch(request) {
@@ -197,7 +201,7 @@ export class SessionRoom {
     const { room, controlToken, playerToken, displayToken } = await request.json();
     if (!room || !controlToken || !playerToken || !displayToken) return json({ error: 'Invalid session setup' }, 400);
 
-    await this.ctx.storage.put('session', {
+    const newSession = {
       room,
       status: 'active',
       controlHash: await hashToken(controlToken),
@@ -208,7 +212,9 @@ export class SessionRoom {
       display: { currentSong: null, history: [] },
       endedAt: null,
       cleanupAt: null
-    });
+    };
+    await this.ctx.storage.put('session', newSession);
+    this.sessionState = newSession;
     // A staging upload can create a session before OBS has opened its player.
     // Do not retain those files forever if the broadcast is never started.
     await this.ctx.storage.setAlarm(Date.now() + SESSION_INITIAL_GRACE_MS);
@@ -216,7 +222,8 @@ export class SessionRoom {
   }
 
   async getSession() {
-    return this.ctx.storage.get('session');
+    if (!this.sessionState) this.sessionState = await this.ctx.storage.get('session');
+    return this.sessionState;
   }
 
   async issueDisplayToken(request) {
@@ -371,7 +378,11 @@ export class SessionRoom {
       nextTransport.status = event.type;
     }
     session.transport = nextTransport;
-    await this.ctx.storage.put('session', session);
+    // ★ position 은 초당 발화하는 순수 진행도라 DO 스토리지에 영속하지 않는다
+    // (Gemini f461686). 2시간 방송이면 세션당 ~7200회 쓰기 → DO 쓰기 한도(10만/일)
+    // 를 동시 스트리머 몇 명이면 소진한다. 인메모리 캐시(this.sessionState)에는
+    // 반영되므로 후속 읽기는 최신 위치를 보고, 다음 상태변경 이벤트에서 함께 영속된다.
+    if (event.type !== 'position') await this.ctx.storage.put('session', session);
     this.broadcast({ type: 'player_event', event, transport: nextTransport }, 'control');
   }
 
@@ -428,6 +439,14 @@ export class SessionRoom {
       .some((other) => other !== socket && other.deserializeAttachment()?.role === role);
     this.broadcast({ type: 'presence', role, connected: stillConnected });
     if (!this.hasConnectedPlayer(socket)) {
+      // 플레이어(OBS 위젯)가 모두 끊기면 재생 중이던 상태를 paused 로 내려
+      // 대시보드가 진실을 반영하게 한다(Gemini f461686 — 허공 재생 표시 방지).
+      const session = await this.getSession();
+      if (session && ['loading', 'playing', 'buffering'].includes(session.transport?.status)) {
+        session.transport = { ...session.transport, status: 'paused' };
+        await this.ctx.storage.put('session', session);
+        this.broadcast({ type: 'transport', transport: session.transport }, 'control');
+      }
       await this.ctx.storage.setAlarm(Date.now() + SESSION_GRACE_MS);
     }
   }
@@ -457,6 +476,7 @@ export class SessionRoom {
     const keys = Object.values(session.assets || {}).map((asset) => asset.key);
     if (keys.length) await this.env.MEDIA_BUCKET.delete(keys);
     await this.ctx.storage.deleteAll();
+    this.sessionState = null;
   }
 
   broadcast(message, role) {
