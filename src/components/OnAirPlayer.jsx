@@ -144,10 +144,16 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   useEffect(() => {
     if (!apiBaseUrl || !room || !token) return undefined;
     let disposed = false;
+    // 재접속 지수 백오프(Antigravity cb4c80d): Worker 가 계속 실패(예: DO 한도
+    // 초과)할 때 1.5초 고정 재접속은 Cloudflare 로 지속 신호를 쏘는 폭주가 된다.
+    // min(30초, 1.5×1.5^n) 로 벌리고 onopen 에서 0으로 리셋 — 한도 리셋 시엔
+    // 다음 재시도가 자동 복구한다(좀비 소켓으로 유지하지 않는 이유다).
+    let reconnectAttempts = 0;
     const connect = () => {
       if (disposed) return;
       const socket = new WebSocket(websocketUrl(apiBaseUrl, `/v1/sessions/${room}/ws?role=player&token=${encodeURIComponent(token)}`));
       socketRef.current = socket;
+      socket.onopen = () => { reconnectAttempts = 0; };
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
@@ -166,7 +172,11 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
         }
       };
       socket.onclose = () => {
-        if (!disposed) window.setTimeout(connect, 1500);
+        if (!disposed) {
+          reconnectAttempts += 1;
+          const delay = Math.min(30000, 1500 * 1.5 ** (reconnectAttempts - 1));
+          window.setTimeout(connect, delay);
+        }
       };
       socket.onerror = () => socket.close();
     };
@@ -195,9 +205,10 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   // 최신 힌트에 없는 항목을 회수한다. key={sessionId} 리마운트로 이전 <audio>가
   // 이미 내려간 뒤(커밋 후)라 revoke가 진행 중 재생을 건드리지 않는다.
   useEffect(() => {
-    if (playbackSrcRef.current.sessionId !== transport.sessionId) {
-      playbackSrcRef.current = { sessionId: transport.sessionId, videoId: null, src: '' };
-    }
+    // playbackSrcRef 는 렌더(youtube 분기)가 sessionId당 1회 확정하는 유일한
+    // 권위다. 여기서 리셋하면 effect 가 렌더 뒤에 돌아 blob 결정을 src=''로
+    // 덮어써, 다음 렌더에서 스트리밍으로 되돌아간다(실측). 이 effect 는 캐시
+    // sweep 만 한다.
     sweepPrefetchCache();
     // eslint 참고: sweepPrefetchCache는 ref만 읽는 안정적 로직 — sessionId 전환에만 반응한다.
   }, [transport.sessionId]);

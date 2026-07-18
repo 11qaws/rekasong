@@ -116,6 +116,9 @@ export function useOnAirSession(onEvent) {
     if (!SESSION_BASE_URL || !session) return undefined;
 
     let disposed = false;
+    // 재접속 지수 백오프(Antigravity cb4c80d): Worker 지속 실패 시 1.5초 고정
+    // 재접속은 Cloudflare 로 지속 신호를 쏘는 폭주가 된다. onopen 에서 0 리셋.
+    let reconnectAttempts = 0;
     const connect = () => {
       if (disposed) return;
       setConnectionState('connecting');
@@ -126,6 +129,7 @@ export function useOnAirSession(onEvent) {
       socketRef.current = socket;
 
       socket.onopen = () => {
+        reconnectAttempts = 0;
         if (!disposed) setConnectionState('connected');
       };
       socket.onmessage = (event) => {
@@ -165,7 +169,9 @@ export function useOnAirSession(onEvent) {
           return;
         }
         setConnectionState('reconnecting');
-        reconnectRef.current = window.setTimeout(connect, 1500);
+        reconnectAttempts += 1;
+        const delay = Math.min(30000, 1500 * 1.5 ** (reconnectAttempts - 1));
+        reconnectRef.current = window.setTimeout(connect, delay);
       };
       socket.onerror = () => socket.close();
     };
