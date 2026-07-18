@@ -163,12 +163,21 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     return prepareAudioUrl(apiBaseUrl, transport.song.src, { room, token });
   }, [apiBaseUrl, room, token, transport.song]);
 
+  // 초기 위치 복원을 이 곡(sessionId)당 1회만 적용했는지 기록.
+  const positionAppliedRef = useRef(null);
   const onMediaReady = () => {
     const media = mediaRef.current;
     if (!media) return;
     mediaReadySessionRef.current = transportRef.current.sessionId;
     media.volume = transport.volume / 100;
-    if (transport.position) media.currentTime = transport.position;
+    // 초기 위치(재개 지점) 복원은 곡 로드 시 1회만. canplay 는 seek 마다 다시
+    // 발화하므로, 매번 transport.position 을 다시 적용하면 앞 seek 시
+    // seek→canplay→같은 위치 재적용→seek… 무한 루프가 되어 재생이 rs1 에서
+    // 멈춘다(실측). 이후의 위치 이동은 seek 명령이 직접 담당한다.
+    if (positionAppliedRef.current !== transport.sessionId) {
+      positionAppliedRef.current = transport.sessionId;
+      if (transport.position) media.currentTime = transport.position;
+    }
     if (['loading', 'playing', 'buffering'].includes(transport.status)) {
       media.play().catch(() => sendEvent({ type: 'error', message: '브라우저가 재생을 차단했습니다.' }));
     }
