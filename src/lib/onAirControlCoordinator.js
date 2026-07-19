@@ -1,5 +1,6 @@
 import {
   AUXILIARY_CONTROL_COMMAND_TYPES,
+  CONTROL_COMMAND_TYPES,
   ON_AIR_MESSAGE_FAMILIES,
   ON_AIR_MESSAGE_TYPES,
   ON_AIR_SEQUENCE_NAMESPACES,
@@ -12,6 +13,7 @@ import {
   getOnAirSequenceNamespace,
   validateOnAirMessage,
 } from './onAirProtocol.js';
+import { isSafeOutputControlTakeover } from './outputControlAuthority.js';
 import {
   ON_AIR_V2_CONNECTION_CODES,
   ON_AIR_V2_CONNECTION_STATES,
@@ -58,6 +60,7 @@ export const ON_AIR_CONTROL_COORDINATOR_CODES = Object.freeze({
   TEST_EVENT_STALE: 'control_coordinator_test_event_stale',
   TEST_EVENT_WITHOUT_START: 'control_coordinator_test_event_without_start',
   TEST_EVIDENCE_INTEGRITY: 'control_coordinator_test_evidence_integrity',
+  CONTROL_TAKEOVER_PENDING: 'control_coordinator_takeover_pending',
   SESSION_ENDED: 'control_coordinator_session_ended',
   EPOCH_REGRESSION: 'control_coordinator_epoch_regression',
 });
@@ -258,6 +261,7 @@ export class OnAirControlCoordinator {
   #activeRun = null;
   #pendingSwitch = null;
   #pendingTest = null;
+  #pendingTakeover = null;
   #connectionGeneration = 0;
   #testEvidence = emptyTestEvidence(0);
   #pendingCommands = new Map();
@@ -367,6 +371,7 @@ export class OnAirControlCoordinator {
     this.#snapshotTrusted = false;
     this.#pendingSwitch = null;
     this.#pendingTest = null;
+    this.#pendingTakeover = null;
     this.#connectionGeneration += 1;
     this.#testEvidence = emptyTestEvidence(this.#connectionGeneration);
     this.#connectionState = ON_AIR_V2_CONNECTION_STATES.CONNECTING;
@@ -431,6 +436,7 @@ export class OnAirControlCoordinator {
       activeRun: this.#activeRun,
       pendingSwitch: this.#pendingSwitch,
       pendingTest: this.#pendingTest,
+      pendingTakeover: this.#pendingTakeover,
       testEvidence: this.#testEvidenceSnapshot(),
       pendingCommandIds: [...this.#pendingCommands.keys()].slice(0, 64),
       diagnostics: this.#diagnostics,
@@ -799,6 +805,74 @@ export class OnAirControlCoordinator {
       authenticatedControlInstanceId: this.#connection.identity.controlInstanceId,
     };
     return this.#request(command, { kind: 'emergencyStop' });
+  }
+
+  takeOverControl() {
+    this.#assertUsable();
+    if (this.#connectionState !== ON_AIR_V2_CONNECTION_STATES.READY
+      || !this.#welcome || !this.#playerSnapshot || !this.#snapshotTrusted) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.NOT_READY,
+        { state: this.#connectionState, snapshotTrusted: this.#snapshotTrusted },
+      );
+    }
+    if (this.#isWritableObservation()) {
+      return immutable({ status: 'already_owner' });
+    }
+    if (this.#unknownLock) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
+        { lockCode: this.#unknownLock.code },
+      );
+    }
+    if (this.#pendingTakeover?.status === 'pending') {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.CONTROL_TAKEOVER_PENDING,
+        { commandId: this.#pendingTakeover.commandId },
+      );
+    }
+
+    const lease = this.#playerSnapshot.lease;
+    const desiredStatus = this.#desiredTransport?.status ?? null;
+    const safeToTransfer = isSafeOutputControlTakeover(this.snapshot());
+    if (!safeToTransfer) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.ACTIVE_WORK_PRESENT,
+        {
+          operation: CONTROL_COMMAND_TYPES.TAKEOVER,
+          leaseStatus: lease?.status ?? null,
+          desiredStatus,
+          activeRun: Boolean(this.#activeRun || this.#playerSnapshot.activeFamily),
+          activeTest: Boolean(this.#pendingTest || this.#playerSnapshot.activeCheckId),
+        },
+      );
+    }
+
+    const controlInstanceId = this.#connection.identity.controlInstanceId;
+    const command = {
+      type: CONTROL_COMMAND_TYPES.TAKEOVER,
+      commandId: this.#newId('control-command'),
+      controlInstanceId,
+      expectedControlEpoch: this.#playerSnapshot.controlLease.controlEpoch,
+    };
+    this.#pendingTakeover = immutable({
+      status: 'pending',
+      commandId: command.commandId,
+      expectedControlEpoch: command.expectedControlEpoch,
+      reasonCode: null,
+    });
+    try {
+      return this.#request(command, { kind: 'takeover' });
+    } catch (error) {
+      this.#pendingTakeover = immutable({
+        status: 'failed',
+        commandId: command.commandId,
+        expectedControlEpoch: command.expectedControlEpoch,
+        reasonCode: error?.code || ON_AIR_CONTROL_COORDINATOR_CODES.COMMAND_REQUEST_FAILED,
+      });
+      this.#publish();
+      throw error;
+    }
   }
 
   endSession(options) {
@@ -1552,15 +1626,59 @@ export class OnAirControlCoordinator {
     const commandId = result?.entry?.commandId;
     const metadata = isIdentifier(commandId) ? this.#pendingCommands.get(commandId) : null;
     if (result?.status === 'outcome_unknown' || result?.entry?.state === 'outcome_unknown') {
+      if (metadata?.kind === 'takeover' && this.#pendingTakeover?.commandId === commandId) {
+        this.#pendingTakeover = immutable({
+          ...this.#pendingTakeover,
+          status: 'failed',
+          reasonCode: ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
+        });
+      }
       this.#lockUnknown(ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN, {
         commandId: commandId ?? null,
       });
     } else if (result?.status === 'acknowledged') {
+      if (metadata?.kind === 'takeover' && this.#pendingTakeover?.commandId === commandId) {
+        const acknowledgement = result?.entry?.result;
+        const controlInstanceId = this.#connection.identity.controlInstanceId;
+        const controlEpoch = acknowledgement?.controlEpoch;
+        const validAcknowledgement = acknowledgement?.code === 'control_lease_granted'
+          && acknowledgement?.writableControlInstanceId === controlInstanceId
+          && Number.isSafeInteger(controlEpoch)
+          && controlEpoch >= 0;
+        if (!validAcknowledgement) {
+          this.#pendingTakeover = immutable({
+            ...this.#pendingTakeover,
+            status: 'failed',
+            reasonCode: 'control_takeover_ack_invalid',
+          });
+          this.#lockUnknown(ON_AIR_CONTROL_COORDINATOR_CODES.SNAPSHOT_INVALID, {
+            field: 'control_takeover_ack',
+            code: 'invalid_authority_proof',
+          });
+        } else {
+          this.#maxControlEpoch = Math.max(this.#maxControlEpoch ?? 0, controlEpoch);
+          this.#welcome = immutable({
+            ...this.#welcome,
+            writable: true,
+            controlEpoch,
+            writableControlInstanceId: controlInstanceId,
+            code: 'control_lease_granted',
+          });
+          this.#pendingTakeover = null;
+        }
+      }
       if (metadata?.kind === 'load' && this.#activeRun?.loadCommandId === commandId) {
         this.#activeRun = immutable({ ...this.#activeRun, acknowledged: true });
       }
       if (commandId) this.#pendingCommands.delete(commandId);
     } else if (result?.status === 'rejected') {
+      if (metadata?.kind === 'takeover' && this.#pendingTakeover?.commandId === commandId) {
+        this.#pendingTakeover = immutable({
+          ...this.#pendingTakeover,
+          status: 'failed',
+          reasonCode: result?.entry?.result?.code || 'control_takeover_rejected',
+        });
+      }
       if (metadata?.kind === 'load' && this.#activeRun?.loadCommandId === commandId) {
         this.#activeRun = null;
       }

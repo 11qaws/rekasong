@@ -89,3 +89,40 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
   const fixedKindIndex = wrapper.indexOf('clientKind={PLAYER_CLIENT_KINDS.DASHBOARD_SPEAKER}');
   assert.ok(spreadIndex >= 0 && fixedKindIndex > spreadIndex, 'fixed clientKind must override caller props');
 });
+
+test('dashboard speaker ownership and released-owner reconnect stay authority-gated', async () => {
+  const dashboardPath = fileURLToPath(new URL('../src/pages/Dashboard.jsx', import.meta.url));
+  const source = await readFile(dashboardPath, 'utf8');
+
+  await transformWithOxc(source, dashboardPath, { lang: 'jsx' });
+
+  assert.match(source, /const outputControllerReady = outputControlAuthority\.writable;/);
+  assert.match(
+    source,
+    /\{useOnAirPlayer && shouldHostDashboardSpeaker && onAirSession\?\.room && onAirSession\?\.playerToken && \(/,
+    'only the page-lifetime authority owner may host the dashboard speaker player',
+  );
+  assert.match(source, /const dashboardSpeakerOwnershipRef = useRef\(\{[\s\S]*?sessionKey: null,[\s\S]*?held: false,[\s\S]*?controlInstanceId: null,/);
+  assert.match(source, /else if \(outputControlConflict\s+\|\| \(outputControlUnavailable && outputConnectionState === 'ready'\)\) \{\s+dashboardSpeakerOwnershipRef\.current\.held = false;/);
+  assert.match(source, /new globalThis\.BroadcastChannel\(`rekasong-output-owner:\$\{onAirSession\.room\}`\)/);
+  assert.match(source, /if \(!preservingDashboardSpeakerDuringReconnect\) return undefined;[\s\S]*?\}, 8_000\);/);
+  assert.match(source, /const releasedOwnerRetryRef = useRef\(null\);/);
+  assert.match(
+    source,
+    /if \(releasedOwnerRetryRef\.current === retryKey\) return undefined;\s+releasedOwnerRetryRef\.current = retryKey;/,
+    'the released-owner epoch must be consumed before scheduling reconnect',
+  );
+  const releasedOwnerStart = source.indexOf('const releasedOwnerRetryRef = useRef(null);');
+  const transportRecoveryStart = source.indexOf('// A transport drop is different', releasedOwnerStart);
+  const releasedOwnerRecovery = source.slice(releasedOwnerStart, transportRecoveryStart);
+  assert.equal(
+    [...releasedOwnerRecovery.matchAll(/retryOnAirOutputControl\(\)/g)].length,
+    1,
+    'released-owner recovery has one explicit retry site and no reconnect loop',
+  );
+  assert.match(
+    source,
+    /if \(outputControl\.snapshot\?\.ready === true\) \{[\s\S]*?window\.setTimeout\(\(\) => \{[\s\S]*?attempts = 0;[\s\S]*?\}, 10_000\);/,
+    'a flapping READY state must not replenish the bounded reconnect budget immediately',
+  );
+});

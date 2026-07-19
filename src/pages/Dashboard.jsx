@@ -12,12 +12,19 @@ import {
   isConfirmedDiscardStop,
 } from '../lib/dashboardPlaybackSafety';
 import { onAirSessionRecoveryGate } from '../lib/onAirSessionRecoveryGate';
+import {
+  OUTPUT_CONTROL_AUTHORITY_STATES,
+  deriveOutputControlAuthority,
+  isSafeOutputControlTakeover,
+} from '../lib/outputControlAuthority';
 import { getOutputMessage as t } from '../copy/outputMessages';
 import {
   YOUTUBE_ID_PATTERN,
   fetchPrepareStatus,
   isPrepareConfigured,
   prepareBlockMessage,
+  prepareFailureInfo,
+  prepareSessionIdentity,
   requestPrepare,
   songPrepareState
 } from '../lib/preparePipeline';
@@ -32,6 +39,7 @@ import './Dashboard.css';
 const DashboardSpeakerPlayerV2 = lazy(() => import('../components/DashboardSpeakerPlayerV2'));
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
+const EMPTY_PREPARE_STATES = Object.freeze({});
 
 const toDisplaySong = (song) => {
   if (!song?.id || !song?.title) return null;
@@ -123,8 +131,115 @@ export default function Dashboard() {
   });
   const sendOnAirCommand = outputControl.sendCommand;
   const selectOnAirOutputMode = outputControl.selectOutputMode;
+  const retryOnAirOutputControl = outputControl.retryConnection;
   const playbackTransitionState = outputControl.playbackTransitionState;
-  const outputControllerReady = Boolean(outputControl.snapshot?.ready && outputControl.snapshot?.writable);
+  const outputControlAuthority = deriveOutputControlAuthority(outputControl.snapshot);
+  const outputConnectionState = outputControl.snapshot?.state ?? 'idle';
+  const outputControllerReady = outputControlAuthority.writable;
+  const outputControlTakeoverPending = outputControl.snapshot?.pendingTakeover?.status === 'pending';
+  const outputControlConflict = outputControlTakeoverPending
+    || outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.OTHER_OWNER;
+  const outputControlUnavailable = !outputControlTakeoverPending
+    && outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.UNAVAILABLE;
+  const outputControlSafeToTakeOver = isSafeOutputControlTakeover(outputControl.snapshot);
+
+  // A control-socket rebuild must not tear down a healthy speaker player that
+  // this page already owned. A page that has never held authority still cannot
+  // create a second speaker candidate, and an authoritative foreign-owner or
+  // unknown-ready observation immediately retires the old player.
+  const dashboardSpeakerOwnershipRef = useRef({
+    sessionKey: null,
+    held: false,
+    controlInstanceId: null,
+    controlEpoch: null,
+    retiredAtControlEpoch: null,
+  });
+  const dashboardSpeakerOwnerChannelRef = useRef(null);
+  const [, forceDashboardSpeakerOwnershipRender] = useState(0);
+  const outputControlSessionKey = onAirSession?.room && onAirSession?.controlToken
+    ? `${onAirSession.room}:${onAirSession.controlToken}`
+    : null;
+  if (dashboardSpeakerOwnershipRef.current.sessionKey !== outputControlSessionKey) {
+    dashboardSpeakerOwnershipRef.current = {
+      sessionKey: outputControlSessionKey,
+      held: false,
+      controlInstanceId: null,
+      controlEpoch: null,
+      retiredAtControlEpoch: null,
+    };
+  }
+  if (!outputControlSessionKey || ['invalid', 'ended'].includes(onAirSessionState)) {
+    dashboardSpeakerOwnershipRef.current.held = false;
+  } else if (outputControllerReady) {
+    const observedControlEpoch = outputControl.snapshot?.playerSnapshot?.controlLease?.controlEpoch;
+    const retiredAtControlEpoch = dashboardSpeakerOwnershipRef.current.retiredAtControlEpoch;
+    const authorityAdvanced = Number.isSafeInteger(observedControlEpoch)
+      && Number.isSafeInteger(retiredAtControlEpoch)
+      && observedControlEpoch > retiredAtControlEpoch;
+    if (retiredAtControlEpoch === null || authorityAdvanced) {
+      dashboardSpeakerOwnershipRef.current.held = true;
+      dashboardSpeakerOwnershipRef.current.retiredAtControlEpoch = null;
+    }
+    dashboardSpeakerOwnershipRef.current.controlInstanceId =
+      outputControl.snapshot?.welcome?.controlInstanceId ?? null;
+    dashboardSpeakerOwnershipRef.current.controlEpoch =
+      Number.isSafeInteger(observedControlEpoch) ? observedControlEpoch : null;
+  } else if (outputControlConflict
+    || (outputControlUnavailable && outputConnectionState === 'ready')) {
+    dashboardSpeakerOwnershipRef.current.held = false;
+  }
+  const shouldHostDashboardSpeaker = dashboardSpeakerOwnershipRef.current.held;
+  const dashboardSpeakerControlInstanceId =
+    dashboardSpeakerOwnershipRef.current.controlInstanceId;
+  const preservingDashboardSpeakerDuringReconnect = Boolean(
+    shouldHostDashboardSpeaker && !outputControllerReady && outputControlSessionKey,
+  );
+
+  // Native cross-tab notice retires a disconnected former owner's speaker as
+  // soon as another tab becomes authoritative. The timer is the lightweight
+  // fallback for browsers without BroadcastChannel and bounds orphan lifetime.
+  useEffect(() => {
+    if (!onAirSession?.room || typeof globalThis.BroadcastChannel !== 'function') return undefined;
+    const channel = new globalThis.BroadcastChannel(`rekasong-output-owner:${onAirSession.room}`);
+    dashboardSpeakerOwnerChannelRef.current = channel;
+    channel.onmessage = (event) => {
+      const nextOwnerId = event?.data?.controlInstanceId;
+      const current = dashboardSpeakerOwnershipRef.current;
+      if (!current.held || typeof nextOwnerId !== 'string'
+        || nextOwnerId === current.controlInstanceId) return;
+      current.held = false;
+      current.retiredAtControlEpoch = Number.isSafeInteger(event?.data?.controlEpoch)
+        ? event.data.controlEpoch
+        : current.controlEpoch;
+      forceDashboardSpeakerOwnershipRender((revision) => revision + 1);
+    };
+    return () => {
+      if (dashboardSpeakerOwnerChannelRef.current === channel) {
+        dashboardSpeakerOwnerChannelRef.current = null;
+      }
+      channel.close();
+    };
+  }, [onAirSession?.room]);
+
+  useEffect(() => {
+    if (!outputControllerReady || !dashboardSpeakerControlInstanceId) return;
+    dashboardSpeakerOwnerChannelRef.current?.postMessage({
+      controlInstanceId: dashboardSpeakerControlInstanceId,
+      controlEpoch: dashboardSpeakerOwnershipRef.current.controlEpoch,
+    });
+  }, [dashboardSpeakerControlInstanceId, outputControllerReady]);
+
+  useEffect(() => {
+    if (!preservingDashboardSpeakerDuringReconnect) return undefined;
+    const ownershipKey = outputControlSessionKey;
+    const timer = window.setTimeout(() => {
+      const current = dashboardSpeakerOwnershipRef.current;
+      if (current.sessionKey !== ownershipKey || !current.held) return;
+      current.held = false;
+      forceDashboardSpeakerOwnershipRender((revision) => revision + 1);
+    }, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [outputControlSessionKey, preservingDashboardSpeakerDuringReconnect]);
   const actualOutputMode = outputControl.actualOutputMode;
   const outputSwitchStatus = outputControl.outputSwitchState?.status || 'idle';
   const selectedOutputMode = outputControl.outputSwitchState?.targetMode
@@ -143,8 +258,12 @@ export default function Dashboard() {
     && activeOutputCandidates.length === 1
     && activeOutputCandidates[0] === activeOutputLease?.leaseTarget
   );
-  const outputSwitchUiState = !outputControllerReady
-    ? 'connecting'
+  const outputSwitchUiState = outputControlConflict
+    ? 'conflict'
+    : outputControlUnavailable
+      ? 'blocked'
+      : !outputControllerReady
+        ? 'connecting'
     : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
       ? 'switching'
       : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
@@ -161,6 +280,81 @@ export default function Dashboard() {
     && outputControl.snapshot?.pendingTest === null
     && ['inactive', 'ready'].includes(activeOutputLease?.status)
   );
+
+  // A follower can receive a read-only welcome just before the old owner closes.
+  // The Worker then publishes owner=null, but the welcome cannot promote itself.
+  // Re-negotiate exactly once per released-owner epoch; no playback command is
+  // replayed, and a still-connected foreign owner never triggers this path.
+  const releasedOwnerRetryRef = useRef(null);
+  useEffect(() => {
+    if (!outputControlAuthority.shouldRetryReleasedOwner || !onAirSession?.room) return undefined;
+    const retryKey = `${onAirSession.room}:${outputControlAuthority.controlEpoch ?? 'unknown'}`;
+    if (releasedOwnerRetryRef.current === retryKey) return undefined;
+    releasedOwnerRetryRef.current = retryKey;
+    const timer = window.setTimeout(() => {
+      try {
+        retryOnAirOutputControl();
+      } catch {
+        // The explicit unavailable state remains visible; never spin retries.
+      }
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [
+    onAirSession?.room,
+    retryOnAirOutputControl,
+    outputControlAuthority.controlEpoch,
+    outputControlAuthority.shouldRetryReleasedOwner,
+  ]);
+
+  // A transport drop is different from another-tab ownership. Rebuild the
+  // coordinator a few times with bounded delays, preserving the page identity
+  // and never replaying an unresolved playback/output command.
+  const reconnectPolicyRef = useRef({ sessionKey: null, attempts: 0 });
+  useEffect(() => {
+    const sessionKey = onAirSession?.room && onAirSession?.controlToken
+      ? `${onAirSession.room}:${onAirSession.controlToken}`
+      : null;
+    if (reconnectPolicyRef.current.sessionKey !== sessionKey) {
+      reconnectPolicyRef.current = { sessionKey, attempts: 0 };
+    }
+    if (outputControl.snapshot?.ready === true) {
+      // Do not replenish the budget on a connection that flaps READY→closed.
+      // Only a genuinely stable interval starts a fresh recovery window.
+      const stableTimer = window.setTimeout(() => {
+        if (reconnectPolicyRef.current.sessionKey === sessionKey) {
+          reconnectPolicyRef.current.attempts = 0;
+        }
+      }, 10_000);
+      return () => window.clearTimeout(stableTimer);
+    }
+    if (!sessionKey || !['disconnected', 'superseded', 'closed'].includes(outputConnectionState)) {
+      return undefined;
+    }
+    const delays = [350, 1_200, 3_000];
+    const attempt = reconnectPolicyRef.current.attempts;
+    if (attempt >= delays.length) return undefined;
+    reconnectPolicyRef.current.attempts += 1;
+    const timer = window.setTimeout(() => {
+      try {
+        retryOnAirOutputControl();
+      } catch {
+        // The settings panel keeps the exact disconnected state and a manual
+        // retry action visible after bounded automatic recovery is exhausted.
+      }
+    }, delays[attempt]);
+    return () => window.clearTimeout(timer);
+  }, [
+    onAirSession?.controlToken,
+    onAirSession?.room,
+    outputConnectionState,
+    retryOnAirOutputControl,
+    outputControl.snapshot?.ready,
+  ]);
+
+  const retryOutputControlNow = useCallback(() => {
+    reconnectPolicyRef.current.attempts = 0;
+    return retryOnAirOutputControl();
+  }, [retryOnAirOutputControl]);
 
   // Audio Controls
   const [isPlaying, setIsPlaying] = useState(false);
@@ -301,44 +495,116 @@ export default function Dashboard() {
   stagedItemRef.current = stagedItem;
 
   // Stage 6c (계약 §5): videoId별 준비 상태 — Worker 전역 캐시의 로컬 거울.
-  // 게이팅의 근거이므로 네트워크 실패는 'unreachable'로만 기록되고, 어떤 경로로도
-  // 실제 응답 없이 'ready'가 되지 않는다(INV-6).
-  const [prepareStates, setPrepareStates] = useState({});
-  const prepareStatesRef = useRef(prepareStates);
-  prepareStatesRef.current = prepareStates;
+  // 게이팅의 근거이므로 연결 실패는 원인별 상태로 기록하되, 어떤 경로로도 실제
+  // 응답 없이 'ready'가 되지 않는다(INV-6).
+  const [storedPrepareStates, setPrepareStates] = useState({});
   // POST /v1/prepare는 멱등이지만, 같은 곡에 대한 반복 요청 소음을 억제한다.
   const prepareRequestedRef = useRef(new Set());
+  const prepareSessionKey = prepareSessionIdentity(onAirSession);
+  const prepareSessionKeyRef = useRef(prepareSessionKey);
+  // room/token이 바뀐 첫 render부터 이전 세션의 ready 증거를 숨긴다. effect가
+  // 상태를 비우기 전 한 프레임도 오래된 준비 결과로 재생을 열지 않는다.
+  const prepareStates = prepareSessionKeyRef.current === prepareSessionKey
+    ? storedPrepareStates
+    : EMPTY_PREPARE_STATES;
+  const prepareStatesRef = useRef(prepareStates);
+  prepareStatesRef.current = prepareStates;
+  const renderedPrepareSessionKeyRef = useRef(prepareSessionKey);
+  renderedPrepareSessionKeyRef.current = prepareSessionKey;
+  const prepareGenerationRef = useRef(0);
+  const onAirSessionStateRef = useRef(onAirSessionState);
+  onAirSessionStateRef.current = onAirSessionState;
   // 폴링 interval(watchedVideoIds 의존)이 세션 갱신마다 재설치되지 않게 하는 거울.
   const ensureSessionRef = useRef(onAir.ensureSession);
   ensureSessionRef.current = onAir.ensureSession;
 
-  const notePrepare = (videoId, info) => {
+  // 인증 수명이 바뀌면 이전 세션의 요청 표식과 화면 상태를 함께 폐기한다. 세대가
+  // 다른 비동기 응답은 아래 notePrepare에서 무시해 새 세션을 덮어쓰지 못한다.
+  const resetPrepareSession = useCallback((nextSessionKey) => {
+    if (prepareSessionKeyRef.current === nextSessionKey) return prepareGenerationRef.current;
+    prepareSessionKeyRef.current = nextSessionKey;
+    prepareGenerationRef.current += 1;
+    prepareRequestedRef.current.clear();
+    prepareStatesRef.current = {};
+    setPrepareStates({});
+    return prepareGenerationRef.current;
+  }, []);
+
+  useEffect(() => {
+    resetPrepareSession(prepareSessionKey);
+  }, [prepareSessionKey, resetPrepareSession]);
+
+  const prepareConnectionStateForCurrentAuth = useCallback(() => (
+    prepareSessionKeyRef.current === renderedPrepareSessionKeyRef.current
+      ? onAirSessionStateRef.current
+      : ''
+  ), []);
+
+  const notePrepare = useCallback((videoId, info, generation = prepareGenerationRef.current) => {
+    if (generation !== prepareGenerationRef.current) return;
+    const nextInfo = { ...info, checkedAt: Date.now() };
+    prepareStatesRef.current = {
+      ...prepareStatesRef.current,
+      [videoId]: nextInfo
+    };
     setPrepareStates((previous) => ({
       ...previous,
-      [videoId]: { ...info, checkedAt: Date.now() }
+      [videoId]: nextInfo
     }));
-  };
+  }, []);
 
   // prepare API는 room+playerToken 게이트다(무인증이면 아무나 VPS에 다운로드를
   // 큐잉해 봇월 압력이 폭증한다). 세션이 아직 없으면 여기서 만든다 — 스테이징
   // 시점에 세션을 확보하는 것이 준비 파이프라인의 전제다.
-  const getPrepareAuth = async () => {
+  const getPrepareAuth = useCallback(async () => {
     const activeSession = await ensureSessionRef.current();
-    return { room: activeSession.room, token: activeSession.playerToken };
-  };
+    const sessionKey = prepareSessionIdentity(activeSession);
+    if (prepareSessionKeyRef.current && sessionKey !== prepareSessionKeyRef.current) {
+      return {
+        auth: { room: activeSession.room, token: activeSession.playerToken },
+        generation: prepareGenerationRef.current,
+        sessionKey,
+        stale: true
+      };
+    }
+    const generation = resetPrepareSession(sessionKey);
+    return {
+      auth: { room: activeSession.room, token: activeSession.playerToken },
+      generation,
+      sessionKey,
+      stale: false
+    };
+  }, [resetPrepareSession]);
 
-  const ensurePrepareRequested = (videoId, { force = false } = {}) => {
+  const ensurePrepareRequested = useCallback((videoId, { force = false } = {}) => {
     if (!isPrepareConfigured() || !videoId || prepareRequestedRef.current.has(videoId)) return;
+    let requestGeneration = prepareGenerationRef.current;
     prepareRequestedRef.current.add(videoId);
     getPrepareAuth()
-      .then((auth) => requestPrepare(videoId, auth, { force }))
-      .then((info) => notePrepare(videoId, info))
-      .catch(() => {
+      .then(async ({ auth, generation, sessionKey, stale }) => {
+        if (stale) {
+          if (requestGeneration === prepareGenerationRef.current) {
+            prepareRequestedRef.current.delete(videoId);
+          }
+          return;
+        }
+        requestGeneration = generation;
+        if (generation !== prepareGenerationRef.current
+          || sessionKey !== prepareSessionKeyRef.current) return;
+        // getPrepareAuth가 새 세션을 채택하며 집합을 비웠을 수 있다.
+        prepareRequestedRef.current.add(videoId);
+        const info = await requestPrepare(videoId, auth, { force });
+        notePrepare(videoId, info, generation);
+      })
+      .catch((error) => {
+        if (requestGeneration !== prepareGenerationRef.current) return;
         // 다음 폴링 틱이 다시 요청할 수 있게 예약을 되돌린다.
         prepareRequestedRef.current.delete(videoId);
-        notePrepare(videoId, { status: 'unreachable' });
+        notePrepare(videoId, prepareFailureInfo(error, {
+          sessionState: prepareConnectionStateForCurrentAuth()
+        }), requestGeneration);
       });
-  };
+  }, [getPrepareAuth, notePrepare, prepareConnectionStateForCurrentAuth]);
 
   // 준비를 지켜볼 YouTube 곡: 스테이징(준비 시작 시점) + 대기열 + 현재 곡.
   // 문자열로 합쳐 effect 의존성을 안정화한다(순서·중복 무관).
@@ -353,38 +619,82 @@ export default function Dashboard() {
     return [...ids].sort().join(' ');
   }, [stagedItem, state?.queue, currentEntry]);
 
+  // prepare 게이트의 401 하나만으로는 무효/종료를 구분할 수 없으므로, 별도 세션
+  // status 검증이 확정한 결과를 기존 비-ready 항목에 즉시 반영한다.
+  useEffect(() => {
+    if (!['invalid', 'ended'].includes(onAirSessionState)) return;
+    const replacement = prepareFailureInfo(null, { sessionState: onAirSessionState });
+    setPrepareStates((previous) => {
+      let changed = false;
+      const next = Object.fromEntries(Object.entries(previous).map(([videoId, info]) => {
+        if (info?.status === 'ready' || info?.status === 'failed') return [videoId, info];
+        changed = true;
+        return [videoId, { ...replacement, checkedAt: Date.now() }];
+      }));
+      if (!changed) return previous;
+      prepareStatesRef.current = next;
+      return next;
+    });
+  }, [onAirSessionState, prepareSessionKey]);
+
   // 스테이징 시점에 준비를 시작하고(§5 — 방송까지의 시간을 전부 준비에 쓴다),
   // ready·영구 실패 전까지 폴링한다. failed도 계속 본다 — Worker가 백오프로
-  // 재시도해 ready가 될 수 있다(§2). 서버 미응답은 틱마다 짧게 실패하고 끝난다.
+  // 재시도해 ready가 될 수 있다(§2). 일시 실패는 느린 주기로 다시 확인한다.
   useEffect(() => {
     if (!isPrepareConfigured() || !watchedVideoIds) return undefined;
     const ids = watchedVideoIds.split(' ');
     ids.forEach((videoId) => ensurePrepareRequested(videoId));
+
+    const pollPrepareStatus = async (videoId) => {
+      let pollGeneration = prepareGenerationRef.current;
+      try {
+        const { auth, generation, sessionKey, stale } = await getPrepareAuth();
+        pollGeneration = generation;
+        if (stale
+          || generation !== prepareGenerationRef.current
+          || sessionKey !== prepareSessionKeyRef.current) return;
+        const next = await fetchPrepareStatus(videoId, auth);
+        if (generation !== prepareGenerationRef.current) return;
+        // Worker의 작업 레코드가 정리돼 absent가 되면 GET만 반복해서는 영원히
+        // '준비 중'에 갇힌다 — 예약을 지워 다음 틱이 다시 큐잉하게 한다.
+        if (next.status === 'absent') prepareRequestedRef.current.delete(videoId);
+        notePrepare(videoId, next, generation);
+      } catch (error) {
+        if (pollGeneration !== prepareGenerationRef.current) return;
+        notePrepare(videoId, prepareFailureInfo(error, {
+          sessionState: prepareConnectionStateForCurrentAuth()
+        }), pollGeneration);
+      }
+    };
+
     const interval = setInterval(() => {
       ids.forEach((videoId) => {
         const info = prepareStatesRef.current[videoId];
         if (info?.status === 'ready') return;
         if (info?.failureKind === 'unavailable') return; // 영구 실패 — 재폴링 무의미(§2)
-        // 연결 불가는 폴링 주기를 늘려(15초) 실패 요청 소음을 줄인다.
-        if (info?.status === 'unreachable' && Date.now() - (info.checkedAt || 0) < 15000) return;
+        // 무효/종료 인증은 같은 토큰으로 재요청하지 않는다. 새 room/token이 오면
+        // prepareSessionKey effect가 즉시 비우고 다시 시작한다.
+        if (info?.status === 'session_invalid' || info?.status === 'session_ended') return;
+        // 일시 장애는 폴링 주기를 늘려(15초) 실패 요청 소음을 줄인다.
+        if (info?.status === 'temporarily_unavailable'
+          && Date.now() - (info.checkedAt || 0) < 15000) return;
         if (!prepareRequestedRef.current.has(videoId)) {
           ensurePrepareRequested(videoId);
           return;
         }
-        getPrepareAuth()
-          .then((auth) => fetchPrepareStatus(videoId, auth))
-          .then((next) => {
-            // Worker의 작업 레코드가 정리돼 absent가 되면 GET만 반복해서는 영원히
-            // '준비 중'에 갇힌다 — 예약을 지워 다음 틱이 다시 큐잉하게 한다.
-            if (next.status === 'absent') prepareRequestedRef.current.delete(videoId);
-            notePrepare(videoId, next);
-          })
-          .catch(() => notePrepare(videoId, { status: 'unreachable' }));
+        void pollPrepareStatus(videoId);
       });
     }, 5000);
     return () => clearInterval(interval);
     // eslint 참고: ensurePrepareRequested/notePrepare는 ref·setState만 쓰는 안정적 로직.
-  }, [watchedVideoIds]);
+  }, [
+    ensurePrepareRequested,
+    getPrepareAuth,
+    notePrepare,
+    prepareConnectionStateForCurrentAuth,
+    prepareSessionKey,
+    watchedVideoIds,
+  ]);
 
   // 준비 실패 곡의 명시적 '다시 시도' — force:true로 백오프·영구 실패(unavailable)를
   // 넘어 즉시 재큐잉한다. 사용자가 의도한 1회 행동에만 열리는 문이다.
@@ -409,9 +719,15 @@ export default function Dashboard() {
 
   const handleRetryPrepare = async (videoId) => {
     if (!videoId) return;
-    if (onAirSessionState === 'invalid') {
+    const prepareStatus = prepareStatesRef.current[videoId]?.status;
+    const prepareAuthNeedsRefresh = prepareStatus === 'session_invalid'
+      || prepareStatus === 'session_ended';
+    if (prepareAuthNeedsRefresh
+      || onAirSessionState === 'invalid'
+      || onAirSessionState === 'ended') {
       try {
-        await recoverOnAirConnection();
+        const freshSession = await recoverOnAirConnection();
+        resetPrepareSession(prepareSessionIdentity(freshSession));
       } catch (error) {
         showToast(error?.message || t('obs.setup.recovery.failed'), 'error');
         return;
@@ -421,10 +737,11 @@ export default function Dashboard() {
     setPrepareStates((previous) => {
       const next = { ...previous };
       delete next[videoId];
+      prepareStatesRef.current = next;
       return next;
     });
     ensurePrepareRequested(videoId, { force: true });
-    showToast('곡 준비를 다시 시도합니다.', 'info');
+    showToast(t('prepare.action.retry.notice'), 'info');
   };
 
   // ── 프리버퍼(pre-buffer) 힌트 ──────────────────────────────────────────
@@ -792,7 +1109,7 @@ export default function Dashboard() {
   // 호출자가 catch→토스트로 처리한다(재생이 안 되는 편이 광고보다 낫다).
   const beginPlaybackRun = (entry) => {
     if (entry.song?.type === 'youtube' && getYoutubeOutputSafety(entry) !== 'safe') {
-      throw new Error(prepareBlockMessage(songPrepareState(entry.song, prepareStatesRef.current).kind));
+      throw new Error(prepareBlockMessage(songPrepareState(entry.song, prepareStatesRef.current)));
     }
     // 진실성 게이트(모든 재생 시작 경로 공통 — 대기열 바로 재생·재시도·자동 다음
     // 곡 포함): player 위젯이 실제로 연결돼 있지 않으면 run 을 만들지 않는다.
@@ -938,7 +1255,7 @@ export default function Dashboard() {
       ? songPrepareState({ type: 'youtube', src: stagedItem.src }, prepareStates)
       : { kind: 'ready' };
     if (stagedPrepare.kind === 'blocked' || stagedPrepare.kind === 'unavailable') {
-      showToast(prepareBlockMessage(stagedPrepare.kind), 'error');
+      showToast(prepareBlockMessage(stagedPrepare), 'error');
       return;
     }
 
@@ -1660,10 +1977,16 @@ export default function Dashboard() {
             outputMode={selectedOutputMode}
             actualOutputMode={actualOutputMode}
             outputView={outputControl.outputView}
+            outputControlConflict={outputControlConflict}
+            outputControlUnavailable={outputControlUnavailable}
+            outputControlSafeToTakeOver={outputControlSafeToTakeOver}
+            outputControlTakeover={outputControl.snapshot?.pendingTakeover ?? null}
             outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
             onSelectOutputMode={outputControllerReady ? handleSelectOutputMode : undefined}
             onEmergencyStopOutput={outputControl.emergencyStop}
+            onTakeOverOutputControl={outputControl.takeOverControl}
+            onRetryOutputControl={retryOutputControlNow}
           />
         </ErrorBoundary>
         </div>
@@ -1736,7 +2059,7 @@ export default function Dashboard() {
           모드에서는 beginPlaybackRun이 YouTube run 생성 자체를 막는다(blocked).
           iframe 등 광고가 나갈 수 있는 폴백 경로는 존재하지 않는다. */}
       <div className="live-players-hidden">
-        {useOnAirPlayer && onAirSession?.room && onAirSession?.playerToken && (
+        {useOnAirPlayer && shouldHostDashboardSpeaker && onAirSession?.room && onAirSession?.playerToken && (
           <Suspense fallback={null}>
             <DashboardSpeakerPlayerV2
               apiBaseUrl={onAir.baseUrl}

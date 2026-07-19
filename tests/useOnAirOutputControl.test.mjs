@@ -204,6 +204,11 @@ class FakeCoordinator {
     return { status: 'created', operation: 'emergencyStop' };
   }
 
+  takeOverControl() {
+    this.calls.push(['takeOverControl']);
+    return { status: 'created', operation: 'takeOverControl' };
+  }
+
   load(value) {
     this.loadCalls += 1;
     this.calls.push(['load', value]);
@@ -278,6 +283,20 @@ test('owns one coordinator and connect is idempotent until explicit retry', () =
   assert.equal(coordinators[0].connectCalls, 1);
   assert.equal(transportOptions[0].transport.sessionId, 'room / one');
   assert.match(transportOptions[0].transport.url, /protocol=2/);
+});
+
+test('explicit authority takeover delegates once without replaying route or playback commands', () => {
+  const { controller, coordinators } = createHarness();
+
+  const result = controller.takeOverControl();
+
+  assert.deepEqual(result, { status: 'created', operation: 'takeOverControl' });
+  assert.deepEqual(coordinators[0].calls, [['takeOverControl']]);
+  assert.equal(
+    coordinators[0].calls.some(([name]) => ['activateOutput', 'load', 'play'].includes(name)),
+    false,
+  );
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
 });
 
 test('registry preserves one session owner across StrictMode cleanup/setup', () => {
@@ -1072,7 +1091,7 @@ test('requires exact load identity and rejects stale legacy run targeting', () =
 
 test('explicit retry disposes the old coordinator before creating a fresh owner', () => {
   let initial = coordinatorSnapshot();
-  const { controller, coordinators } = createHarness(initial, {
+  const { controller, coordinators, transportOptions } = createHarness(initial, {
     snapshotFactory: () => initial,
   });
   controller.selectOutputMode('speaker');
@@ -1083,6 +1102,12 @@ test('explicit retry disposes the old coordinator before creating a fresh owner'
   assert.equal(coordinators.length, 2);
   assert.equal(coordinators[0].disposed, true);
   assert.equal(coordinators[1].connectCalls, 1);
+  assert.match(transportOptions[0].transport.identity.controlInstanceId, /^control-/);
+  assert.equal(
+    transportOptions[1].transport.identity.controlInstanceId,
+    transportOptions[0].transport.identity.controlInstanceId,
+    'a socket rebuild keeps the page-lifetime control identity',
+  );
   assert.equal(coordinators[1].calls.some(([name]) => ['activateOutput', 'load', 'play'].includes(name)), false);
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
 });

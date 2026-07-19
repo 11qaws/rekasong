@@ -2,30 +2,51 @@ import React, { useState } from 'react';
 import { AlertTriangle, ArrowUpCircle, Check, GripVertical, ListMusic, Loader2, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createManualEntry, createQueueEntry, isPlayableSongDef } from '../lib/queueEntry';
-import { songPrepareState, prepareBlockMessage } from '../lib/preparePipeline';
+import { getOutputMessage as t } from '../copy/outputMessages';
+import { songPrepareState } from '../lib/preparePipeline';
 
 // Stage 6c(계약 §5): 대기열 행의 준비 상태 표시 정의. 실패가 방송 전에 눈에
 // 띄는 것이 이 표시의 존재 이유다 — ready는 조용히, 실패만 강조한다.
 // 로컬 파일 등 준비가 필요 없는 소스도 같은 '준비됨'으로 표시해 소스가 달라도
 // 동일하게 동작한다는 확신을 준다(songPrepareState가 단일 판정 지점).
 const PREPARE_BADGES = {
-  ready: { label: '준비됨', title: '방송 재생 준비가 끝났습니다.' },
-  preparing: { label: '준비 중', title: '방송용 오디오를 준비하는 중입니다. 준비가 끝나면 재생할 수 있습니다.' },
-  failed: { label: '준비 실패', title: prepareBlockMessage('failed') },
-  unavailable: { label: '재생 불가', title: prepareBlockMessage('unavailable') },
-  unreachable: { label: '서버 연결 대기', title: prepareBlockMessage('unreachable') },
-  blocked: { label: '재생 불가', title: prepareBlockMessage('blocked') }
+  ready: { labelKey: 'prepare.badge.ready.label', titleKey: 'prepare.badge.ready.title' },
+  preparing: { labelKey: 'prepare.badge.preparing.label', titleKey: 'prepare.badge.preparing.title' },
+  failed: { labelKey: 'prepare.badge.failed.label', titleKey: 'prepare.block.failed' },
+  unavailable: { labelKey: 'prepare.badge.unavailable.label', titleKey: 'prepare.block.unavailable' },
+  session_invalid: { labelKey: 'prepare.badge.sessionInvalid.label', titleKey: 'prepare.block.sessionInvalid' },
+  session_ended: { labelKey: 'prepare.badge.sessionEnded.label', titleKey: 'prepare.block.sessionEnded' },
+  network_error: { labelKey: 'prepare.badge.networkError.label', titleKey: 'prepare.block.networkError' },
+  server_error: { labelKey: 'prepare.badge.serverError.label', titleKey: 'prepare.block.serverError' },
+  temporarily_unavailable: {
+    labelKey: 'prepare.badge.temporarilyUnavailable.label',
+    titleKey: 'prepare.block.temporarilyUnavailable'
+  },
+  unreachable: {
+    labelKey: 'prepare.badge.temporarilyUnavailable.label',
+    titleKey: 'prepare.block.temporarilyUnavailable'
+  },
+  blocked: { labelKey: 'prepare.badge.blocked.label', titleKey: 'prepare.block.blocked' }
 };
 
-function PrepareBadge({ kind, reason }) {
-  const badge = PREPARE_BADGES[kind] || PREPARE_BADGES.preparing;
+const prepareBadgeKind = (state) => state?.connectionKind || state?.kind || 'preparing';
+
+function PrepareBadge({ state }) {
+  const kind = state?.kind || 'preparing';
+  const badgeKind = prepareBadgeKind(state);
+  const badge = PREPARE_BADGES[badgeKind] || PREPARE_BADGES.preparing;
+  const message = t(badge.titleKey);
+  const title = state?.reason
+    ? t('prepare.badge.reasonDetail', { message, reason: state.reason })
+    : message;
+  const isConnectionDelay = kind === 'unreachable';
   return (
-    <span className={`queue-prepare-badge is-${kind}`} title={reason ? `${badge.title} (${reason})` : badge.title}>
+    <span className={`queue-prepare-badge is-${isConnectionDelay ? 'unreachable' : kind}`} title={title}>
       {kind === 'ready' && <Check size={11} />}
       {kind === 'preparing' && <Loader2 size={11} className="spinner" />}
       {(kind === 'failed' || kind === 'unavailable' || kind === 'blocked') && <AlertTriangle size={11} />}
-      {kind === 'unreachable' && <Loader2 size={11} className="spinner" />}
-      {badge.label}
+      {isConnectionDelay && <Loader2 size={11} className="spinner" />}
+      {t(badge.labelKey)}
     </span>
   );
 }
@@ -92,21 +113,23 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
   };
 
   return (
-    <section className="panel queue-panel glass-card" aria-label="다음 곡 대기열">
+    <section className="panel queue-panel glass-card" aria-label={t('queue.region.label')}>
       <div className="queue-panel-header">
-        <div className="playback-heading"><ListMusic size={17} /> 다음 곡 대기열 <span>{queue.length}</span></div>
-        {queue.length > 0 && <button type="button" onClick={() => setSharedState((previous) => ({ ...previous, queue: [] }))} className="btn-icon btn-icon-danger" title="대기열 전체 비우기"><Trash2 size={15} /></button>}
+        <div className="playback-heading"><ListMusic size={17} /> {t('queue.heading')} <span>{queue.length}</span></div>
+        {queue.length > 0 && <button type="button" onClick={() => setSharedState((previous) => ({ ...previous, queue: [] }))} className="btn-icon btn-icon-danger" title={t('queue.action.clear.title')}><Trash2 size={15} /></button>}
       </div>
       <details className="playback-options">
-        <summary>자동 다음 곡 {autoPlayNext ? '켜짐' : '꺼짐'}</summary>
+        <summary>{t('queue.autoplay.summary', {
+          state: t(autoPlayNext ? 'queue.autoplay.on' : 'queue.autoplay.off')
+        })}</summary>
         <label>
           <input type="checkbox" checked={autoPlayNext} onChange={(event) => setSharedState((previous) => ({ ...previous, autoPlayNext: event.target.checked }))} />
-          <span>현재 곡이 끝나면 다음 곡 재생</span>
+          <span>{t('queue.autoplay.label')}</span>
         </label>
       </details>
       <div className="queue-list">
         {queue.length === 0 ? (
-          <div className="queue-empty">다음에 부를 곡이 없습니다.</div>
+          <div className="queue-empty">{t('queue.empty')}</div>
         ) : (
           <AnimatePresence initial={false}>
             {queue.map((entry, index) => {
@@ -115,6 +138,8 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
               // 불가한 버튼을 남겨 두는 대신, 지금 가능한 유일한 회복 행동을 준다.
               // unavailable(영구 실패)도 force 재시도로만 되살릴 수 있다(비공개→공개 전환 등).
               const retryable = ['failed', 'unavailable', 'unreachable'].includes(prep.kind);
+              const refreshesConnection = ['session_invalid', 'session_ended'].includes(prep.connectionKind);
+              const prepBadge = PREPARE_BADGES[prepareBadgeKind(prep)] || PREPARE_BADGES.preparing;
               return (
                 <motion.div
                   key={entry.entryId}
@@ -135,19 +160,33 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                 >
                   <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                   <strong>{entry.song.title}</strong>
-                  <PrepareBadge kind={prep.kind} reason={prep.reason} />
+                  <PrepareBadge state={prep} />
                   {retryable ? (
-                    <button type="button" onClick={() => onRetryPrepare(entry.song.src)} className="queue-play-action" title="곡 준비를 다시 시도합니다"><RotateCcw size={14} /> 다시 시도</button>
+                    <button
+                      type="button"
+                      onClick={() => onRetryPrepare(entry.song.src)}
+                      className="queue-play-action"
+                      title={t(refreshesConnection
+                        ? 'prepare.action.refreshConnection.title'
+                        : 'prepare.action.retry.title')}
+                    >
+                      <RotateCcw size={14} />
+                      {t(refreshesConnection
+                        ? 'prepare.action.refreshConnection.label'
+                        : 'prepare.action.retry.label')}
+                    </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => onPlayQueueItem(entry.entryId)}
                       className="queue-play-action"
                       disabled={prep.kind !== 'ready'}
-                      title={prep.kind === 'ready' ? '이 곡을 바로 현재 재생으로 가져오기' : PREPARE_BADGES[prep.kind]?.title || ''}
-                    ><Play size={14} /> 바로 재생</button>
+                      title={prep.kind === 'ready'
+                        ? t('prepare.action.playNow.title')
+                        : t(prepBadge.titleKey)}
+                    ><Play size={14} /> {t('queue.action.playNow.label')}</button>
                   )}
-                  <button type="button" onClick={() => onRemoveFromQueue(entry.entryId)} className="btn-icon btn-icon-danger" title="대기열에서 제거"><X size={15} /></button>
+                  <button type="button" onClick={() => onRemoveFromQueue(entry.entryId)} className="btn-icon btn-icon-danger" title={t('queue.action.remove.title')}><X size={15} /></button>
                 </motion.div>
               );
             })}
@@ -155,7 +194,7 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
         )}
       </div>
       <details className="history-accordion">
-        <summary>이전 재생 곡 ({history.length})</summary>
+        <summary>{t('queue.history.summary', { count: history.length })}</summary>
         {/* 표시 전용 항목 직접 추가 — 잘못 올라간 setlist를 손으로 고치는 입력줄.
             기존 클래스(glass-input/queue-play-action)만 재사용, 레이아웃만 인라인. */}
         <form className="history-manual-form" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.6rem' }} onSubmit={addManualHistoryItem}>
@@ -164,23 +203,23 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
             style={{ flex: '1 1 auto', minWidth: 0, padding: '0.45rem 0.6rem', fontSize: '0.84rem' }}
             value={manualTitle}
             onChange={(event) => setManualTitle(event.target.value)}
-            placeholder="곡 제목 (표기용 직접 추가)"
-            aria-label="직접 추가할 곡 제목"
+            placeholder={t('queue.history.manual.title.placeholder')}
+            aria-label={t('queue.history.manual.title.label')}
           />
           <input
             className="glass-input"
             style={{ flex: '0 1 32%', minWidth: 0, padding: '0.45rem 0.6rem', fontSize: '0.84rem' }}
             value={manualArtist}
             onChange={(event) => setManualArtist(event.target.value)}
-            placeholder="가수 (선택)"
-            aria-label="직접 추가할 곡의 가수 (선택)"
+            placeholder={t('queue.history.manual.artist.placeholder')}
+            aria-label={t('queue.history.manual.artist.label')}
           />
-          <button type="submit" className="queue-play-action" disabled={!manualTitle.trim()} title="재생 없이 setlist 표기용으로 이전 재생 곡에 추가">
-            <Plus size={14} /> 추가
+          <button type="submit" className="queue-play-action" disabled={!manualTitle.trim()} title={t('queue.history.manual.add.title')}>
+            <Plus size={14} /> {t('queue.history.manual.add.label')}
           </button>
         </form>
         <div className="history-list">
-          {history.length === 0 ? <div className="queue-empty">아직 재생된 곡이 없습니다.</div> : history.map((entry) => {
+          {history.length === 0 ? <div className="queue-empty">{t('queue.history.empty')}</div> : history.map((entry) => {
             const manual = entry.song?.manual === true;
             const replayable = isPlayableSongDef(entry.song);
             const isDragOver = dragOverHistoryEntryId === entry.entryId;
@@ -198,7 +237,7 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                 onDragLeave={() => setDragOverHistoryEntryId(null)}
                 onDrop={(event) => moveHistoryItem(event, entry.entryId)}
               >
-                <span className="queue-grip" title="드래그로 순서 변경"><GripVertical size={14} /></span>
+                <span className="queue-grip" title={t('queue.history.reorder.title')}><GripVertical size={14} /></span>
                 <span className="history-title">
                   {entry.song.title}
                   {manual && entry.song.artist ? <span className="history-artist"> — {entry.song.artist}</span> : null}
@@ -215,10 +254,10 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                     className="btn-icon"
                     disabled={!replayable}
                     title={replayable
-                      ? '대기열 맨 위에 다시 추가'
-                      : '직접 추가된 표기용 항목은 재생 정보(MR)가 없어 다시 부를 수 없습니다'}
+                      ? t('queue.history.replay.title')
+                      : t('queue.history.replay.unavailableTitle')}
                   ><ArrowUpCircle size={15} /></button>
-                  <button type="button" onClick={() => setSharedState((previous) => ({ ...previous, history: (previous.history || []).filter((item) => item.entryId !== entry.entryId) }))} className="btn-icon btn-icon-danger" title="기록에서 삭제"><Trash2 size={15} /></button>
+                  <button type="button" onClick={() => setSharedState((previous) => ({ ...previous, history: (previous.history || []).filter((item) => item.entryId !== entry.entryId) }))} className="btn-icon btn-icon-danger" title={t('queue.history.remove.title')}><Trash2 size={15} /></button>
                 </div>
               </div>
             );

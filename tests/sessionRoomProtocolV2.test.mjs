@@ -15,6 +15,8 @@ class MemoryStorage {
     this.puts = [];
     this.failNextPut = null;
     this.pauseNextPut = null;
+    this.pauseNextDeleteAlarm = null;
+    this.getAlarmCalls = 0;
   }
 
   async get(key) {
@@ -42,7 +44,18 @@ class MemoryStorage {
     this.alarm = value;
   }
 
+  async getAlarm() {
+    this.getAlarmCalls += 1;
+    return this.alarm;
+  }
+
   async deleteAlarm() {
+    if (this.pauseNextDeleteAlarm) {
+      const pause = this.pauseNextDeleteAlarm;
+      this.pauseNextDeleteAlarm = null;
+      pause.markEntered();
+      await pause.waitForRelease;
+    }
     this.alarm = null;
   }
 
@@ -57,6 +70,15 @@ function pauseNextStoragePut(storage) {
   const entered = new Promise((resolve) => { markEntered = resolve; });
   const waitForRelease = new Promise((resolve) => { release = resolve; });
   storage.pauseNextPut = { markEntered, waitForRelease };
+  return { entered, release };
+}
+
+function pauseNextStorageDeleteAlarm(storage) {
+  let markEntered;
+  let release;
+  const entered = new Promise((resolve) => { markEntered = resolve; });
+  const waitForRelease = new Promise((resolve) => { release = resolve; });
+  storage.pauseNextDeleteAlarm = { markEntered, waitForRelease };
   return { entered, release };
 }
 
@@ -430,6 +452,8 @@ test('control hello is non-stealing and takeover uses an explicit epoch CAS', as
     controlInstanceId: 'control-b',
     expectedControlEpoch: 1,
   });
+  assert.equal(terminalResults(second, 'takeover-current')[0].type, 'command_ack');
+  assert.equal(terminalResults(second, 'takeover-current')[0].code, 'control_lease_granted');
   assert.equal(harness.session.protocolV2.controlEpoch, 2);
   assert.equal(harness.session.protocolV2.writableControlInstanceId, 'control-b');
 
@@ -443,6 +467,581 @@ test('control hello is non-stealing and takeover uses an explicit epoch CAS', as
     controlEpoch: 1,
   });
   assert.equal(findMessage(first, (message) => message.commandId === 'old-owner-command').code, 'control_lease_read_only');
+});
+
+test('takeover serializes behind an owner mutation and rejects the follower stale idle view', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const follower = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, follower, 'control-follower');
+  await registerPlayer(harness, player);
+
+  const staleIdle = messagesOfType(follower, 'player_snapshot').at(-1);
+  assert.equal(staleIdle.lease.status, 'inactive');
+  assert.equal(staleIdle.lease.leaseTarget, null);
+  assert.equal(staleIdle.desiredTransport.status, 'idle');
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+  const activation = {
+    type: 'activate_output',
+    commandId: 'takeover-race-owner-activate',
+    switchId: 'takeover-race-switch',
+    leaseEpoch: harness.session.protocolV2.leaseEpoch,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: ownerEpoch,
+    payload: { outputMode: 'obs' },
+  };
+  const takeover = {
+    type: 'control_takeover',
+    commandId: 'takeover-race-follower',
+    controlInstanceId: 'control-follower',
+    expectedControlEpoch: ownerEpoch,
+  };
+
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const activationPromise = harness.send(owner, activation);
+  await pausedWrite.entered;
+  const takeoverPromise = harness.send(follower, takeover);
+  assert.equal(terminalResults(follower, takeover.commandId).length, 0);
+
+  pausedWrite.release();
+  await Promise.all([activationPromise, takeoverPromise]);
+
+  assert.equal(terminalResults(owner, activation.commandId)[0].type, 'command_ack');
+  const rejection = terminalResults(follower, takeover.commandId)[0];
+  assert.equal(rejection.type, 'command_rejected');
+  assert.equal(rejection.code, 'control_takeover_requires_idle');
+  assert.equal(rejection.detail.leaseStatus, 'activating');
+  assert.equal(rejection.detail.leaseTarget, 'player-a');
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, 'control-owner');
+  assert.equal(harness.session.protocolV2.controlEpoch, ownerEpoch);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'activating');
+  assert.equal(messagesOfType(player, 'activate_output').length, 1);
+});
+
+test('owner mutation, owner close, and follower takeover share one durable order', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const follower = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, follower, 'control-follower');
+  await registerPlayer(harness, player);
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+  const activation = {
+    type: 'activate_output',
+    commandId: 'close-race-owner-activate',
+    switchId: 'close-race-switch',
+    leaseEpoch: harness.session.protocolV2.leaseEpoch,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: ownerEpoch,
+    payload: { outputMode: 'obs' },
+  };
+  const takeover = {
+    type: 'control_takeover',
+    commandId: 'close-race-follower-takeover',
+    controlInstanceId: 'control-follower',
+    expectedControlEpoch: ownerEpoch,
+  };
+
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const activationPromise = harness.send(owner, activation);
+  await pausedWrite.entered;
+  const closePromise = harness.room.webSocketClose(owner);
+  const takeoverPromise = harness.send(follower, takeover);
+  assert.equal(terminalResults(follower, takeover.commandId).length, 0);
+
+  pausedWrite.release();
+  await Promise.all([activationPromise, closePromise, takeoverPromise]);
+
+  assert.equal(terminalResults(owner, activation.commandId)[0].type, 'command_ack');
+  assert.equal(terminalResults(follower, takeover.commandId)[0].code, 'stale_control_epoch');
+  assert.equal(harness.session.protocolV2.controlEpoch, ownerEpoch + 1);
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, null);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'activating');
+  assert.equal(harness.session.protocolV2.leaseTarget, 'player-a');
+  assert.equal(harness.session.protocolV2.switchId, 'close-race-switch');
+  assert.equal(messagesOfType(player, 'activate_output').length, 1);
+  const persisted = harness.storage.values.get('session').protocolV2;
+  assert.equal(persisted.controlEpoch, ownerEpoch + 1);
+  assert.equal(persisted.writableControlInstanceId, null);
+  assert.equal(persisted.leaseStatus, 'activating');
+  assert.equal(persisted.leaseTarget, 'player-a');
+});
+
+test('owner close, hello lease claim, and stale takeover preserve one durable owner order', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const observer = harness.socket('control');
+  const claimant = harness.socket('control');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, observer, 'control-observer');
+  optIntoProtocolV2(claimant);
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const closePromise = harness.room.webSocketClose(owner);
+  await pausedWrite.entered;
+  const closeQueueTail = [...harness.room.pendingV2EventQueues.values()][0];
+  const helloPromise = harness.send(claimant, {
+    type: 'control_hello',
+    protocolVersion: 2,
+    controlInstanceId: 'control-claimant',
+    buildId: 'test-build',
+    capabilities: {},
+  });
+  // Let the hello enqueue behind the paused close before introducing the
+  // follower takeover, making the intended durable order deterministic.
+  await Promise.resolve();
+  assert.notEqual([...harness.room.pendingV2EventQueues.values()][0], closeQueueTail);
+  const takeoverPromise = harness.send(observer, {
+    type: 'control_takeover',
+    commandId: 'hello-close-race-takeover',
+    controlInstanceId: 'control-observer',
+    expectedControlEpoch: ownerEpoch,
+  });
+  assert.equal(terminalResults(observer, 'hello-close-race-takeover').length, 0);
+
+  pausedWrite.release();
+  await Promise.all([closePromise, helloPromise, takeoverPromise]);
+
+  const claimantWelcome = findMessage(claimant, (message) => message.type === 'control_welcome');
+  assert.equal(claimantWelcome.writable, true);
+  assert.equal(claimantWelcome.controlEpoch, ownerEpoch + 2);
+  assert.equal(claimantWelcome.writableControlInstanceId, 'control-claimant');
+  const takeoverRejection = terminalResults(observer, 'hello-close-race-takeover')[0];
+  assert.equal(takeoverRejection.type, 'command_rejected');
+  assert.equal(takeoverRejection.code, 'stale_control_epoch');
+
+  const protocol = harness.session.protocolV2;
+  assert.equal(protocol.controlEpoch, ownerEpoch + 2);
+  assert.equal(protocol.writableControlInstanceId, 'control-claimant');
+  assert.equal(protocol.leaseStatus, 'inactive');
+  assert.equal(protocol.leaseTarget, null);
+  assert.equal(protocol.leaseClientKind, null);
+  assert.equal(protocol.switchId, null);
+  const persisted = harness.storage.values.get('session').protocolV2;
+  assert.equal(persisted.controlEpoch, ownerEpoch + 2);
+  assert.equal(persisted.writableControlInstanceId, 'control-claimant');
+  assert.equal(persisted.leaseStatus, 'inactive');
+  assert.equal(persisted.leaseTarget, null);
+});
+
+test('control hello storage failure cannot publish an uncommitted owner grant', async () => {
+  const harness = createHarness();
+  const claimant = harness.socket('control');
+  optIntoProtocolV2(claimant);
+  const before = structuredClone(harness.session);
+  harness.storage.failNextPut = new Error('control_hello_storage_failure');
+  const hello = {
+    type: 'control_hello',
+    protocolVersion: 2,
+    controlInstanceId: 'atomic-hello-owner',
+    buildId: 'test-build',
+    capabilities: {},
+  };
+
+  await assert.rejects(harness.send(claimant, hello), /control_hello_storage_failure/);
+  assert.deepEqual(harness.session, before);
+  assert.equal(claimant.deserializeAttachment().negotiationState, 'unnegotiated');
+  assert.equal(messagesOfType(claimant, 'control_welcome').length, 0);
+  assert.equal(harness.storage.values.has('session'), false);
+  assert.equal(harness.room.pendingV2EventQueues.size, 0);
+
+  await harness.send(claimant, structuredClone(hello));
+  assert.equal(harness.session.protocolV2.controlEpoch, 1);
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, 'atomic-hello-owner');
+  assert.equal(messagesOfType(claimant, 'control_welcome').length, 1);
+});
+
+test('paused display write cannot overwrite a queued takeover owner, epoch, or lease', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const follower = harness.socket('control');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, follower, 'control-follower');
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+  const displayCommand = {
+    type: 'display_state',
+    commandId: 'display-takeover-race',
+    controlEpoch: ownerEpoch,
+    payload: {
+      display: {
+        currentSong: null,
+        history: [{ id: 'display-race-song', title: 'Display Race', type: 'local' }],
+      },
+    },
+  };
+  const takeoverCommand = {
+    type: 'control_takeover',
+    commandId: 'display-race-takeover',
+    controlInstanceId: 'control-follower',
+    expectedControlEpoch: ownerEpoch,
+  };
+
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const displayPromise = harness.send(owner, displayCommand);
+  await pausedWrite.entered;
+  const takeoverPromise = harness.send(follower, takeoverCommand);
+  assert.equal(terminalResults(follower, takeoverCommand.commandId).length, 0);
+
+  pausedWrite.release();
+  await Promise.all([displayPromise, takeoverPromise]);
+
+  assert.equal(terminalResults(owner, displayCommand.commandId)[0].type, 'command_ack');
+  assert.equal(terminalResults(follower, takeoverCommand.commandId)[0].type, 'command_ack');
+  const protocol = harness.session.protocolV2;
+  assert.equal(protocol.controlEpoch, ownerEpoch + 1);
+  assert.equal(protocol.writableControlInstanceId, 'control-follower');
+  assert.equal(protocol.leaseStatus, 'inactive');
+  assert.equal(protocol.leaseTarget, null);
+  assert.equal(protocol.leaseClientKind, null);
+  assert.equal(protocol.switchId, null);
+  assert.equal(harness.session.display.history[0].id, 'display-race-song');
+
+  const persisted = harness.storage.values.get('session');
+  assert.equal(persisted.protocolV2.controlEpoch, ownerEpoch + 1);
+  assert.equal(persisted.protocolV2.writableControlInstanceId, 'control-follower');
+  assert.equal(persisted.protocolV2.leaseStatus, 'inactive');
+  assert.equal(persisted.protocolV2.leaseTarget, null);
+  assert.equal(persisted.display.history[0].id, 'display-race-song');
+});
+
+test('grace alarm waits for player hello and preserves the freshly reconnected session', async () => {
+  const harness = createHarness();
+  const player = harness.socket('player');
+  optIntoProtocolV2(player);
+  const hello = {
+    type: 'player_hello',
+    protocolVersion: 2,
+    playerInstanceId: 'alarm-reconnect-player',
+    clientKind: 'obs-browser-source',
+    buildId: 'test-build',
+    capabilities: { obsRuntime: true, analyser: true },
+    runtime: { sourceActive: true },
+  };
+
+  const pausedDeleteAlarm = pauseNextStorageDeleteAlarm(harness.storage);
+  const helloPromise = harness.send(player, hello);
+  await pausedDeleteAlarm.entered;
+  const alarmPromise = harness.room.alarm();
+  await Promise.resolve();
+
+  assert.equal(harness.session.status, 'active');
+  assert.equal(messagesOfType(player, 'session_ended').length, 0);
+
+  pausedDeleteAlarm.release();
+  await Promise.all([helloPromise, alarmPromise]);
+
+  assert.equal(player.deserializeAttachment().negotiationState, 'negotiated');
+  assert.equal(harness.session.status, 'active');
+  assert.equal(harness.session.endedAt, undefined);
+  assert.equal(messagesOfType(player, 'player_welcome').length, 1);
+  assert.equal(messagesOfType(player, 'session_ended').length, 0);
+  assert.equal(harness.room.pendingV2EventQueues.size, 0);
+});
+
+test('endSession queues behind control hello and commits from the latest adopted session', async () => {
+  const harness = createHarness();
+  const claimant = harness.socket('control');
+  optIntoProtocolV2(claimant);
+  const staleSession = structuredClone(harness.session);
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const helloPromise = harness.send(claimant, {
+    type: 'control_hello',
+    protocolVersion: 2,
+    controlInstanceId: 'alarm-race-owner',
+    buildId: 'test-build',
+    capabilities: {},
+  });
+  await pausedWrite.entered;
+
+  const endPromise = harness.room.endSession(staleSession, 'explicit');
+  await Promise.resolve();
+  assert.equal(harness.session.status, 'active');
+  assert.equal(messagesOfType(claimant, 'session_ended').length, 0);
+
+  pausedWrite.release();
+  await Promise.all([helloPromise, endPromise]);
+
+  assert.equal(harness.session.status, 'ended');
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, 'alarm-race-owner');
+  assert.equal(harness.session.protocolV2.controlEpoch, 1);
+  assert.equal(messagesOfType(claimant, 'control_welcome').length, 1);
+  assert.equal(messagesOfType(claimant, 'session_ended').length, 1);
+  const persisted = harness.storage.values.get('session');
+  assert.equal(persisted.status, 'ended');
+  assert.equal(persisted.protocolV2.writableControlInstanceId, 'alarm-race-owner');
+  assert.equal(harness.room.pendingV2EventQueues.size, 0);
+});
+
+test('takeover fails closed for every durable non-idle proof without changing the owner', async () => {
+  const scenarios = [
+    ['leased route', (session, protocol) => {
+      protocol.leaseStatus = 'ready';
+      protocol.leaseTarget = 'player-a';
+      protocol.leaseClientKind = 'obs-browser-source';
+      protocol.switchId = 'active-switch';
+    }],
+    ['active run', (_session, protocol) => {
+      protocol.activeFamily = { entryId: 'active-entry', runId: 'active-run' };
+    }],
+    ['active check', (_session, protocol) => {
+      protocol.activeCheckId = 'active-check';
+      protocol.activeCheckProgress = { checkId: 'active-check', started: true, markerCount: 0 };
+    }],
+    ['pending emergency', (_session, protocol) => {
+      protocol.pendingEmergencyCommandId = 'pending-emergency';
+      protocol.pendingEmergencyControlInstanceId = 'control-owner';
+    }],
+    ['active desired transport', (session, protocol) => {
+      protocol.desiredTransport = {
+        ...protocol.desiredTransport,
+        status: 'playing',
+        song: { id: 'song-a' },
+        entryId: 'active-entry',
+        runId: 'active-run',
+      };
+      session.transport = { ...session.transport, status: 'playing' };
+    }],
+    ['weak stopped claim', (session, protocol) => {
+      protocol.desiredTransport = { ...protocol.desiredTransport, status: 'stopped' };
+      protocol.confirmedPlayback = {
+        status: 'stopped',
+        paused: true,
+        sourceDetached: false,
+        autoplayCancelled: true,
+        audible: false,
+      };
+      session.transport = { ...session.transport, status: 'stopped' };
+    }],
+    ['confirmed audible playback', (_session, protocol) => {
+      protocol.confirmedPlayback = { status: 'playing', audible: true };
+    }],
+  ];
+
+  for (const [name, arrange] of scenarios) {
+    const harness = createHarness();
+    const owner = harness.socket('control');
+    const follower = harness.socket('control');
+    await registerControl(harness, owner, 'control-owner');
+    await registerControl(harness, follower, 'control-follower');
+    const ownerEpoch = harness.session.protocolV2.controlEpoch;
+    arrange(harness.session, harness.session.protocolV2);
+
+    const commandId = `takeover-blocked-${name.replaceAll(' ', '-')}`;
+    await harness.send(follower, {
+      type: 'control_takeover',
+      commandId,
+      controlInstanceId: 'control-follower',
+      expectedControlEpoch: ownerEpoch,
+    });
+
+    const rejection = terminalResults(follower, commandId)[0];
+    assert.equal(rejection.type, 'command_rejected', name);
+    assert.equal(rejection.code, 'control_takeover_requires_idle', name);
+    assert.equal(harness.session.protocolV2.writableControlInstanceId, 'control-owner', name);
+    assert.equal(harness.session.protocolV2.controlEpoch, ownerEpoch, name);
+  }
+});
+
+test('a fully acknowledged emergency stop provides strong-stopped proof for takeover', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const follower = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, follower, 'control-follower');
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, owner);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+
+  await harness.send(follower, {
+    type: 'emergency_stop',
+    commandId: 'takeover-after-emergency',
+    sessionId: harness.session.room,
+    authenticatedControlInstanceId: 'control-follower',
+  });
+  await harness.send(player, {
+    type: 'emergency_stop_ack',
+    eventId: 'takeover-after-emergency-ack',
+    commandId: 'takeover-after-emergency',
+    sessionId: harness.session.room,
+    playerInstanceId: 'player-a',
+    connectionId: player.deserializeAttachment().connectionId,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'stopped');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.audible, false);
+  assert.equal(harness.session.transport.status, 'stopped');
+
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+  await harness.send(follower, {
+    type: 'control_takeover',
+    commandId: 'takeover-after-emergency-granted',
+    controlInstanceId: 'control-follower',
+    expectedControlEpoch: ownerEpoch,
+  });
+
+  assert.equal(terminalResults(follower, 'takeover-after-emergency-granted')[0].type, 'command_ack');
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, 'control-follower');
+  assert.equal(harness.session.protocolV2.controlEpoch, ownerEpoch + 1);
+});
+
+test('strong STOP followed by route deactivation remains safely transferable', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const follower = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, follower, 'control-follower');
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, owner);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  await loadRun(harness, owner, leaseEpoch, {
+    entryId: 'takeover-stopped-entry',
+    runId: 'takeover-stopped-run',
+    commandId: 'takeover-stopped-load',
+  });
+  await stopRun(harness, owner, leaseEpoch, {
+    entryId: 'takeover-stopped-entry',
+    runId: 'takeover-stopped-run',
+    commandId: 'takeover-stopped-stop',
+  });
+  await harness.send(player, {
+    type: 'playback_event',
+    event: 'command_applied',
+    eventId: 'takeover-stopped-proof',
+    sequence: 0,
+    playerInstanceId: 'player-a',
+    connectionId: player.deserializeAttachment().connectionId,
+    leaseEpoch,
+    entryId: 'takeover-stopped-entry',
+    runId: 'takeover-stopped-run',
+    monotonicTimeMs: 1,
+    commandId: 'takeover-stopped-stop',
+    commandType: 'STOP',
+    postcondition: {
+      status: 'stopped',
+      mediaPaused: true,
+      sourceDetached: true,
+      autoplayCancelled: true,
+      audible: false,
+    },
+  });
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'stopped');
+
+  await harness.send(owner, {
+    type: 'deactivate_output',
+    commandId: 'takeover-stopped-deactivate',
+    switchId: 'takeover-stopped-deactivate-switch',
+    leaseEpoch,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: harness.session.protocolV2.controlEpoch,
+    payload: {},
+  });
+  await harness.send(player, {
+    type: 'route_event',
+    event: 'output_deactivated',
+    eventId: 'takeover-stopped-deactivated',
+    sequence: 1,
+    playerInstanceId: 'player-a',
+    connectionId: player.deserializeAttachment().connectionId,
+    leaseEpoch,
+    switchId: 'takeover-stopped-deactivate-switch',
+    monotonicTimeMs: 2,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+  assert.equal(harness.session.protocolV2.leaseTarget, null);
+  assert.equal(harness.session.protocolV2.switchId, null);
+  assert.equal(harness.session.protocolV2.desiredTransport.status, 'stopped');
+  assert.equal(harness.session.transport.status, 'stopped');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_inactive');
+
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+  await harness.send(follower, {
+    type: 'control_takeover',
+    commandId: 'takeover-stopped-route-granted',
+    controlInstanceId: 'control-follower',
+    expectedControlEpoch: ownerEpoch,
+  });
+  assert.equal(terminalResults(follower, 'takeover-stopped-route-granted')[0].type, 'command_ack');
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, 'control-follower');
+});
+
+test('a standby ACK cannot prove a disconnected pre-emergency lease target stopped', async () => {
+  const harness = createHarness();
+  const owner = harness.socket('control');
+  const follower = harness.socket('control');
+  const activeObs = harness.socket('player');
+  const standbySpeaker = harness.socket('player');
+  await registerControl(harness, owner, 'control-owner');
+  await registerControl(harness, follower, 'control-follower');
+  await registerPlayer(harness, activeObs, { playerInstanceId: 'active-obs' });
+  await registerPlayer(harness, standbySpeaker, {
+    playerInstanceId: 'standby-speaker',
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+    runtime: {},
+  });
+  const leaseEpoch = await activateOutput(harness, owner, 'active-obs', 'obs');
+  await confirmOutputReady(harness, activeObs, 'active-obs', leaseEpoch);
+
+  activeObs.close();
+  await harness.room.webSocketClose(activeObs);
+  assert.equal(harness.session.protocolV2.leaseTarget, 'active-obs');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_disconnected');
+
+  await harness.send(follower, {
+    type: 'emergency_stop',
+    commandId: 'takeover-disconnected-target-emergency',
+    sessionId: harness.session.room,
+    authenticatedControlInstanceId: 'control-follower',
+  });
+  assert.equal(
+    harness.session.protocolV2.pendingEmergencyRequiredPlayerInstanceId,
+    'active-obs',
+  );
+  assert.deepEqual(
+    harness.session.protocolV2.pendingEmergencyTargets,
+    [standbySpeaker.deserializeAttachment().connectionId],
+  );
+
+  await harness.send(standbySpeaker, {
+    type: 'emergency_stop_ack',
+    eventId: 'takeover-disconnected-standby-ack',
+    commandId: 'takeover-disconnected-target-emergency',
+    sessionId: harness.session.room,
+    playerInstanceId: 'standby-speaker',
+    connectionId: standbySpeaker.deserializeAttachment().connectionId,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'emergency_stopping');
+  assert.equal(harness.session.protocolV2.pendingEmergencyCommandId, 'takeover-disconnected-target-emergency');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'emergency_stop_unconfirmed');
+  assert.equal(harness.session.transport.status, 'unknown');
+
+  const ownerEpoch = harness.session.protocolV2.controlEpoch;
+  await harness.send(follower, {
+    type: 'control_takeover',
+    commandId: 'takeover-disconnected-target-blocked',
+    controlInstanceId: 'control-follower',
+    expectedControlEpoch: ownerEpoch,
+  });
+  const rejection = terminalResults(follower, 'takeover-disconnected-target-blocked')[0];
+  assert.equal(rejection.type, 'command_rejected');
+  assert.equal(rejection.code, 'control_takeover_requires_idle');
+  assert.equal(harness.session.protocolV2.writableControlInstanceId, 'control-owner');
+  assert.equal(harness.session.protocolV2.controlEpoch, ownerEpoch);
 });
 
 test('a persisted control owner without a live negotiated socket expires on the next hello', async () => {
@@ -2121,6 +2720,89 @@ test('emergency reconnect rotates the pending connection proof and redelivers wi
   assert.equal(replayedResults.length, 2);
   assert.equal(JSON.stringify(replayedResults[0]), JSON.stringify(firstResult));
   assert.equal(JSON.stringify(replayedResults[1]), JSON.stringify(firstResult));
+});
+
+test('emergency reconnect enrollment cannot erase another target ACK or durable checkpoint', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const originalTarget = harness.socket('player');
+  const standby = harness.socket('player');
+  await registerControl(harness, control, 'control-owner');
+  await registerPlayer(harness, originalTarget, { playerInstanceId: 'emergency-target' });
+  const leaseEpoch = await activateOutput(harness, control, 'emergency-target', 'obs');
+  await confirmOutputReady(harness, originalTarget, 'emergency-target', leaseEpoch);
+  await registerPlayer(harness, standby, { playerInstanceId: 'emergency-standby' });
+
+  await harness.send(control, {
+    type: 'emergency_stop',
+    commandId: 'emergency-reconnect-ack-race',
+    sessionId: harness.session.room,
+    authenticatedControlInstanceId: 'control-owner',
+  });
+  const standbyConnectionId = standby.deserializeAttachment().connectionId;
+  const replacement = harness.socket('player');
+  optIntoProtocolV2(replacement);
+  const replacementConnectionId = replacement.deserializeAttachment().connectionId;
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const reconnectPromise = harness.send(replacement, {
+    type: 'player_hello',
+    protocolVersion: 2,
+    playerInstanceId: 'emergency-target',
+    clientKind: 'obs-browser-source',
+    buildId: 'test-build',
+    capabilities: { obsRuntime: true, analyser: true },
+    runtime: { sourceActive: true },
+  });
+  await pausedWrite.entered;
+
+  const standbyAck = {
+    type: 'emergency_stop_ack',
+    eventId: 'emergency-reconnect-standby-ack',
+    commandId: 'emergency-reconnect-ack-race',
+    sessionId: harness.session.room,
+    playerInstanceId: 'emergency-standby',
+    connectionId: standbyConnectionId,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  };
+  const ackPromise = harness.send(standby, standbyAck);
+  await Promise.resolve();
+  assert.equal(messagesOfType(standby, 'event_ack').some((message) => (
+    message.eventId === standbyAck.eventId
+  )), false, 'ACK must wait behind the reconnect durable mutation');
+
+  pausedWrite.release();
+  await Promise.all([reconnectPromise, ackPromise]);
+
+  assert.equal(originalTarget.closed, true);
+  assert.equal(findMessage(standby, (message) => (
+    message.type === 'event_ack' && message.eventId === standbyAck.eventId
+  )).status, 'applied');
+  assert.deepEqual(
+    new Set(harness.session.protocolV2.pendingEmergencyTargets),
+    new Set([replacementConnectionId, standbyConnectionId]),
+  );
+  assert.deepEqual(harness.session.protocolV2.emergencyAcknowledgedTargets, [standbyConnectionId]);
+  assert.equal(
+    harness.session.protocolV2.pendingEmergencyTargetInstances[replacementConnectionId],
+    'emergency-target',
+  );
+  const checkpoint = harness.session.protocolV2.playerEventCheckpoints
+    .find((entry) => entry.p === 'emergency-standby');
+  assert.equal(checkpoint.h.emergency, 0);
+  assert.ok(checkpoint.e.some((entry) => entry.i === standbyAck.eventId));
+  const persisted = harness.storage.values.get('session').protocolV2;
+  assert.deepEqual(persisted.emergencyAcknowledgedTargets, [standbyConnectionId]);
+  assert.ok(persisted.playerEventCheckpoints.some((entry) => (
+    entry.p === 'emergency-standby'
+      && entry.e.some((event) => event.i === standbyAck.eventId)
+  )));
+  assert.ok(findMessage(replacement, (message) => (
+    message.type === 'emergency_stop'
+      && message.commandId === 'emergency-reconnect-ack-race'
+      && message.targetConnectionId === replacementConnectionId
+  )));
 });
 
 test('emergency reconnect storage failure preserves the old transport and can retry cleanly', async () => {
@@ -4293,6 +4975,200 @@ test('heartbeat warning and stale thresholds use exact 499/500/1999/2000ms bound
   }
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
   assert.equal(harness.storage.puts.length, putsBeforeSnapshot);
+});
+
+test('active output watchdog arms at the exact stale deadline without postponing an earlier alarm', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const originalNow = Date.now;
+  const fixedNow = originalNow() + 10_000;
+  try {
+    Date.now = () => fixedNow;
+    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow });
+    harness.storage.alarm = null;
+    const leaseEpoch = await activateOutput(harness, control);
+    assert.equal(leaseEpoch, 1);
+    assert.equal(harness.storage.alarm, fixedNow + 2000);
+
+    const earlierGraceOrCleanupAlarm = fixedNow + 250;
+    harness.storage.alarm = earlierGraceOrCleanupAlarm;
+    harness.room.activeOutputHeartbeatAlarmKnown = false;
+    await harness.room.ensureActiveOutputHeartbeatAlarm(harness.session);
+    assert.equal(harness.storage.alarm, earlierGraceOrCleanupAlarm);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('watchdog latches an open active socket unknown at 2000ms but never at 1999ms', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  const originalNow = Date.now;
+  const observedAt = originalNow() + 10_000;
+  player.serializeAttachment({
+    ...player.deserializeAttachment(),
+    lastSeenAt: observedAt,
+    runtime: { sourceActive: true },
+  });
+  const putsBefore = harness.storage.puts.length;
+  const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+  try {
+    Date.now = () => observedAt + 1999;
+    harness.storage.alarm = null;
+    await harness.room.alarm();
+    assert.equal(harness.session.status, 'active');
+    assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+    assert.equal(harness.storage.puts.length, putsBefore);
+    assert.equal(harness.storage.alarm, observedAt + 2000);
+
+    Date.now = () => observedAt + 2000;
+    harness.storage.alarm = null;
+    await harness.room.alarm();
+    assert.equal(harness.session.status, 'active');
+    assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+    assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+    assert.equal(harness.session.transport.status, 'unknown');
+    assert.equal(harness.storage.puts.length, putsBefore + 1);
+    assert.equal(harness.storage.alarm, null);
+    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('watchdog storage failure publishes nothing and an alarm retry commits the stale transition once', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  player.serializeAttachment({
+    ...player.deserializeAttachment(),
+    lastSeenAt: Date.now() - 2000,
+    runtime: { sourceActive: true },
+  });
+  const sessionBefore = structuredClone(harness.session);
+  const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+  harness.storage.alarm = null;
+  harness.storage.failNextPut = new Error('watchdog_storage_failure');
+
+  await assert.rejects(harness.room.alarm(), /watchdog_storage_failure/);
+  assert.deepEqual(harness.session, sessionBefore);
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
+
+  await harness.room.alarm();
+  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+});
+
+test('hibernation bootstrap preserves an earlier alarm and healthy heartbeats do not reschedule it', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  const originalNow = Date.now;
+  const observedAt = originalNow() + 10_000;
+  player.serializeAttachment({
+    ...player.deserializeAttachment(),
+    lastSeenAt: observedAt,
+    runtime: { sourceActive: true },
+  });
+  const earlierAlarm = observedAt + 250;
+  harness.storage.alarm = earlierAlarm;
+  const rehydratedRoom = new SessionRoom(harness.context, {});
+  const getAlarmCallsBefore = harness.storage.getAlarmCalls;
+  const putsBefore = harness.storage.puts.length;
+  try {
+    Date.now = () => observedAt + 100;
+    await rehydratedRoom.webSocketMessage(player, JSON.stringify({
+      type: 'player_heartbeat',
+      playerInstanceId: 'player-a',
+      connectionId: player.deserializeAttachment().connectionId,
+      leaseEpoch,
+      sequence: 0,
+      monotonicTimeMs: 1,
+      runtime: { sourceActive: true },
+    }));
+    assert.equal(harness.storage.alarm, earlierAlarm);
+    assert.equal(harness.storage.getAlarmCalls, getAlarmCallsBefore + 1);
+
+    // Simulate Cloudflare consuming the earlier grace/cleanup alarm. The open,
+    // healthy player keeps the session active and receives a new exact deadline.
+    Date.now = () => earlierAlarm;
+    harness.storage.alarm = null;
+    await rehydratedRoom.alarm();
+    assert.equal(rehydratedRoom.sessionState.status, 'active');
+    assert.equal(rehydratedRoom.sessionState.protocolV2.leaseStatus, 'ready');
+    assert.equal(harness.storage.alarm, observedAt + 2100);
+    const callsAfterAlarm = harness.storage.getAlarmCalls;
+
+    Date.now = () => observedAt + 300;
+    await rehydratedRoom.webSocketMessage(player, JSON.stringify({
+      type: 'player_heartbeat',
+      playerInstanceId: 'player-a',
+      connectionId: player.deserializeAttachment().connectionId,
+      leaseEpoch,
+      sequence: 1,
+      monotonicTimeMs: 2,
+      runtime: { sourceActive: true },
+    }));
+    assert.equal(harness.storage.getAlarmCalls, callsAfterAlarm);
+    assert.equal(harness.storage.alarm, observedAt + 2100);
+    assert.equal(harness.storage.puts.length, putsBefore);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('watchdog alarm queues behind route deactivation and cannot overwrite it with stale unknown', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  player.serializeAttachment({
+    ...player.deserializeAttachment(),
+    lastSeenAt: Date.now() - 2000,
+    runtime: { sourceActive: true },
+  });
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const deactivatePromise = harness.send(control, {
+    type: 'deactivate_output',
+    commandId: 'watchdog-race-deactivate',
+    switchId: 'watchdog-race-switch',
+    leaseEpoch,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: harness.session.protocolV2.controlEpoch,
+    payload: {},
+  });
+  await pausedWrite.entered;
+  harness.storage.alarm = null;
+  const alarmPromise = harness.room.alarm();
+  await Promise.resolve();
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+
+  pausedWrite.release();
+  await Promise.all([deactivatePromise, alarmPromise]);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_deactivating');
+  assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+  assert.equal(harness.storage.alarm, null);
 });
 
 test('healthy heartbeat is relayed and ACKed without storage, while invalid or duplicate input is not ACKed', async () => {

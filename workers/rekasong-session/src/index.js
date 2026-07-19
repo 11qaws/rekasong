@@ -355,6 +355,10 @@ export class SessionRoom {
     // take one shared queue key so different players cannot overwrite the same
     // bounded session checkpoint while a storage write is in flight.
     this.pendingV2EventQueues = new Map();
+    // Hibernation recreates the object but preserves both socket attachments
+    // and the durable alarm. The first heartbeat after a recreation verifies
+    // that an alarm exists; later healthy heartbeats can stay storage-free.
+    this.activeOutputHeartbeatAlarmKnown = false;
   }
 
   async fetch(request) {
@@ -397,6 +401,8 @@ export class SessionRoom {
         activeCheckProgress: null,
         pendingEmergencyCommandId: null,
         pendingEmergencyControlInstanceId: null,
+        pendingEmergencyRequiredPlayerInstanceId: null,
+        pendingEmergencyRequiredTargetKnown: false,
         pendingEmergencyTargets: [],
         pendingEmergencyTargetInstances: {},
         emergencyAcknowledgedTargets: [],
@@ -502,7 +508,9 @@ export class SessionRoom {
     });
     // The OBS player being back is the only signal that broadcast output is
     // live again. A controller refresh must not keep abandoned media alive.
-    if (role === 'player' && !protocolV2OptIn) await this.ctx.storage.deleteAlarm();
+    if (role === 'player' && !protocolV2OptIn) {
+      await this.reconcileConnectedPlayerAlarm(session);
+    }
     if (!protocolV2OptIn) {
       this.send(server, {
         type: 'snapshot',
@@ -649,6 +657,10 @@ export class SessionRoom {
         : null,
       pendingEmergencyCommandId: protocolId(prior.pendingEmergencyCommandId),
       pendingEmergencyControlInstanceId: protocolId(prior.pendingEmergencyControlInstanceId),
+      pendingEmergencyRequiredPlayerInstanceId: protocolId(
+        prior.pendingEmergencyRequiredPlayerInstanceId
+      ),
+      pendingEmergencyRequiredTargetKnown: prior.pendingEmergencyRequiredTargetKnown === true,
       pendingEmergencyTargets,
       pendingEmergencyTargetInstances,
       emergencyAcknowledgedTargets: Array.isArray(prior.emergencyAcknowledgedTargets)
@@ -702,6 +714,89 @@ export class SessionRoom {
     };
   }
 
+  isV2StrongStoppedPlayback(confirmedPlayback) {
+    return Boolean(
+      confirmedPlayback
+      && typeof confirmedPlayback === 'object'
+      && !Array.isArray(confirmedPlayback)
+      && confirmedPlayback.status === 'stopped'
+      && confirmedPlayback.paused === true
+      && confirmedPlayback.sourceDetached === true
+      && confirmedPlayback.autoplayCancelled === true
+      && confirmedPlayback.audible === false
+    );
+  }
+
+  controlTakeoverBlockDetail(session) {
+    const protocol = this.ensureProtocolV2(session);
+    const desired = protocol.desiredTransport;
+    const confirmed = protocol.confirmedPlayback;
+    const leaseStatus = protocol.leaseStatus || null;
+    const desiredStatus = desired?.status || null;
+    const confirmedStatus = confirmed?.status || null;
+    const transportStatus = session.transport?.status || null;
+    const exactIdleDesired = Boolean(
+      desired
+      && typeof desired === 'object'
+      && !Array.isArray(desired)
+      && desiredStatus === 'idle'
+      && desired.song === null
+      && desired.entryId === null
+      && desired.runId === null
+    );
+    const coldIdleConfirmation = confirmedStatus === 'unknown'
+      && ['not_confirmed', 'output_inactive'].includes(confirmed?.reasonCode);
+    const inactiveRouteConfirmation = confirmedStatus === 'unknown'
+      && confirmed?.reasonCode === 'output_inactive';
+    const strongStopped = this.isV2StrongStoppedPlayback(confirmed);
+    const exactStrongStopped = desiredStatus === 'stopped'
+      && transportStatus === 'stopped'
+      && strongStopped;
+    const stoppedAfterInactiveRoute = desiredStatus === 'stopped'
+      && transportStatus === 'stopped'
+      && inactiveRouteConfirmation;
+    const confirmedAudible = confirmed?.audible === true || confirmedStatus === 'playing';
+    const pendingEmergency = Boolean(
+      protocol.pendingEmergencyCommandId
+      || protocol.pendingEmergencyControlInstanceId
+      || protocol.pendingEmergencyRequiredPlayerInstanceId
+      || protocol.pendingEmergencyRequiredTargetKnown
+      || protocol.pendingEmergencyTargets.length > 0
+      || Object.keys(protocol.pendingEmergencyTargetInstances).length > 0
+      || protocol.emergencyAcknowledgedTargets.length > 0
+      || protocol.pendingEmergencyLegacyCount !== 0
+    );
+    const safe = leaseStatus === 'inactive'
+      && protocol.leaseTarget === null
+      && protocol.leaseClientKind === null
+      && protocol.switchId === null
+      && protocol.activeFamily === null
+      && protocol.activeCheckId === null
+      && protocol.activeCheckProgress === null
+      && !pendingEmergency
+      && !confirmedAudible
+      && (
+        (exactIdleDesired && coldIdleConfirmation && transportStatus === 'idle')
+        || exactStrongStopped
+        || stoppedAfterInactiveRoute
+      );
+    if (safe) return null;
+    return {
+      leaseStatus,
+      leaseTarget: protocol.leaseTarget,
+      switchId: protocol.switchId,
+      activeFamily: Boolean(protocol.activeFamily),
+      activeCheck: Boolean(protocol.activeCheckId || protocol.activeCheckProgress),
+      pendingEmergency,
+      desiredStatus,
+      confirmedStatus,
+      confirmedReasonCode: confirmed?.reasonCode || null,
+      confirmedAudible,
+      strongStopped,
+      transportStatus
+    };
+  }
+
   livePlayerRecords(excluded) {
     const records = [];
     for (const socket of this.ctx.getWebSockets()) {
@@ -725,6 +820,50 @@ export class SessionRoom {
       heartbeatWarning: heartbeatAgeMs >= PLAYER_HEARTBEAT_WARNING_MS,
       heartbeatStale: heartbeatAgeMs >= PLAYER_HEARTBEAT_STALE_MS
     };
+  }
+
+  activeOutputHeartbeatDeadline(session, { overrideAttachment = null, now = Date.now() } = {}) {
+    const protocol = this.ensureProtocolV2(session);
+    if (!protocol.leaseTarget || !['activating', 'ready', 'audible'].includes(protocol.leaseStatus)) {
+      return null;
+    }
+    const attachments = this.livePlayerRecords()
+      .filter(({ attachment }) => attachment.playerInstanceId === protocol.leaseTarget)
+      .map(({ attachment }) => attachment);
+    if (overrideAttachment?.playerInstanceId === protocol.leaseTarget) {
+      attachments.push(overrideAttachment);
+    }
+    if (attachments.length === 0) return now;
+    const freshestSeenAt = Math.max(...attachments
+      .map((attachment) => this.playerHeartbeatHealth(attachment, now).lastSeenAt));
+    return freshestSeenAt + PLAYER_HEARTBEAT_STALE_MS;
+  }
+
+  async ensureActiveOutputHeartbeatAlarm(session, options = {}) {
+    const deadline = this.activeOutputHeartbeatDeadline(session, options);
+    if (deadline === null) {
+      this.activeOutputHeartbeatAlarmKnown = false;
+      return null;
+    }
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    if (currentAlarm === null || deadline < currentAlarm) {
+      await this.ctx.storage.setAlarm(deadline);
+      this.activeOutputHeartbeatAlarmKnown = true;
+      return deadline;
+    }
+    // An earlier initial-grace, reconnect-grace, cleanup, or watchdog alarm
+    // must never be postponed by liveness maintenance.
+    this.activeOutputHeartbeatAlarmKnown = true;
+    return currentAlarm;
+  }
+
+  async reconcileConnectedPlayerAlarm(session, options = {}) {
+    if (this.activeOutputHeartbeatDeadline(session, options) !== null) {
+      return this.ensureActiveOutputHeartbeatAlarm(session, options);
+    }
+    await this.ctx.storage.deleteAlarm();
+    this.activeOutputHeartbeatAlarmKnown = false;
+    return null;
   }
 
   eligiblePlayerRecords(mode, excluded) {
@@ -1641,7 +1780,12 @@ export class SessionRoom {
       });
     }
     const releasePlayerQueue = await this.acquireV2PlayerQueue(playerInstanceId);
+    let releaseDurableQueue = null;
     try {
+      // Match durable player-event lock order: instance queue first, then the
+      // shared session mutation queue. Re-enrolling an emergency target must
+      // not overwrite an ACK/checkpoint committed by another player.
+      releaseDurableQueue = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
       const currentPrior = socket.deserializeAttachment() || {};
       if (currentPrior.connectionId !== prior.connectionId
         || !['unnegotiated', 'negotiated'].includes(currentPrior.negotiationState)) {
@@ -1677,7 +1821,7 @@ export class SessionRoom {
       );
       socket.serializeAttachment(finalAttachment);
       try {
-        await this.ctx.storage.deleteAlarm();
+        await this.reconcileConnectedPlayerAlarm(session, { overrideAttachment: finalAttachment });
         if (emergencyReconnect.candidate) {
           await this.ctx.storage.put('session', emergencyReconnect.candidate);
           this.adoptPersistedSession(session, emergencyReconnect.candidate);
@@ -1714,6 +1858,7 @@ export class SessionRoom {
       });
       this.broadcastProtocolV2Snapshot(session);
     } finally {
+      if (releaseDurableQueue) releaseDurableQueue();
       releasePlayerQueue();
     }
   }
@@ -1744,52 +1889,57 @@ export class SessionRoom {
         identity: 'controlInstanceId'
       });
     }
-    const protocol = this.ensureProtocolV2(session);
-    const previousOwner = protocol.writableControlInstanceId;
-    // A hello never steals a lease. A different instance must send the
-    // explicit, CAS-guarded control_takeover command while that owner is live.
-    // A persisted owner without a live negotiated socket is an expired lease,
-    // so a new instance can recover it with a new epoch during hello.
-    const previousOwnerConnected = this.ctx.getWebSockets().some((candidate) => {
-      if (candidate === socket) return false;
-      const attachment = candidate.deserializeAttachment() || {};
-      return attachment.role === 'control'
-        && attachment.protocolVersion === PROTOCOL_V2
-        && attachment.negotiationState === 'negotiated'
-        && attachment.controlInstanceId === previousOwner;
-    });
-    const mayClaim = !previousOwner || previousOwner === controlInstanceId || !previousOwnerConnected;
-    let granted = false;
-    if (mayClaim) {
-      granted = true;
-      if (previousOwner !== controlInstanceId) {
+    const releaseDurableQueue = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      const candidate = structuredClone(session);
+      let protocol = this.ensureProtocolV2(candidate);
+      const previousOwner = protocol.writableControlInstanceId;
+      // A hello never steals a lease. A different instance must send the
+      // explicit, CAS-guarded control_takeover command while that owner is live.
+      // A persisted owner without a live negotiated socket is an expired lease,
+      // so a new instance can recover it with a new epoch during hello.
+      const previousOwnerConnected = this.ctx.getWebSockets().some((candidateSocket) => {
+        if (candidateSocket === socket) return false;
+        const attachment = candidateSocket.deserializeAttachment() || {};
+        return attachment.role === 'control'
+          && attachment.protocolVersion === PROTOCOL_V2
+          && attachment.negotiationState === 'negotiated'
+          && attachment.controlInstanceId === previousOwner;
+      });
+      const mayClaim = !previousOwner || previousOwner === controlInstanceId || !previousOwnerConnected;
+      const granted = mayClaim;
+      if (mayClaim && previousOwner !== controlInstanceId) {
         protocol.controlEpoch += 1;
         protocol.writableControlInstanceId = controlInstanceId;
-        await this.ctx.storage.put('session', session);
+        await this.ctx.storage.put('session', candidate);
+        this.adoptPersistedSession(session, candidate);
+        protocol = this.ensureProtocolV2(session);
       }
+      socket.serializeAttachment({
+        ...prior,
+        protocolVersion: PROTOCOL_V2,
+        negotiationState: 'negotiated',
+        controlInstanceId,
+        buildId,
+        capabilities: boundedRecord(message.capabilities, ['outputRouting', 'verificationUi']),
+        lastSeenAt: Date.now()
+      });
+      this.replaceSocketWithLatestInstance(socket, 'controlInstanceId', controlInstanceId);
+      this.send(socket, {
+        type: 'control_welcome',
+        protocolVersion: PROTOCOL_V2,
+        connectionId: prior.connectionId,
+        controlInstanceId,
+        writable: granted,
+        controlEpoch: protocol.controlEpoch,
+        writableControlInstanceId: protocol.writableControlInstanceId,
+        code: granted ? 'control_lease_granted' : 'control_lease_read_only'
+      });
+      this.send(socket, { type: 'player_snapshot', ...this.protocolV2Snapshot(session) });
+      this.broadcastProtocolV2Snapshot(session);
+    } finally {
+      releaseDurableQueue();
     }
-    socket.serializeAttachment({
-      ...prior,
-      protocolVersion: PROTOCOL_V2,
-      negotiationState: 'negotiated',
-      controlInstanceId,
-      buildId,
-      capabilities: boundedRecord(message.capabilities, ['outputRouting', 'verificationUi']),
-      lastSeenAt: Date.now()
-    });
-    this.replaceSocketWithLatestInstance(socket, 'controlInstanceId', controlInstanceId);
-    this.send(socket, {
-      type: 'control_welcome',
-      protocolVersion: PROTOCOL_V2,
-      connectionId: prior.connectionId,
-      controlInstanceId,
-      writable: granted,
-      controlEpoch: protocol.controlEpoch,
-      writableControlInstanceId: protocol.writableControlInstanceId,
-      code: granted ? 'control_lease_granted' : 'control_lease_read_only'
-    });
-    this.send(socket, { type: 'player_snapshot', ...this.protocolV2Snapshot(session) });
-    this.broadcastProtocolV2Snapshot(session);
   }
 
   validateWritableControl(socket, protocol, command) {
@@ -1857,6 +2007,8 @@ export class SessionRoom {
       if (V2_ROUTE_COMMANDS.includes(command.type)
         || V2_RUN_COMMANDS.includes(command.type)
         || V2_TEST_COMMANDS.includes(command.type)
+        || command.type === V2_CONTROL_TAKEOVER_COMMAND
+        || command.type === 'display_state'
         || command.type === 'end_session'
         || command.type === 'emergency_stop') {
         releaseStatefulCommand = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
@@ -1889,7 +2041,7 @@ export class SessionRoom {
         if (invalidPayload) return this.rejectV2Command(socket, command, 'invalid_aux_payload');
         const blocked = this.sessionEndBlockDetail(session);
         if (blocked) return this.rejectV2Command(socket, command, 'session_end_requires_idle', blocked);
-        await this.endSession(session, 'explicit');
+        await this.endSessionWhileDurableQueueHeld(session, 'explicit');
         return this.sendV2CommandAck(socket, command, { controlEpoch: protocol.controlEpoch });
       }
       if (command.type === 'display_state') {
@@ -1898,8 +2050,11 @@ export class SessionRoom {
           || Array.isArray(command.payload.display)) {
           return this.rejectV2Command(socket, command, 'invalid_aux_payload');
         }
-        session.display = displayState(command.payload.display);
-        await this.ctx.storage.put('session', session);
+        const candidate = structuredClone(session);
+        candidate.display = displayState(command.payload.display);
+        await this.ctx.storage.put('session', candidate);
+        this.adoptPersistedSession(session, candidate);
+        protocol = this.ensureProtocolV2(session);
         this.broadcast({ type: 'display_state', display: session.display }, 'display');
         return this.sendV2CommandAck(socket, command, { controlEpoch: protocol.controlEpoch });
       }
@@ -1961,6 +2116,10 @@ export class SessionRoom {
         expected: protocol.controlEpoch,
         actual: expectedControlEpoch
       });
+    }
+    const blocked = this.controlTakeoverBlockDetail(session);
+    if (blocked) {
+      return this.rejectV2Command(socket, command, 'control_takeover_requires_idle', blocked);
     }
     if (protocol.writableControlInstanceId !== controlInstanceId) {
       const candidate = structuredClone(session);
@@ -2072,11 +2231,18 @@ export class SessionRoom {
       candidateProtocol.activeCheckProgress = null;
       candidateProtocol.pendingEmergencyCommandId = null;
       candidateProtocol.pendingEmergencyControlInstanceId = null;
+      candidateProtocol.pendingEmergencyRequiredPlayerInstanceId = null;
+      candidateProtocol.pendingEmergencyRequiredTargetKnown = false;
       candidateProtocol.pendingEmergencyTargets = [];
       candidateProtocol.pendingEmergencyTargetInstances = {};
       candidateProtocol.emergencyAcknowledgedTargets = [];
       candidateProtocol.pendingEmergencyLegacyCount = 0;
       candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_activating' };
+      // Arm before committing the active lease. If alarm storage fails, the
+      // route remains inactive and the command can be retried cleanly.
+      await this.ensureActiveOutputHeartbeatAlarm(candidate, {
+        overrideAttachment: target.attachment
+      });
       await this.ctx.storage.put('session', candidate);
       this.adoptPersistedSession(session, candidate);
       protocol = this.ensureProtocolV2(session);
@@ -2471,6 +2637,8 @@ export class SessionRoom {
     candidateProtocol.activeCheckProgress = null;
     candidateProtocol.pendingEmergencyCommandId = commandId;
     candidateProtocol.pendingEmergencyControlInstanceId = authenticatedControlInstanceId;
+    candidateProtocol.pendingEmergencyRequiredPlayerInstanceId = protocol.leaseTarget;
+    candidateProtocol.pendingEmergencyRequiredTargetKnown = true;
     candidateProtocol.pendingEmergencyTargets = [...new Set(emergencyTargets)];
     candidateProtocol.pendingEmergencyTargetInstances = emergencyTargetInstances;
     candidateProtocol.emergencyAcknowledgedTargets = [];
@@ -2657,6 +2825,12 @@ export class SessionRoom {
         };
       } else {
         issue = this.activeOutputLivenessIssue(session, identity.playerInstanceId, {
+          now: observedAt,
+          overrideAttachment: nextAttachment
+        });
+      }
+      if (!issue && !this.activeOutputHeartbeatAlarmKnown) {
+        await this.ensureActiveOutputHeartbeatAlarm(session, {
           now: observedAt,
           overrideAttachment: nextAttachment
         });
@@ -3274,13 +3448,37 @@ export class SessionRoom {
       ])];
       const allV2TargetsAcknowledged = (protocol.pendingEmergencyTargets || [])
         .every((target) => protocol.emergencyAcknowledgedTargets.includes(target));
-      if (allV2TargetsAcknowledged && protocol.pendingEmergencyLegacyCount === 0) {
+      const requiredPlayerInstanceId = protocol.pendingEmergencyRequiredPlayerInstanceId;
+      const requiredTargetAcknowledged = protocol.pendingEmergencyRequiredTargetKnown === true
+        && (
+          requiredPlayerInstanceId === null
+          || (protocol.pendingEmergencyTargets || []).some((target) => (
+            protocol.pendingEmergencyTargetInstances?.[target] === requiredPlayerInstanceId
+            && protocol.emergencyAcknowledgedTargets.includes(target)
+          ))
+        );
+      if (allV2TargetsAcknowledged
+        && protocol.pendingEmergencyLegacyCount === 0
+        && requiredTargetAcknowledged) {
         protocol.leaseStatus = 'inactive';
         protocol.pendingEmergencyCommandId = null;
         protocol.pendingEmergencyControlInstanceId = null;
+        protocol.pendingEmergencyRequiredPlayerInstanceId = null;
+        protocol.pendingEmergencyRequiredTargetKnown = false;
         protocol.pendingEmergencyTargets = [];
         protocol.pendingEmergencyTargetInstances = {};
         protocol.emergencyAcknowledgedTargets = [];
+        protocol.confirmedPlayback = {
+          status: 'stopped',
+          reasonCode: 'emergency_stop_acknowledged',
+          position: 0,
+          paused: true,
+          sourceDetached: true,
+          autoplayCancelled: true,
+          audible: false,
+          lastSeenAt: Date.now()
+        };
+        candidate.transport = { ...(candidate.transport || {}), status: 'stopped', position: 0 };
       }
       return {
         status: 'applied',
@@ -3472,84 +3670,127 @@ export class SessionRoom {
         const attachment = other.deserializeAttachment() || {};
         return attachment.role === role && attachment.negotiationState !== 'unnegotiated';
       });
-    const session = await this.getSession();
-    const candidateSession = session ? structuredClone(session) : null;
-    let shouldPersist = false;
-    let transportChanged = false;
-    if (session && role === 'control' && closingAttachment.protocolVersion === PROTOCOL_V2
-      && closingAttachment.negotiationState === 'negotiated') {
-      const protocol = this.ensureProtocolV2(candidateSession);
-      const sameOwnerConnected = this.ctx.getWebSockets().some((candidate) => {
-        if (candidate === socket) return false;
-        const attachment = candidate.deserializeAttachment() || {};
-        return attachment.role === 'control'
-          && attachment.protocolVersion === PROTOCOL_V2
-          && attachment.negotiationState === 'negotiated'
-          && attachment.controlInstanceId === closingAttachment.controlInstanceId;
-      });
-      if (protocol.writableControlInstanceId === closingAttachment.controlInstanceId && !sameOwnerConnected) {
-        protocol.controlEpoch += 1;
-        protocol.writableControlInstanceId = null;
-        shouldPersist = true;
+    const releaseDurableQueue = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      const session = await this.getSession();
+      const candidateSession = session ? structuredClone(session) : null;
+      let shouldPersist = false;
+      let transportChanged = false;
+      if (session && role === 'control' && closingAttachment.protocolVersion === PROTOCOL_V2
+        && closingAttachment.negotiationState === 'negotiated') {
+        const protocol = this.ensureProtocolV2(candidateSession);
+        const sameOwnerConnected = this.ctx.getWebSockets().some((candidate) => {
+          if (candidate === socket) return false;
+          const attachment = candidate.deserializeAttachment() || {};
+          return attachment.role === 'control'
+            && attachment.protocolVersion === PROTOCOL_V2
+            && attachment.negotiationState === 'negotiated'
+            && attachment.controlInstanceId === closingAttachment.controlInstanceId;
+        });
+        if (protocol.writableControlInstanceId === closingAttachment.controlInstanceId && !sameOwnerConnected) {
+          protocol.controlEpoch += 1;
+          protocol.writableControlInstanceId = null;
+          shouldPersist = true;
+        }
       }
-    }
-    if (session && role === 'player' && closingAttachment.protocolVersion === PROTOCOL_V2) {
-      const protocol = this.ensureProtocolV2(candidateSession);
-      const sameInstanceConnected = this.livePlayerRecords(socket)
-        .some(({ attachment }) => attachment.playerInstanceId === closingAttachment.playerInstanceId);
-      if (protocol.leaseTarget === closingAttachment.playerInstanceId && !sameInstanceConnected) {
-        protocol.leaseStatus = 'unknown';
-        protocol.confirmedPlayback = {
-          status: 'unknown',
-          reasonCode: 'target_disconnected',
-          playerInstanceId: closingAttachment.playerInstanceId,
-          leaseEpoch: protocol.leaseEpoch
-        };
-        if (['loading', 'playing', 'buffering', 'ready'].includes(candidateSession.transport?.status)) {
+      if (session && role === 'player' && closingAttachment.protocolVersion === PROTOCOL_V2) {
+        const protocol = this.ensureProtocolV2(candidateSession);
+        const sameInstanceConnected = this.livePlayerRecords(socket)
+          .some(({ attachment }) => attachment.playerInstanceId === closingAttachment.playerInstanceId);
+        if (protocol.leaseTarget === closingAttachment.playerInstanceId && !sameInstanceConnected) {
+          protocol.leaseStatus = 'unknown';
+          protocol.confirmedPlayback = {
+            status: 'unknown',
+            reasonCode: 'target_disconnected',
+            playerInstanceId: closingAttachment.playerInstanceId,
+            leaseEpoch: protocol.leaseEpoch
+          };
+          if (['loading', 'playing', 'buffering', 'ready'].includes(candidateSession.transport?.status)) {
+            candidateSession.transport = { ...candidateSession.transport, status: 'unknown' };
+            transportChanged = true;
+          }
+          shouldPersist = true;
+        }
+      }
+      if (!this.hasConnectedPlayer(socket)) {
+        // A disconnected media element did not prove that it paused. Preserve
+        // uncertainty explicitly instead of manufacturing a paused confirmation.
+        if (candidateSession && ['loading', 'playing', 'buffering'].includes(candidateSession.transport?.status)) {
           candidateSession.transport = { ...candidateSession.transport, status: 'unknown' };
+          shouldPersist = true;
           transportChanged = true;
         }
-        shouldPersist = true;
+        await this.ctx.storage.setAlarm(Date.now() + SESSION_GRACE_MS);
+        this.activeOutputHeartbeatAlarmKnown = false;
       }
-    }
-    if (!this.hasConnectedPlayer(socket)) {
-      // A disconnected media element did not prove that it paused. Preserve
-      // uncertainty explicitly instead of manufacturing a paused confirmation.
-      if (candidateSession && ['loading', 'playing', 'buffering'].includes(candidateSession.transport?.status)) {
-        candidateSession.transport = { ...candidateSession.transport, status: 'unknown' };
-        shouldPersist = true;
-        transportChanged = true;
+      if (session && shouldPersist) {
+        await this.ctx.storage.put('session', candidateSession);
+        this.adoptPersistedSession(session, candidateSession);
       }
-      await this.ctx.storage.setAlarm(Date.now() + SESSION_GRACE_MS);
-    }
-    if (session && shouldPersist) {
-      await this.ctx.storage.put('session', candidateSession);
-      this.adoptPersistedSession(session, candidateSession);
-    }
-    if (closingAttachment.negotiationState !== 'unnegotiated') {
-      if (role === 'control') {
-        this.broadcastLegacyPlayers({ type: 'presence', role, connected: stillConnected });
-      } else {
-        this.broadcastLegacyControls({ type: 'presence', role, connected: stillConnected });
+      if (closingAttachment.negotiationState !== 'unnegotiated') {
+        if (role === 'control') {
+          this.broadcastLegacyPlayers({ type: 'presence', role, connected: stillConnected });
+        } else {
+          this.broadcastLegacyControls({ type: 'presence', role, connected: stillConnected });
+        }
       }
+      if (session && transportChanged) {
+        this.broadcastLegacyControls({ type: 'transport', transport: session.transport });
+      }
+      if (session) this.broadcastProtocolV2Snapshot(session, socket);
+    } finally {
+      releaseDurableQueue();
     }
-    if (session && transportChanged) {
-      this.broadcastLegacyControls({ type: 'transport', transport: session.transport });
-    }
-    if (session) this.broadcastProtocolV2Snapshot(session, socket);
   }
 
   async alarm() {
-    const session = await this.getSession();
-    if (!session) return;
-    if (session.status === 'ended') {
-      await this.deleteAssets(session);
-      return;
+    // Cloudflare reports getAlarm() as null while the alarm handler is
+    // running, so any still-needed deadline must be explicitly re-armed.
+    this.activeOutputHeartbeatAlarmKnown = false;
+    const releaseDurableQueue = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      // Re-read both the authoritative session reference and live socket state
+      // only after every in-flight hello/close/event mutation has committed.
+      // Otherwise a grace alarm can end a player that has just re-enrolled.
+      const session = await this.getSession();
+      if (!session) return;
+      if (session.status === 'ended') {
+        await this.deleteAssets(session);
+        return;
+      }
+      if (!this.hasConnectedPlayer()) {
+        await this.endSessionWhileDurableQueueHeld(session, 'player_disconnected');
+        return;
+      }
+      const protocol = this.ensureProtocolV2(session);
+      const issue = this.activeOutputLivenessIssue(session, protocol.leaseTarget);
+      if (issue) {
+        const transitioned = await this.persistActiveOutputUnknown(session, issue, {
+          mutationLockHeld: true
+        });
+        if (transitioned) this.publishActiveOutputUnknown(session);
+        return;
+      }
+      await this.ensureActiveOutputHeartbeatAlarm(session);
+    } finally {
+      releaseDurableQueue();
     }
-    if (!this.hasConnectedPlayer()) await this.endSession(session, 'player_disconnected');
   }
 
   async endSession(session, reason) {
+    const releaseDurableQueue = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      // The caller may have observed `session` before waiting for this queue.
+      // Always finish from the latest adopted durable state instead.
+      const currentSession = await this.getSession();
+      return await this.endSessionWhileDurableQueueHeld(currentSession || session, reason);
+    } finally {
+      releaseDurableQueue();
+    }
+  }
+
+  async endSessionWhileDurableQueueHeld(session, reason) {
+    if (!session) return;
     if (session.status === 'ended') return;
     const candidate = structuredClone(session);
     candidate.status = 'ended';
@@ -3560,6 +3801,7 @@ export class SessionRoom {
     this.adoptPersistedSession(session, candidate);
     for (const socket of this.ctx.getWebSockets()) this.sendSessionEnded(socket, session, reason);
     await this.ctx.storage.setAlarm(session.cleanupAt);
+    this.activeOutputHeartbeatAlarmKnown = false;
   }
 
   async deleteAssets(session) {

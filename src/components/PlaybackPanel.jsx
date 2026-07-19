@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 import { getOutputMessage as t } from '../copy/outputMessages';
 import { derivePlaybackOutputStatus } from '../lib/playbackOutputStatus';
@@ -45,10 +45,16 @@ export default function PlaybackPanel({
   outputMode,
   actualOutputMode,
   outputView = null,
+  outputControlConflict = false,
+  outputControlUnavailable = false,
+  outputControlSafeToTakeOver = false,
+  outputControlTakeover = null,
   outputRouteStable = false,
   outputSwitchState = 'idle',
   onSelectOutputMode,
-  onEmergencyStopOutput
+  onEmergencyStopOutput,
+  onTakeOverOutputControl,
+  onRetryOutputControl
 }) {
   const [previousVolume, setPreviousVolume] = useState(100);
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
@@ -57,8 +63,20 @@ export default function PlaybackPanel({
   // 것을 뿌리에서 없앤다. (Worker 는 seek 을 이미 영속하지 않는다.)
   const [seekDraft, setSeekDraft] = useState(null);
   const [volumeDraft, setVolumeDraft] = useState(null);
-  const commitSeek = () => { if (seekDraft !== null) { onSeek(seekDraft); setSeekDraft(null); } };
-  const commitVolume = () => { if (volumeDraft !== null) { onVolumeChange(volumeDraft); setVolumeDraft(null); } };
+  const commitSeek = () => {
+    if (transportControlsLocked) {
+      setSeekDraft(null);
+      return;
+    }
+    if (seekDraft !== null) { onSeek(seekDraft); setSeekDraft(null); }
+  };
+  const commitVolume = () => {
+    if (transportControlsLocked) {
+      setVolumeDraft(null);
+      return;
+    }
+    if (volumeDraft !== null) { onVolumeChange(volumeDraft); setVolumeDraft(null); }
+  };
   const [isObsSetupOpen, setIsObsSetupOpen] = useState(false);
   const [isPreparingPlayer, setIsPreparingPlayer] = useState(false);
   const [preparedPlayerUrl, setPreparedPlayerUrl] = useState('');
@@ -66,6 +84,8 @@ export default function PlaybackPanel({
   const [preparedDisplayUrl, setPreparedDisplayUrl] = useState('');
   const [isRecoveringOnAir, setIsRecoveringOnAir] = useState(false);
   const [isEmergencyStoppingOutput, setIsEmergencyStoppingOutput] = useState(false);
+  const [controlTransferPhase, setControlTransferPhase] = useState('idle');
+  const [isRetryingOutputControl, setIsRetryingOutputControl] = useState(false);
   const obsSetupTriggerRef = useRef(null);
   const obsDialogRef = useRef(null);
   const obsDialogTitleRef = useRef(null);
@@ -87,10 +107,10 @@ export default function PlaybackPanel({
   const outputRouteStateUnknown = outputView?.statusCode === 'state_unknown';
   const outputLeaseNeedsEmergencyStop = outputRouteStateUnknown
     && ['unknown', 'failed'].includes(outputView?.lease?.status);
-  const normalizedOutputSwitchState = ['idle', 'connecting', 'switching', 'blocked'].includes(outputSwitchState)
+  const normalizedOutputSwitchState = ['idle', 'connecting', 'conflict', 'switching', 'blocked'].includes(outputSwitchState)
     ? outputSwitchState
     : 'blocked';
-  const outputSelectionLocked = ['connecting', 'switching'].includes(normalizedOutputSwitchState)
+  const outputSelectionLocked = ['connecting', 'conflict', 'switching'].includes(normalizedOutputSwitchState)
     || typeof onSelectOutputMode !== 'function';
   const directWidgetUrl = room && publicKeyB64
     ? `${window.location.origin}${window.location.pathname}#/widget?room=${encodeURIComponent(room)}&key=${encodeURIComponent(publicKeyB64)}`
@@ -104,7 +124,10 @@ export default function PlaybackPanel({
   const isFailed = activePhase === 'failed';
   const isStarting = activePhase === 'starting';
   const controlsLocked = isFinishing || isDiscarding || isFailed;
-  const transportControlsLocked = isStarting || controlsLocked;
+  const outputAuthorityLocked = normalizedOutputSwitchState === 'connecting'
+    || outputControlConflict
+    || outputControlUnavailable;
+  const transportControlsLocked = isStarting || controlsLocked || outputAuthorityLocked;
   const phaseBadgeText = isStarting ? t('playback.phase.preparing')
     : isFinishing ? t('playback.phase.skipping')
     : isDiscarding ? t('playback.phase.discarding')
@@ -180,6 +203,55 @@ export default function PlaybackPanel({
   useEffect(() => {
     if (!outputRouteStateUnknown) setIsEmergencyStoppingOutput(false);
   }, [outputRouteStateUnknown]);
+
+  const requestControlTakeover = useCallback(() => {
+    if (typeof onTakeOverOutputControl !== 'function') {
+      setControlTransferPhase('failed');
+      return;
+    }
+    setControlTransferPhase('claiming');
+    try {
+      Promise.resolve(onTakeOverOutputControl()).catch(() => {
+        setControlTransferPhase('failed');
+        showToast?.(t('onair.control.takeover.failed'), 'error');
+      });
+    } catch {
+      setControlTransferPhase('failed');
+      showToast?.(t('onair.control.takeover.failed'), 'error');
+    }
+  }, [onTakeOverOutputControl, showToast]);
+
+  useEffect(() => {
+    if (!outputControlConflict) {
+      setControlTransferPhase('idle');
+      return;
+    }
+    if (controlTransferPhase === 'stopping' && outputControlSafeToTakeOver) {
+      requestControlTakeover();
+      return;
+    }
+    if (outputControlTakeover?.status === 'failed') setControlTransferPhase('failed');
+  }, [
+    controlTransferPhase,
+    outputControlConflict,
+    outputControlTakeover?.status,
+    outputControlSafeToTakeOver,
+    requestControlTakeover,
+  ]);
+
+  useEffect(() => {
+    if (!outputControlUnavailable) setIsRetryingOutputControl(false);
+  }, [outputControlUnavailable]);
+
+  useEffect(() => {
+    if (controlTransferPhase !== 'stopping' && controlTransferPhase !== 'claiming') {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setControlTransferPhase('failed');
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [controlTransferPhase]);
 
   // 대화상자를 열면 제목으로 초점을 옮기고, Tab 초점을 내부에 가둔다.
   // 배경 클릭으로는 닫지 않는다. 이후 오디오 점검이 들어와도 실수로 대화상자만
@@ -318,13 +390,49 @@ export default function PlaybackPanel({
     if (!window.confirm(t('obs.setup.recovery.emergencyConfirm'))) return;
     setIsEmergencyStoppingOutput(true);
     try {
-      Promise.resolve(onEmergencyStopOutput()).catch((error) => {
+      Promise.resolve(onEmergencyStopOutput()).catch(() => {
         setIsEmergencyStoppingOutput(false);
         showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
       });
     } catch (error) {
       setIsEmergencyStoppingOutput(false);
       showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
+    }
+  };
+
+  const transferControlToThisTab = () => {
+    if (controlTransferPhase === 'stopping' || controlTransferPhase === 'claiming') return;
+    if (outputControlSafeToTakeOver) {
+      requestControlTakeover();
+      return;
+    }
+    if (typeof onEmergencyStopOutput !== 'function') {
+      setControlTransferPhase('failed');
+      return;
+    }
+    setControlTransferPhase('stopping');
+    try {
+      Promise.resolve(onEmergencyStopOutput()).catch(() => {
+        setControlTransferPhase('failed');
+        showToast?.(t('onair.control.takeover.failed'), 'error');
+      });
+    } catch {
+      setControlTransferPhase('failed');
+      showToast?.(t('onair.control.takeover.failed'), 'error');
+    }
+  };
+
+  const retryOutputControl = () => {
+    if (isRetryingOutputControl || typeof onRetryOutputControl !== 'function') return;
+    setIsRetryingOutputControl(true);
+    try {
+      Promise.resolve(onRetryOutputControl()).catch(() => {
+        setIsRetryingOutputControl(false);
+        showToast?.(t('onair.control.unavailable.failed'), 'error');
+      });
+    } catch {
+      setIsRetryingOutputControl(false);
+      showToast?.(t('onair.control.unavailable.failed'), 'error');
     }
   };
 
@@ -428,15 +536,15 @@ export default function PlaybackPanel({
             <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={transportControlsLocked} title={transportControlsLocked ? t('playback.control.locked') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
-            <button type="button" onClick={toggleMute} className="btn-icon" title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
+            <button type="button" onClick={toggleMute} className="btn-icon" disabled={transportControlsLocked} title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
               {isMuted ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
             </button>
-            <input aria-label={t('playback.control.volume')} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" />
+            <input aria-label={t('playback.control.volume')} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" disabled={transportControlsLocked} />
             {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
-            <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={controlsLocked} title={isFinishing ? t('playback.control.skipFinishing') : isFailed ? t('playback.control.skipFailed') : t('playback.control.skip')}><SkipForward size={17} /></button>
+            <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={transportControlsLocked} title={isFinishing ? t('playback.control.skipFinishing') : isFailed ? t('playback.control.skipFailed') : t('playback.control.skip')}><SkipForward size={17} /></button>
             {isFailed && (
               // §4-5 재시도: 같은 곡을 새 시도(runId)로 다시 재생한다.
-              <button type="button" onClick={() => onRetryCurrent?.()} className="btn-icon" title={t('playback.control.retry')}><RotateCcw size={16} /></button>
+              <button type="button" onClick={() => onRetryCurrent?.()} className="btn-icon" disabled={outputAuthorityLocked} title={t('playback.control.retry')}><RotateCcw size={16} /></button>
             )}
             {/* 다시 예약은 새 entryId의 새 QueueEntry 생성이다(§1) — 코디네이터가 팩토리로 처리. */}
             <button
@@ -450,7 +558,7 @@ export default function PlaybackPanel({
               type="button"
               onClick={() => onDiscardCurrent?.()}
               className="btn-icon btn-icon-danger"
-              disabled={isDiscarding}
+              disabled={isDiscarding || outputAuthorityLocked}
               title={t('playback.control.discard')}
             ><Trash2 size={15} /></button>
           </div>
@@ -526,6 +634,9 @@ export default function PlaybackPanel({
                 {normalizedOutputSwitchState === 'connecting' && (
                   <strong>{t('onair.output.selector.status.connecting')}</strong>
                 )}
+                {normalizedOutputSwitchState === 'conflict' && (
+                  <strong>{t('onair.output.selector.status.otherTab')}</strong>
+                )}
                 {normalizedOutputSwitchState === 'blocked' && (
                   <strong>{t('onair.output.selector.status.blocked')}</strong>
                 )}
@@ -560,7 +671,55 @@ export default function PlaybackPanel({
               </div>
             )}
 
-            {outputLeaseNeedsEmergencyStop && (
+            {outputControlConflict && (
+              <div className="obs-control-transfer" role="status">
+                <div>
+                  <strong>{t('onair.control.otherTab.title')}</strong>
+                  <p>{t('onair.control.otherTab.description')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary obs-recovery-action"
+                  onClick={transferControlToThisTab}
+                  disabled={controlTransferPhase === 'stopping'
+                    || controlTransferPhase === 'claiming'
+                    || typeof onTakeOverOutputControl !== 'function'}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  {controlTransferPhase === 'stopping'
+                    ? t('onair.control.takeover.stopping')
+                    : controlTransferPhase === 'claiming'
+                      ? t('onair.control.takeover.claiming')
+                      : controlTransferPhase === 'failed'
+                        ? t('onair.control.takeover.retry')
+                        : outputControlSafeToTakeOver
+                          ? t('onair.control.takeover.action')
+                          : t('onair.control.takeover.stopAndAction')}
+                </button>
+              </div>
+            )}
+
+            {outputControlUnavailable && !isOnAirInvalid && (
+              <div className="obs-control-transfer" role="status">
+                <div>
+                  <strong>{t('onair.control.unavailable.title')}</strong>
+                  <p>{t('onair.control.unavailable.description')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary obs-recovery-action"
+                  onClick={retryOutputControl}
+                  disabled={isRetryingOutputControl || typeof onRetryOutputControl !== 'function'}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  {isRetryingOutputControl
+                    ? t('onair.control.unavailable.inProgress')
+                    : t('onair.control.unavailable.action')}
+                </button>
+              </div>
+            )}
+
+            {outputLeaseNeedsEmergencyStop && !outputControlConflict && !outputControlUnavailable && (
               <div className="obs-recovery-alert" role="alert">
                 <p>{t('obs.setup.recovery.routeUnknown')}</p>
                 <button

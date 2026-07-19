@@ -1,5 +1,5 @@
 const VALID_OUTPUT_MODES = new Set(['speaker', 'obs']);
-const VALID_SWITCH_STATES = new Set(['idle', 'connecting', 'switching', 'blocked']);
+const VALID_SWITCH_STATES = new Set(['idle', 'connecting', 'conflict', 'switching', 'blocked']);
 
 export function derivePlaybackOutputStatus({
   confirmedOutputMode,
@@ -16,6 +16,9 @@ export function derivePlaybackOutputStatus({
   }
   if (switchState === 'connecting') {
     return { key: 'onair.output.header.active.connecting', tone: 'pending', mode: null };
+  }
+  if (switchState === 'conflict') {
+    return { key: 'onair.output.header.control.otherTab', tone: 'notice', mode: null };
   }
   if (switchState === 'switching') {
     return { key: 'onair.output.header.active.switching', tone: 'pending', mode: null };

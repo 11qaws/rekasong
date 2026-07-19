@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   OnAirControlCoordinator,
 } from '../lib/onAirControlCoordinator.js';
+import { createControlPageIdentity } from '../lib/onAirClientState.js';
 import {
   ON_AIR_OUTPUT_MODES,
   deriveOnAirOutputView,
@@ -186,6 +187,7 @@ function createCoordinator({
   buildId,
   webSocketFactory,
   coordinatorFactory,
+  controlIdentity,
 }) {
   return coordinatorFactory({
     transport: {
@@ -194,6 +196,7 @@ function createCoordinator({
       webSocketFactory,
       buildId,
       capabilities: {},
+      identity: controlIdentity,
     },
   });
 }
@@ -208,6 +211,7 @@ export class OnAirOutputController {
   #buildId;
   #webSocketFactory;
   #coordinatorFactory;
+  #controlIdentity;
   #coordinator = null;
   #coordinatorUnsubscribe = null;
   #snapshot = null;
@@ -239,6 +243,10 @@ export class OnAirOutputController {
     this.#buildId = buildId;
     this.#webSocketFactory = webSocketFactory;
     this.#coordinatorFactory = coordinatorFactory;
+    // One browser page is one control participant. Keep its identity stable
+    // when the socket/coordinator is rebuilt so a reconnect cannot look like a
+    // surprise second tab to the Worker.
+    this.#controlIdentity = createControlPageIdentity();
     this.#replaceCoordinator();
   }
 
@@ -300,6 +308,15 @@ export class OnAirOutputController {
   emergencyStop() {
     this.#assertUsable();
     const result = this.#coordinator.emergencyStop();
+    this.#switchIntent = null;
+    this.#switchState = outputSwitchState();
+    this.#publish();
+    return result;
+  }
+
+  takeOverControl() {
+    this.#assertUsable();
+    const result = this.#coordinator.takeOverControl();
     this.#switchIntent = null;
     this.#switchState = outputSwitchState();
     this.#publish();
@@ -413,8 +430,18 @@ export class OnAirOutputController {
       buildId: this.#buildId,
       webSocketFactory: this.#webSocketFactory,
       coordinatorFactory: this.#coordinatorFactory,
+      controlIdentity: this.#controlIdentity,
     });
-    for (const method of ['connect', 'dispose', 'subscribe', 'snapshot', 'activateOutput', 'deactivateOutput', 'emergencyStop']) {
+    for (const method of [
+      'connect',
+      'dispose',
+      'subscribe',
+      'snapshot',
+      'activateOutput',
+      'deactivateOutput',
+      'emergencyStop',
+      'takeOverControl',
+    ]) {
       if (typeof coordinator?.[method] !== 'function') {
         throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, {
           field: `coordinator.${method}`,
@@ -1041,6 +1068,10 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
     () => requireController().emergencyStop(),
     [requireController],
   );
+  const takeOverControl = useCallback(
+    () => requireController().takeOverControl(),
+    [requireController],
+  );
 
   return {
     ...state,
@@ -1048,5 +1079,6 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
     sendCommand,
     retryConnection,
     emergencyStop,
+    takeOverControl,
   };
 }

@@ -29,9 +29,9 @@ test('Korean output catalog uses semantic keys and non-empty source messages', (
   }
 });
 
-test('requested locales fall back to authoritative Korean without exposing the key', () => {
+test('requested locales use their catalog and unsupported locales fall back without exposing the key', () => {
   const key = 'obs.setup.player.connected';
-  assert.equal(getOutputMessage(key, {}, 'en-US'), outputMessageCatalog.ko[key]);
+  assert.equal(getOutputMessage(key, {}, 'en-US'), outputMessageCatalog.en[key]);
   assert.equal(getOutputMessage(key, {}, 'ja'), outputMessageCatalog.ko[key]);
   assert.equal(getOutputMessage('missing.semantic.key', {}, 'en'), 'missing.semantic.key');
 });
@@ -90,6 +90,18 @@ test('PlaybackPanel keeps compact route controls in the header and diagnostics i
   assert.match(source.slice(detailsStart), /obs\.setup\.recovery\.routeUnknown/);
 });
 
+test('read-only and reconnecting tabs disable every transport mutation', async () => {
+  const source = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
+  assert.match(
+    source,
+    /const outputAuthorityLocked = normalizedOutputSwitchState === 'connecting'[\s\S]*?\|\| outputControlConflict[\s\S]*?\|\| outputControlUnavailable;/,
+  );
+  assert.match(source, /const transportControlsLocked = isStarting \|\| controlsLocked \|\| outputAuthorityLocked;/);
+  assert.match(source, /onClick=\{toggleMute\}[\s\S]*?disabled=\{transportControlsLocked\}/);
+  assert.match(source, /aria-label=\{t\('playback\.control\.volume'\)\}[\s\S]*?disabled=\{transportControlsLocked\}/);
+  assert.match(source, /onClick=\{\(\) => onSkip\(\)\}[\s\S]*?disabled=\{transportControlsLocked\}/);
+});
+
 test('compact output header and settings diagnostics have Korean and English copy', () => {
   const keys = [
     'onair.output.header.active.speaker',
@@ -114,6 +126,120 @@ test('compact output header and settings diagnostics have Korean and English cop
     assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean copy for ${key}`);
     assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English copy for ${key}`);
   }
+});
+
+test('prepare status and control ownership copy is complete in Korean and English', () => {
+  const keys = [
+    'prepare.badge.ready.label',
+    'prepare.badge.ready.title',
+    'prepare.badge.preparing.label',
+    'prepare.badge.preparing.title',
+    'prepare.badge.failed.label',
+    'prepare.badge.unavailable.label',
+    'prepare.badge.sessionInvalid.label',
+    'prepare.badge.sessionEnded.label',
+    'prepare.badge.networkError.label',
+    'prepare.badge.serverError.label',
+    'prepare.badge.temporarilyUnavailable.label',
+    'prepare.badge.blocked.label',
+    'prepare.badge.reasonDetail',
+    'prepare.block.unavailable',
+    'prepare.block.failed',
+    'prepare.block.sessionInvalid',
+    'prepare.block.sessionEnded',
+    'prepare.block.networkError',
+    'prepare.block.serverError',
+    'prepare.block.temporarilyUnavailable',
+    'prepare.block.blocked',
+    'prepare.block.preparing',
+    'prepare.action.retry.label',
+    'prepare.action.retry.title',
+    'prepare.action.retry.notice',
+    'prepare.action.refreshConnection.label',
+    'prepare.action.refreshConnection.title',
+    'prepare.action.playNow.title',
+    'queue.region.label',
+    'queue.heading',
+    'queue.action.clear.title',
+    'queue.autoplay.summary',
+    'queue.autoplay.on',
+    'queue.autoplay.off',
+    'queue.autoplay.label',
+    'queue.empty',
+    'queue.action.playNow.label',
+    'queue.action.remove.title',
+    'queue.history.summary',
+    'queue.history.manual.title.placeholder',
+    'queue.history.manual.title.label',
+    'queue.history.manual.artist.placeholder',
+    'queue.history.manual.artist.label',
+    'queue.history.manual.add.title',
+    'queue.history.manual.add.label',
+    'queue.history.empty',
+    'queue.history.reorder.title',
+    'queue.history.replay.title',
+    'queue.history.replay.unavailableTitle',
+    'queue.history.remove.title',
+    'onair.output.header.control.otherTab',
+    'onair.output.selector.status.otherTab',
+    'onair.control.otherTab.title',
+    'onair.control.otherTab.description',
+    'onair.control.takeover.action',
+    'onair.control.takeover.stopAndAction',
+    'onair.control.takeover.stopping',
+    'onair.control.takeover.claiming',
+    'onair.control.takeover.retry',
+    'onair.control.takeover.failed',
+    'onair.control.unavailable.title',
+    'onair.control.unavailable.description',
+    'onair.control.unavailable.action',
+    'onair.control.unavailable.inProgress',
+    'onair.control.unavailable.failed',
+  ];
+
+  for (const key of keys) {
+    assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean copy for ${key}`);
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English copy for ${key}`);
+  }
+});
+
+test('initial output setup copy is calm and does not claim a server failure', () => {
+  assert.equal(outputMessageCatalog.ko['onair.output.header.active.connecting'], '재생 준비 중');
+  assert.equal(outputMessageCatalog.en['onair.output.header.active.connecting'], 'Preparing playback');
+  assert.doesNotMatch(outputMessageCatalog.ko['onair.output.selector.status.connecting'], /서버|실패|오류/);
+  assert.match(outputMessageCatalog.ko['onair.output.selector.status.connecting'], /정상 단계/);
+  assert.match(outputMessageCatalog.en['onair.output.selector.status.connecting'], /normal/i);
+  assert.doesNotMatch(outputMessageCatalog.ko['obs.setup.server.connecting'], /대기|실패|오류/);
+  assert.match(outputMessageCatalog.ko['obs.setup.player.waiting'], /아직 열리지 않았습니다/);
+  assert.match(outputMessageCatalog.ko['obs.setup.display.waiting'], /아직 열리지 않았습니다/);
+  for (const key of [
+    'obs.setup.server.connecting',
+    'obs.setup.player.waiting',
+    'obs.setup.display.waiting',
+  ]) {
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing calm English setup copy for ${key}`);
+  }
+});
+
+test('QueuePanel uses translation keys and no longer displays the ambiguous server-wait label', async () => {
+  const source = await readFile(new URL('../src/components/QueuePanel.jsx', import.meta.url), 'utf8');
+  const executableSource = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(source, /서버 연결 대기/);
+  assert.doesNotMatch(executableSource, /[가-힣]/, 'visible QueuePanel copy must use translation keys');
+  const usedKeys = [...source.matchAll(/\bt\('([^']+)'/g)].map((match) => match[1]);
+  const missingKorean = [...new Set(usedKeys)]
+    .filter((key) => !Object.hasOwn(outputMessageCatalog.ko, key));
+  const missingEnglish = [...new Set(usedKeys)]
+    .filter((key) => !Object.hasOwn(outputMessageCatalog.en, key));
+  assert.deepEqual(missingKorean, []);
+  assert.deepEqual(missingEnglish, []);
+  assert.match(source, /prepare\.badge\.sessionInvalid\.label/);
+  assert.match(source, /prepare\.badge\.sessionEnded\.label/);
+  assert.match(source, /prepare\.badge\.networkError\.label/);
+  assert.match(source, /prepare\.badge\.serverError\.label/);
+  assert.match(source, /prepare\.action\.refreshConnection\.label/);
 });
 
 test('the output selector state contract has Korean fallback copy for every public action and gate', () => {

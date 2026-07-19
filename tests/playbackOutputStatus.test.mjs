@@ -34,6 +34,7 @@ test('transition and terminal states take precedence over cached actual routes',
   const cases = [
     [{ isSessionInvalid: true }, 'onair.output.header.active.attention', 'attention'],
     [{ outputSwitchState: 'connecting' }, 'onair.output.header.active.connecting', 'pending'],
+    [{ outputSwitchState: 'conflict' }, 'onair.output.header.control.otherTab', 'notice'],
     [{ outputSwitchState: 'switching' }, 'onair.output.header.active.switching', 'pending'],
     [{ outputSwitchState: 'blocked' }, 'onair.output.header.active.attention', 'attention'],
   ];

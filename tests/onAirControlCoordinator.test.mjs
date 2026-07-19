@@ -7,6 +7,7 @@ import {
 } from '../src/lib/onAirControlCoordinator.js';
 import {
   AUXILIARY_CONTROL_COMMAND_TYPES,
+  CONTROL_COMMAND_TYPES,
   ON_AIR_MESSAGE_TYPES,
   ON_AIR_PROTOCOL_VERSION,
   ON_AIR_SEQUENCE_NAMESPACES,
@@ -296,6 +297,187 @@ test('requires matching writable welcome and control lease before every command'
     );
     assert.equal(connection.commands.length, 0);
   }
+});
+
+test('a safe read-only controller takes authority only after its exact ACK and snapshot proof', () => {
+  const { coordinator, connection } = createHarness({
+    welcome: controlWelcome({
+      writable: false,
+      writableControlInstanceId: 'control-b',
+      code: 'control_lease_read_only',
+    }),
+    snapshot: playerSnapshot({
+      controlLease: {
+        controlEpoch: 3,
+        writableControlInstanceId: 'control-b',
+        writableConnected: true,
+      },
+    }),
+  });
+
+  assert.equal(coordinator.snapshot().writable, false);
+  const takeover = coordinator.takeOverControl();
+  assert.deepEqual(takeover.command, {
+    type: CONTROL_COMMAND_TYPES.TAKEOVER,
+    commandId: takeover.command.commandId,
+    controlInstanceId: 'control-a',
+    expectedControlEpoch: 3,
+  });
+  assert.equal(validateOnAirMessage(takeover.command).ok, true);
+  assert.deepEqual(coordinator.snapshot().pendingTakeover, {
+    status: 'pending',
+    commandId: takeover.command.commandId,
+    expectedControlEpoch: 3,
+    reasonCode: null,
+  });
+
+  connection.result({
+    status: 'acknowledged',
+    retryAllowed: false,
+    entry: {
+      commandId: takeover.command.commandId,
+      command: takeover.command,
+      state: 'acknowledged',
+      result: {
+        code: 'control_lease_granted',
+        controlEpoch: 4,
+        writableControlInstanceId: 'control-a',
+      },
+    },
+  });
+  assert.equal(coordinator.snapshot().pendingTakeover, null);
+  assert.equal(
+    coordinator.snapshot().writable,
+    false,
+    'the ACK advances the welcome proof but cannot replace the broadcast lease snapshot',
+  );
+
+  connection.frame(playerSnapshot({
+    controlLease: {
+      controlEpoch: 4,
+      writableControlInstanceId: 'control-a',
+      writableConnected: true,
+    },
+  }));
+  assert.equal(coordinator.snapshot().writable, true);
+  assert.equal(coordinator.snapshot().welcome.controlEpoch, 4);
+  assert.deepEqual(coordinator.snapshot().pendingCommandIds, []);
+  assert.equal(connection.commands.length, 1, 'authority confirmation never replays the takeover');
+});
+
+test('takeover also converges when the authoritative snapshot arrives before its ACK', () => {
+  const { coordinator, connection } = createHarness({
+    welcome: controlWelcome({
+      writable: false,
+      writableControlInstanceId: 'control-b',
+      code: 'control_lease_read_only',
+    }),
+    snapshot: playerSnapshot({
+      controlLease: {
+        controlEpoch: 3,
+        writableControlInstanceId: 'control-b',
+        writableConnected: true,
+      },
+    }),
+  });
+  const takeover = coordinator.takeOverControl();
+
+  connection.frame(playerSnapshot({
+    controlLease: {
+      controlEpoch: 4,
+      writableControlInstanceId: 'control-a',
+      writableConnected: true,
+    },
+  }));
+  assert.equal(coordinator.snapshot().writable, false, 'a snapshot alone does not settle the command');
+  assert.equal(coordinator.snapshot().pendingTakeover.status, 'pending');
+
+  connection.result({
+    status: 'acknowledged',
+    retryAllowed: false,
+    entry: {
+      commandId: takeover.command.commandId,
+      command: takeover.command,
+      state: 'acknowledged',
+      result: {
+        code: 'control_lease_granted',
+        controlEpoch: 4,
+        writableControlInstanceId: 'control-a',
+      },
+    },
+  });
+  assert.equal(coordinator.snapshot().writable, true);
+  assert.equal(coordinator.snapshot().pendingTakeover, null);
+  assert.equal(connection.commands.length, 1);
+});
+
+test('a read-only controller cannot take authority while an output lease is audible', () => {
+  const { coordinator, connection } = createHarness({
+    welcome: controlWelcome({
+      writable: false,
+      writableControlInstanceId: 'control-b',
+      code: 'control_lease_read_only',
+    }),
+    snapshot: readyOutputSnapshot({
+      lease: { status: 'audible' },
+      controlLease: {
+        controlEpoch: 3,
+        writableControlInstanceId: 'control-b',
+        writableConnected: true,
+      },
+    }),
+  });
+
+  assertCoordinatorError(
+    () => coordinator.takeOverControl(),
+    ON_AIR_CONTROL_COORDINATOR_CODES.ACTIVE_WORK_PRESENT,
+  );
+  assert.equal(connection.commands.length, 0);
+  assert.equal(coordinator.snapshot().pendingTakeover, null);
+});
+
+test('an unknown takeover outcome is exposed as failed and permanently fences authority', () => {
+  const { coordinator, connection } = createHarness({
+    welcome: controlWelcome({
+      writable: false,
+      writableControlInstanceId: 'control-b',
+      code: 'control_lease_read_only',
+    }),
+    snapshot: playerSnapshot({
+      controlLease: {
+        controlEpoch: 3,
+        writableControlInstanceId: 'control-b',
+        writableConnected: true,
+      },
+    }),
+  });
+  const takeover = coordinator.takeOverControl();
+
+  connection.result({
+    status: 'outcome_unknown',
+    retryAllowed: false,
+    entry: {
+      commandId: takeover.command.commandId,
+      command: takeover.command,
+      state: 'outcome_unknown',
+    },
+  });
+
+  assert.deepEqual(coordinator.snapshot().pendingTakeover, {
+    status: 'failed',
+    commandId: takeover.command.commandId,
+    expectedControlEpoch: 3,
+    reasonCode: ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
+  });
+  assert.equal(
+    coordinator.snapshot().unknownLock.code,
+    ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
+  );
+  assertCoordinatorError(
+    () => coordinator.takeOverControl(),
+    ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
+  );
+  assert.equal(connection.commands.length, 1, 'an unknown takeover is never retried automatically');
 });
 
 test('activation requires one eligible candidate and an inactive null lease', () => {
