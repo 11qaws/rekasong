@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
+import { getOutputMessage as t } from '../copy/outputMessages';
 
-// 위젯 연결 칩 — 서버가 중계하는 **실제 위젯 presence**에만 근거한다(진실성).
-// 초록은 연결 성공에만 절제해서 쓰고, 대기 상태는 회색 점으로 둔다.
-// 주소를 OBS에 넣는 즉시 초록으로 바뀌는 것이 "행동이 먹혔다"는 즉각 피드백이다.
+// 위젯 연결 칩 — 서버가 중계하는 **일반 브라우저 페이지 presence**에만 근거한다.
+// 이 값만으로 OBS CEF, 오디오 믹서, 녹화/송출 경로를 확인했다고 말하면 안 된다.
 function WidgetStatusChip({ connected, connectedLabel, waitingLabel }) {
   return (
     <span className={`obs-player-status ${connected ? 'is-on' : 'is-waiting'}`} role="status">
@@ -54,6 +54,9 @@ export default function PlaybackPanel({
   const [preparedPlayerUrl, setPreparedPlayerUrl] = useState('');
   const [isPreparingDisplay, setIsPreparingDisplay] = useState(false);
   const [preparedDisplayUrl, setPreparedDisplayUrl] = useState('');
+  const obsSetupTriggerRef = useRef(null);
+  const obsDialogRef = useRef(null);
+  const obsDialogTitleRef = useRef(null);
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
@@ -72,10 +75,66 @@ export default function PlaybackPanel({
   const isDiscarding = activePhase === 'discarding';
   const isFailed = activePhase === 'failed';
   const controlsLocked = isFinishing || isDiscarding || isFailed;
-  const phaseBadgeText = isFinishing ? '스킵 중…'
-    : isDiscarding ? '취소 중…'
-    : isFailed ? '재생 실패'
-    : isPlaying ? '● ON AIR' : 'Ⅱ 일시정지';
+  const phaseBadgeText = isFinishing ? t('playback.phase.skipping')
+    : isDiscarding ? t('playback.phase.discarding')
+    : isFailed ? t('playback.phase.failed')
+    : isPlaying ? t('playback.phase.onAir') : t('playback.phase.paused');
+
+  // 대화상자를 열면 제목으로 초점을 옮기고, Tab 초점을 내부에 가둔다.
+  // 배경 클릭으로는 닫지 않는다. 이후 오디오 점검이 들어와도 실수로 대화상자만
+  // 사라지고 테스트가 계속되는 상태를 만들지 않기 위한 안전한 기본값이다.
+  useEffect(() => {
+    if (!isObsSetupOpen) return undefined;
+
+    const previouslyFocused = document.activeElement;
+    const setupTrigger = obsSetupTriggerRef.current;
+    const dialog = obsDialogRef.current;
+    const focusFrame = window.requestAnimationFrame(() => obsDialogTitleRef.current?.focus());
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setIsObsSetupOpen(false);
+        return;
+      }
+
+      if (event.key !== 'Tab' || !dialog) return;
+
+      const focusableElements = Array.from(dialog.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => !element.hasAttribute('hidden'));
+
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey && (activeElement === first || activeElement === obsDialogTitleRef.current || !dialog.contains(activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (activeElement === last || !dialog.contains(activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleKeyDown);
+      if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      } else {
+        setupTrigger?.focus();
+      }
+    };
+  }, [isObsSetupOpen]);
 
   const formatTime = (seconds) => {
     if (!seconds || Number.isNaN(seconds)) return '0:00';
@@ -89,7 +148,7 @@ export default function PlaybackPanel({
       await navigator.clipboard.writeText(url);
       showToast?.(successMessage, 'success');
     } catch {
-      showToast?.('위젯 주소를 복사하지 못했습니다.', 'error');
+      showToast?.(t('obs.setup.copyFailed'), 'error');
     }
   };
 
@@ -102,7 +161,7 @@ export default function PlaybackPanel({
       setPreparedPlayerUrl(url || '');
       return url;
     } catch (error) {
-      showToast?.(error.message || 'On-Air 플레이어를 준비하지 못했습니다.', 'error');
+      showToast?.(error.message || t('obs.setup.player.prepareFailed'), 'error');
       return '';
     } finally {
       setIsPreparingPlayer(false);
@@ -111,7 +170,7 @@ export default function PlaybackPanel({
 
   const copyPlayerUrl = async () => {
     const url = await preparePlayer();
-    if (url) copyUrl(url, 'OBS On-Air 플레이어 주소를 복사했습니다.');
+    if (url) copyUrl(url, t('obs.setup.player.urlCopied'));
   };
 
   const prepareDisplay = async () => {
@@ -123,7 +182,7 @@ export default function PlaybackPanel({
       setPreparedDisplayUrl(url || '');
       return url;
     } catch (error) {
-      showToast?.(error.message || '화면 정보 위젯을 준비하지 못했습니다.', 'error');
+      showToast?.(error.message || t('obs.setup.display.prepareFailed'), 'error');
       return '';
     } finally {
       setIsPreparingDisplay(false);
@@ -132,7 +191,7 @@ export default function PlaybackPanel({
 
   const copyDisplayUrl = async () => {
     const url = await prepareDisplay();
-    if (url) copyUrl(url, 'OBS 화면 정보 위젯 주소를 복사했습니다.');
+    if (url) copyUrl(url, t('obs.setup.display.urlCopied'));
   };
 
   const toggleMute = () => {
@@ -144,12 +203,22 @@ export default function PlaybackPanel({
   };
 
   return (
-    <section className="panel playback-panel glass-card" aria-label="현재 재생 제어">
+    <section className="panel playback-panel glass-card" aria-label={t('playback.region.label')}>
       <div className="playback-panel-header">
-        <div className="playback-heading"><ListMusic size={17} /> 현재 재생</div>
+        <div className="playback-heading"><ListMusic size={17} /> {t('playback.heading')}</div>
         <div className="playback-header-actions">
           {currentSong && <span className={`on-air-badge ${isPlaying && !controlsLocked ? '' : 'is-paused'}`}>{phaseBadgeText}</span>}
-          <button type="button" onClick={() => setIsObsSetupOpen(true)} className="btn-icon" title="OBS 연결 설정" aria-label="OBS 연결 설정">
+          <button
+            ref={obsSetupTriggerRef}
+            type="button"
+            onClick={() => setIsObsSetupOpen(true)}
+            className="btn-icon"
+            title={t('obs.setup.openLabel')}
+            aria-label={t('obs.setup.openLabel')}
+            aria-haspopup="dialog"
+            aria-expanded={isObsSetupOpen}
+            aria-controls="obs-setup-dialog"
+          >
             <Settings size={16} />
           </button>
         </div>
@@ -159,31 +228,28 @@ export default function PlaybackPanel({
         <div className="playback-now">
           <div className="playback-title-row">
             <strong>{currentSong.title}</strong>
-            <div className="visualizer-container" aria-hidden="true">
-              {[0, 1, 2, 3, 4].map((bar) => <i key={bar} className={isPlaying ? 'playing' : ''} />)}
-            </div>
           </div>
           <div className="playback-controls">
             {/* finishing/discarding/failed 중 일반 재생 조작 잠금(§4-3, §4-5). */}
-            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={controlsLocked} title={controlsLocked ? '지금은 재생/일시정지를 할 수 없습니다' : isPlaying ? '일시정지' : '재생'}>
+            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={controlsLocked} title={controlsLocked ? t('playback.control.locked') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
-            <button type="button" onClick={toggleMute} className="btn-icon" title={isMuted ? '음소거 해제' : '음소거'}>
+            <button type="button" onClick={toggleMute} className="btn-icon" title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
               {isMuted ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
             </button>
-            <input aria-label="볼륨" type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" />
+            <input aria-label={t('playback.control.volume')} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" />
             {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
-            <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={controlsLocked} title={isFinishing ? '스킵 확인 중 — 곡이 끝나면 다음 곡으로 넘어갑니다' : isFailed ? '실패한 곡은 다시 재생하거나 버려 주세요' : '다음 곡으로 스킵'}><SkipForward size={17} /></button>
+            <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={controlsLocked} title={isFinishing ? t('playback.control.skipFinishing') : isFailed ? t('playback.control.skipFailed') : t('playback.control.skip')}><SkipForward size={17} /></button>
             {isFailed && (
               // §4-5 재시도: 같은 곡을 새 시도(runId)로 다시 재생한다.
-              <button type="button" onClick={() => onRetryCurrent?.()} className="btn-icon" title="같은 곡 다시 재생 (새 시도)"><RotateCcw size={16} /></button>
+              <button type="button" onClick={() => onRetryCurrent?.()} className="btn-icon" title={t('playback.control.retry')}><RotateCcw size={16} /></button>
             )}
             {/* 다시 예약은 새 entryId의 새 QueueEntry 생성이다(§1) — 코디네이터가 팩토리로 처리. */}
             <button
               type="button"
               onClick={() => onRequeueCurrent?.()}
               className="btn-icon"
-              title="현재 곡 다시 예약"
+              title={t('playback.control.requeue')}
             ><Repeat size={16} /></button>
             {/* §4-4 현재 곡 쓰레기통 — finishing 중에도 허용되는 유일한 전이(§4-3). */}
             <button
@@ -191,44 +257,57 @@ export default function PlaybackPanel({
               onClick={() => onDiscardCurrent?.()}
               className="btn-icon btn-icon-danger"
               disabled={isDiscarding}
-              title="현재 곡 버리기 — 이력에 남지 않고 다음 곡을 자동 재생하지 않습니다"
+              title={t('playback.control.discard')}
             ><Trash2 size={15} /></button>
           </div>
           {isFailed ? (
             <div className="playback-progress">
               {/* 실패 사유는 진행 바 자리에 보인다(§1-1 "왜 멈췄는가"). 전체 문구는 title로. */}
-              <span className="mr-unavailable" title={failureDetail || '재생에 실패했습니다.'}>
-                {(failureDetail || '재생에 실패했습니다.').slice(0, 48)} — 다시 재생하거나 버려 주세요.
+              <span className="mr-unavailable" title={failureDetail || t('playback.failure.default')}>
+                {t('playback.failure.withAction', { detail: (failureDetail || t('playback.failure.default')).slice(0, 48) })}
               </span>
             </div>
           ) : (
             <div className="playback-progress">
               <span>{formatTime(currentTime)}</span>
-              <input aria-label="재생 위치" type="range" min="0" max={duration || 100} value={seekDraft ?? currentTime} onChange={(event) => setSeekDraft(Number(event.target.value))} onPointerUp={commitSeek} onKeyUp={commitSeek} onBlur={commitSeek} className="progress-slider" disabled={controlsLocked} />
+              <input aria-label={t('playback.control.seek')} type="range" min="0" max={duration || 100} value={seekDraft ?? currentTime} onChange={(event) => setSeekDraft(Number(event.target.value))} onPointerUp={commitSeek} onKeyUp={commitSeek} onBlur={commitSeek} className="progress-slider" disabled={controlsLocked} />
               <span>{formatTime(duration)}</span>
             </div>
           )}
         </div>
       ) : (
-        <div className="playback-idle"><Play size={17} /> 재생 중인 곡이 없습니다. 아래에서 곡을 추가하세요.</div>
+        <div className="playback-idle"><Play size={17} /> {t('playback.idle')}</div>
       )}
 
       {isObsSetupOpen && (
-        <div className="obs-setup-backdrop" role="presentation" onMouseDown={() => setIsObsSetupOpen(false)}>
-          <section className="obs-setup-dialog" role="dialog" aria-modal="true" aria-label="OBS 연결 설정" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="obs-setup-backdrop" role="presentation">
+          <section
+            id="obs-setup-dialog"
+            ref={obsDialogRef}
+            className="obs-setup-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="obs-setup-title"
+            aria-describedby="obs-setup-description"
+            tabIndex={-1}
+          >
             <header>
               <div>
-                <span className="obs-setup-eyebrow">처음 한 번 · 다시 설정할 때만</span>
-                <h2>OBS 연결 설정</h2>
+                <span className="obs-setup-eyebrow">{t('obs.setup.eyebrow')}</span>
+                <h2 id="obs-setup-title" ref={obsDialogTitleRef} tabIndex={-1}>{t('obs.setup.title')}</h2>
               </div>
-              <button type="button" className="btn-icon" onClick={() => setIsObsSetupOpen(false)} aria-label="닫기"><X size={18} /></button>
+              <button type="button" className="btn-icon" onClick={() => setIsObsSetupOpen(false)} aria-label={t('obs.setup.closeLabel')}><X size={18} /></button>
             </header>
 
-            <p className="obs-setup-intro">
-              OBS에 브라우저 소스 <strong>2개</strong>를 아래 순서대로 추가하면 끝납니다.
-              소스 추가 창에서 <strong>‘로컬 파일’은 체크 해제</strong>한 채 주소(URL) 칸에 붙여넣으세요.
-              소리는 2번(On-Air 플레이어) 소스에서만 나옵니다.
+            <p id="obs-setup-description" className="obs-setup-intro">
+              {t('obs.setup.intro')}
             </p>
+
+            {!isDirectMode && (
+              <p className="obs-session-url-note" role="note">
+                {t('obs.setup.sessionUrl')}
+              </p>
+            )}
 
             {/* 대시보드↔서버(control) 상태 — 아래 위젯 연결 칩과는 별개의 정보라
                 무채색 한 줄로 구분한다. "서버 준비"를 위젯 연결로 오해하지 않게. */}
@@ -236,84 +315,92 @@ export default function PlaybackPanel({
               <p className="obs-server-note">
                 <span className={`obs-status-dot ${onAirStatus === 'connected' ? 'is-live' : ''}`} aria-hidden="true" />
                 {onAirStatus === 'connected'
-                  ? '방송 서버 연결됨 — OBS 위젯 연결 여부는 각 단계의 표시등으로 확인하세요.'
+                  ? t('obs.setup.server.connected')
                   : (playerUrl || displayUrl)
-                    ? '방송 서버에 연결하는 중입니다…'
-                    : '아래에서 주소를 만들면 방송 서버에 연결됩니다.'}
+                    ? t('obs.setup.server.connecting')
+                    : t('obs.setup.server.notStarted')}
               </p>
             )}
 
             <ol className="obs-setup-steps">
               <li>
+                <span className="obs-setup-step-icon"><Radio size={18} /></span>
+                <div>
+                  <strong>{t('obs.setup.player.stepTitle')} <span className="obs-step-requirement is-required">{t('obs.setup.player.requirement')}</span></strong>
+                  <p>{t('obs.setup.player.instruction')}</p>
+                  <button type="button" onClick={copyPlayerUrl} className="btn-copy" disabled={isPreparingPlayer || onAirStatus === 'unconfigured'}>
+                    {isPreparingPlayer ? t('obs.setup.player.preparing') : <><Copy size={14} /> {playerUrl ? t('obs.setup.player.copyUrl') : t('obs.setup.player.prepareAndCopy')}</>}
+                  </button>
+                  {isDirectMode ? (
+                    <span className="obs-player-status is-waiting">
+                      <span className="obs-status-dot" aria-hidden="true" /> {t('obs.setup.player.serverRequired')}
+                    </span>
+                  ) : (
+                    // 이 presence는 일반 player 페이지 연결만 뜻한다. OBS CEF 또는
+                    // 최종 방송 오디오가 확인됐다는 의미로 사용하지 않는다.
+                    <WidgetStatusChip
+                      connected={Boolean(onAirPlayerConnected)}
+                      connectedLabel={t('obs.setup.player.connected')}
+                      waitingLabel={t('obs.setup.player.waiting')}
+                    />
+                  )}
+                </div>
+              </li>
+              <li>
                 <span className="obs-setup-step-icon"><MonitorUp size={18} /></span>
                 <div>
-                  <strong>1. 화면 정보 위젯 — 곡 정보를 화면에 보여줍니다</strong>
-                  <p>브라우저 소스로 추가하고 크기는 방송 화면 전체(예: 1920×1080)로 맞춥니다. 소리가 나지 않는 무음 위젯입니다.</p>
+                  <strong>{t('obs.setup.display.stepTitle')} <span className="obs-step-requirement">{t('obs.setup.display.requirement')}</span></strong>
+                  <p>{t('obs.setup.display.instruction')}</p>
                   {isDirectMode ? (
                     // N-01: On-Air 서버가 없는 직접 재생 모드에서는 room&key 구독형
                     // 위젯 주소를 복사한다. 표시 내용은 축소 projection(현재 곡·setlist)뿐이다.
                     <button
                       type="button"
-                      onClick={() => copyUrl(directWidgetUrl, '화면 정보 위젯 주소를 복사했습니다.')}
+                      onClick={() => copyUrl(directWidgetUrl, t('obs.setup.display.directUrlCopied'))}
                       className="btn-copy"
                       disabled={!directWidgetUrl}
-                      title={directWidgetUrl ? '이 브라우저에서 재생하는 동안 현재 곡·setlist를 보여 주는 위젯 주소' : '위젯 키를 준비하는 중입니다. 잠시 후 다시 시도해 주세요.'}
+                      title={directWidgetUrl ? t('obs.setup.display.directUrlTitle') : t('obs.setup.display.directUrlPendingTitle')}
                     >
-                      <Copy size={14} /> {directWidgetUrl ? '주소 복사' : '위젯 키 준비 중…'}
+                      <Copy size={14} /> {directWidgetUrl ? t('obs.setup.display.copyUrl') : t('obs.setup.display.keyPreparing')}
                     </button>
                   ) : (
                     <>
                       <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay}>
-                        {isPreparingDisplay ? '준비 중…' : <><Copy size={14} /> {displayUrl ? '주소 복사' : '위젯 준비 후 주소 복사'}</>}
+                        {isPreparingDisplay ? t('obs.setup.player.preparing') : <><Copy size={14} /> {displayUrl ? t('obs.setup.display.copyUrl') : t('obs.setup.display.prepareAndCopy')}</>}
                       </button>
-                      {/* 실제 위젯 presence 기반 — OBS에 넣는 즉시 초록으로 바뀐다. */}
                       <WidgetStatusChip
                         connected={Boolean(onAirDisplayConnected)}
-                        connectedLabel="화면 정보 위젯 연결됨"
-                        waitingLabel="OBS에 주소를 넣으면 여기 초록불이 켜집니다"
+                        connectedLabel={t('obs.setup.display.connected')}
+                        waitingLabel={t('obs.setup.display.waiting')}
                       />
                     </>
                   )}
                 </div>
               </li>
-              <li>
-                <span className="obs-setup-step-icon"><Radio size={18} /></span>
-                <div>
-                  <strong>2. On-Air 플레이어 — 노랫소리를 방송에 싣습니다</strong>
-                  <p>브라우저 소스를 하나 더 추가합니다. 화면에는 보이지 않으니 크기는 그대로 둬도 됩니다. OBS 오디오 믹서에는 이 소스 하나만 남기세요.</p>
-                  <button type="button" onClick={copyPlayerUrl} className="btn-copy" disabled={isPreparingPlayer || onAirStatus === 'unconfigured'}>
-                    {isPreparingPlayer ? '준비 중…' : <><Copy size={14} /> {playerUrl ? '주소 복사' : '플레이어 준비 후 주소 복사'}</>}
-                  </button>
-                  {isDirectMode ? (
-                    <span className="obs-player-status is-waiting">
-                      <span className="obs-status-dot" aria-hidden="true" /> On-Air 서버를 연결하면 주소를 준비할 수 있습니다
-                    </span>
-                  ) : (
-                    // 과거에는 대시보드 자신의 서버 연결(onAirStatus)로 "연결됨"을
-                    // 표시해 위젯 없이도 초록불이 켜졌다. 이제 실제 presence 만 믿는다.
-                    <WidgetStatusChip
-                      connected={Boolean(onAirPlayerConnected)}
-                      connectedLabel="OBS 플레이어 연결됨 — 재생을 시작할 수 있습니다"
-                      waitingLabel="OBS에 주소를 넣으면 여기 초록불이 켜집니다"
-                    />
-                  )}
-                </div>
-              </li>
             </ol>
+
+            <section className="obs-source-settings" aria-labelledby="obs-source-settings-title">
+              <h3 id="obs-source-settings-title">{t('obs.setup.lifecycle.title')}</h3>
+              <ul>
+                <li><strong>{t('obs.setup.lifecycle.shutdownSetting')}</strong>: {t('obs.setup.lifecycle.shutdownGuidance')}</li>
+                <li><strong>{t('obs.setup.lifecycle.refreshSetting')}</strong>: {t('obs.setup.lifecycle.refreshGuidance')}</li>
+              </ul>
+              <p>{t('obs.setup.lifecycle.policyNote')}</p>
+            </section>
 
             {onEndBroadcastSession && (
               <div className="obs-session-actions">
-                <p>방송을 완전히 마치면 세션을 종료해 현재 곡·대기열·다시 부르기 목록과 임시 로컬 파일을 함께 정리합니다.</p>
+                <p>{t('obs.setup.session.endDescription')}</p>
                 <button
                   type="button"
                   className="btn-secondary"
                   onClick={() => {
-                    if (window.confirm('방송 세션을 종료할까요? 현재 재생·대기열·이전 재생 목록과 임시 로컬 파일이 정리됩니다.')) {
+                    if (window.confirm(t('obs.setup.session.endConfirm'))) {
                       onEndBroadcastSession();
                       setIsObsSetupOpen(false);
                     }
                   }}
-                >방송 세션 종료</button>
+                >{t('obs.setup.session.endButton')}</button>
               </div>
             )}
           </section>

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const STORAGE_KEY = 'rekasong-on-air-session-v1';
-const SESSION_BASE_URL = String(import.meta.env.VITE_ON_AIR_BASE_URL || '').trim().replace(/\/$/, '');
+const SESSION_BASE_URL = String(import.meta.env?.VITE_ON_AIR_BASE_URL || '').trim().replace(/\/$/, '');
+const IDLE_TRANSPORT = Object.freeze({ status: 'idle', song: null, position: 0, volume: 100 });
+const EMPTY_WIDGET_PRESENCE = Object.freeze({ player: false, display: false });
+
+export const LEGACY_CONTROL_DISABLED_ERROR_CODE = 'ON_AIR_LEGACY_CONTROL_DISABLED';
+
+export const resolveLegacyControlEnabled = (options) => options?.enabled !== false;
 
 const readStoredSession = () => {
   try {
@@ -29,17 +35,208 @@ const toWebSocketUrl = (baseUrl, path) => {
   return url.toString();
 };
 
-export function useOnAirSession(onEvent) {
+const createDisabledError = () => {
+  const error = new Error(LEGACY_CONTROL_DISABLED_ERROR_CODE);
+  error.code = LEGACY_CONTROL_DISABLED_ERROR_CODE;
+  return error;
+};
+
+/**
+ * Owns the legacy control socket independently from React's effect lifetime.
+ * Keeping one manager in a ref lets a StrictMode cleanup close the old socket
+ * before the following setup creates its replacement.
+ */
+export function createLegacyControlSocketManager({
+  baseUrl,
+  webSocketFactory,
+  schedule = (callback, delay) => window.setTimeout(callback, delay),
+  cancel = (timer) => window.clearTimeout(timer),
+  onConnectionState = () => {},
+  onTransport = () => {},
+  onPresence = () => {},
+  onSessionEnded = () => {},
+  onEvent = () => {},
+  commandIdFactory = commandId
+}) {
+  let activeLease = null;
+  let currentSocket = null;
+  let pendingLease = null;
+  let reconnectTimer = null;
+  let reconnectAttempts = 0;
+  let nextLeaseId = 0;
+  let lastConnectionState = null;
+
+  const publishConnectionState = (state) => {
+    lastConnectionState = state;
+    onConnectionState(state);
+  };
+
+  const isCurrentLease = (lease) => activeLease === lease && lease.enabled && !lease.ended;
+
+  const clearReconnect = () => {
+    if (reconnectTimer !== null) cancel(reconnectTimer);
+    reconnectTimer = null;
+  };
+
+  const resetObservedTruth = () => {
+    onTransport({ ...IDLE_TRANSPORT });
+    onPresence({ ...EMPTY_WIDGET_PRESENCE });
+  };
+
+  const closeSocket = (socket) => {
+    if (!socket || socket.readyState === 2 || socket.readyState === 3) return;
+    socket.close();
+  };
+
+  const connect = (lease) => {
+    if (!isCurrentLease(lease) || !baseUrl || !lease.session) return;
+
+    if (currentSocket?.socket?.readyState === 3) currentSocket = null;
+    if (currentSocket) {
+      pendingLease = lease;
+      closeSocket(currentSocket.socket);
+      return;
+    }
+
+    pendingLease = null;
+    publishConnectionState('connecting');
+    const url = new URL(`/v1/sessions/${lease.session.room}/ws`, baseUrl);
+    url.searchParams.set('role', 'control');
+    url.searchParams.set('token', lease.session.controlToken);
+    const socket = webSocketFactory(toWebSocketUrl(baseUrl, `${url.pathname}?${url.searchParams.toString()}`));
+    currentSocket = { socket, lease };
+
+    socket.onopen = () => {
+      if (currentSocket?.socket !== socket || !isCurrentLease(lease)) {
+        closeSocket(socket);
+        return;
+      }
+      reconnectAttempts = 0;
+      publishConnectionState('connected');
+    };
+
+    socket.onmessage = (event) => {
+      if (currentSocket?.socket !== socket || !isCurrentLease(lease)) return;
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.transport) onTransport(payload.transport);
+        if (payload.type === 'snapshot') {
+          onPresence({
+            player: Boolean(payload.presence?.player),
+            display: Boolean(payload.presence?.display)
+          });
+        }
+        if (payload.type === 'presence' && (payload.role === 'player' || payload.role === 'display')) {
+          onPresence((previous) => ({ ...previous, [payload.role]: Boolean(payload.connected) }));
+        }
+        if (payload.type === 'session_ended') {
+          lease.ended = true;
+          clearReconnect();
+          pendingLease = null;
+          onSessionEnded();
+          publishConnectionState('ended');
+          closeSocket(socket);
+        }
+        onEvent(payload);
+      } catch {
+        // Ignore malformed status updates without dropping a live transport connection.
+      }
+    };
+
+    socket.onclose = (event) => {
+      if (currentSocket?.socket !== socket) return;
+      currentSocket = null;
+
+      const queuedLease = pendingLease;
+      pendingLease = null;
+      if (queuedLease && isCurrentLease(queuedLease)) {
+        connect(queuedLease);
+        return;
+      }
+      if (!isCurrentLease(lease)) return;
+
+      onPresence({ ...EMPTY_WIDGET_PRESENCE });
+      if (event.code === 1008 || event.code === 1011) {
+        lease.ended = true;
+        onSessionEnded();
+        publishConnectionState('ended');
+        return;
+      }
+
+      publishConnectionState('reconnecting');
+      reconnectAttempts += 1;
+      const delay = Math.min(30000, 1500 * 1.5 ** (reconnectAttempts - 1));
+      reconnectTimer = schedule(() => {
+        reconnectTimer = null;
+        connect(lease);
+      }, delay);
+    };
+
+    socket.onerror = () => closeSocket(socket);
+  };
+
+  const deactivate = (lease) => {
+    if (activeLease !== lease) return;
+    activeLease = null;
+    clearReconnect();
+    if (pendingLease === lease) pendingLease = null;
+    if (currentSocket?.lease === lease) closeSocket(currentSocket.socket);
+  };
+
+  const activate = ({ enabled = true, session = null } = {}) => {
+    if (activeLease) deactivate(activeLease);
+    const lease = { id: ++nextLeaseId, enabled: enabled !== false, ended: false, session };
+    activeLease = lease;
+    clearReconnect();
+    reconnectAttempts = 0;
+    pendingLease = null;
+
+    if (!lease.enabled) {
+      resetObservedTruth();
+      publishConnectionState(baseUrl ? 'disabled' : 'unconfigured');
+    } else if (!baseUrl) {
+      resetObservedTruth();
+      publishConnectionState('unconfigured');
+    } else if (session) {
+      connect(lease);
+    } else {
+      resetObservedTruth();
+      if (lastConnectionState !== 'ended') publishConnectionState('connecting');
+    }
+
+    return () => deactivate(lease);
+  };
+
+  const send = (command) => {
+    if (!isCurrentLease(activeLease)) throw createDisabledError();
+    const socket = currentSocket?.lease === activeLease ? currentSocket.socket : null;
+    if (!socket || socket.readyState !== 1) {
+      const error = new Error('OBS On-Air 위젯이 연결되어 있지 않습니다.');
+      error.code = 'ON_AIR_LEGACY_CONTROL_NOT_CONNECTED';
+      throw error;
+    }
+    const message = { type: 'command', command: { ...command, commandId: command.commandId || commandIdFactory() } };
+    socket.send(JSON.stringify(message));
+    return message.command.commandId;
+  };
+
+  return { activate, send };
+}
+
+export function useOnAirSession(onEvent, options) {
+  const enabled = resolveLegacyControlEnabled(options);
   const [session, setSession] = useState(readStoredSession);
-  const [connectionState, setConnectionState] = useState(SESSION_BASE_URL ? 'connecting' : 'unconfigured');
-  const [transport, setTransport] = useState({ status: 'idle', song: null, position: 0, volume: 100 });
+  const [connectionState, setConnectionState] = useState(
+    SESSION_BASE_URL ? (enabled ? 'connecting' : 'disabled') : 'unconfigured'
+  );
+  const [transport, setTransport] = useState({ ...IDLE_TRANSPORT });
   // OBS 위젯(player·display)의 실제 연결 여부 — connectionState(대시보드↔서버)와
   // 별개의 진실이다. 스냅숏의 presence 로 초기화하고 이후 presence 이벤트로 갱신한다.
-  const [widgetPresence, setWidgetPresence] = useState({ player: false, display: false });
-  const socketRef = useRef(null);
-  const reconnectRef = useRef(null);
+  const [widgetPresence, setWidgetPresence] = useState({ ...EMPTY_WIDGET_PRESENCE });
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   // 최신 세션 거울 + 생성 중 프라미스: 동시 호출(스테이징 자동 준비 ↔ '주소 복사')이
   // 겹쳐도 세션은 반드시 하나만 만든다. 두 개가 생기면 위젯과 대시보드가 서로 다른
   // 세션에 붙어 "주소를 넣었는데 초록불이 안 켜지는" 고아 세션이 된다(라이브 실측).
@@ -50,8 +247,8 @@ export function useOnAirSession(onEvent) {
     persistSession(null);
     sessionRef.current = null;
     setSession(null);
-    setTransport({ status: 'idle', song: null, position: 0, volume: 100 });
-    setWidgetPresence({ player: false, display: false });
+    setTransport({ ...IDLE_TRANSPORT });
+    setWidgetPresence({ ...EMPTY_WIDGET_PRESENCE });
   }, []);
 
   const createSession = useCallback(async () => {
@@ -74,14 +271,30 @@ export function useOnAirSession(onEvent) {
     return createInFlightRef.current;
   }, [createSession]);
 
+  const managerCallbacksRef = useRef(null);
+  managerCallbacksRef.current = {
+    setConnectionState,
+    setTransport,
+    setWidgetPresence,
+    clearSession,
+    emitEvent: (payload) => eventRef.current?.(payload)
+  };
+  const managerRef = useRef(null);
+  if (!managerRef.current) {
+    managerRef.current = createLegacyControlSocketManager({
+      baseUrl: SESSION_BASE_URL,
+      webSocketFactory: (url) => new WebSocket(url),
+      onConnectionState: (state) => managerCallbacksRef.current?.setConnectionState(state),
+      onTransport: (value) => managerCallbacksRef.current?.setTransport(value),
+      onPresence: (value) => managerCallbacksRef.current?.setWidgetPresence(value),
+      onSessionEnded: () => managerCallbacksRef.current?.clearSession(),
+      onEvent: (payload) => managerCallbacksRef.current?.emitEvent(payload)
+    });
+  }
+
   const sendCommand = useCallback((command) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error('OBS On-Air 위젯이 연결되어 있지 않습니다.');
-    }
-    const message = { type: 'command', command: { ...command, commandId: command.commandId || commandId() } };
-    socket.send(JSON.stringify(message));
-    return message.command.commandId;
+    if (!enabledRef.current) throw createDisabledError();
+    return managerRef.current.send(command);
   }, []);
 
   const uploadAsset = useCallback(async (file, onProgress) => {
@@ -113,77 +326,8 @@ export function useOnAirSession(onEvent) {
   }, [ensureSession]);
 
   useEffect(() => {
-    if (!SESSION_BASE_URL || !session) return undefined;
-
-    let disposed = false;
-    // 재접속 지수 백오프(Antigravity cb4c80d): Worker 지속 실패 시 1.5초 고정
-    // 재접속은 Cloudflare 로 지속 신호를 쏘는 폭주가 된다. onopen 에서 0 리셋.
-    let reconnectAttempts = 0;
-    const connect = () => {
-      if (disposed) return;
-      setConnectionState('connecting');
-      const url = new URL(`/v1/sessions/${session.room}/ws`, SESSION_BASE_URL);
-      url.searchParams.set('role', 'control');
-      url.searchParams.set('token', session.controlToken);
-      const socket = new WebSocket(toWebSocketUrl(SESSION_BASE_URL, `${url.pathname}?${url.searchParams.toString()}`));
-      socketRef.current = socket;
-
-      socket.onopen = () => {
-        reconnectAttempts = 0;
-        if (!disposed) setConnectionState('connected');
-      };
-      socket.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload.transport) setTransport(payload.transport);
-          if (payload.type === 'snapshot') {
-            // 재접속 포함 — 스냅숏이 위젯 presence 의 기준 진실이다.
-            // (구버전 Worker 스냅숏에 presence 가 없으면 안전하게 false.)
-            setWidgetPresence({
-              player: Boolean(payload.presence?.player),
-              display: Boolean(payload.presence?.display)
-            });
-          }
-          if (payload.type === 'presence' && (payload.role === 'player' || payload.role === 'display')) {
-            setWidgetPresence((previous) => ({ ...previous, [payload.role]: Boolean(payload.connected) }));
-          }
-          if (payload.type === 'session_ended') {
-            clearSession();
-            setConnectionState('ended');
-          }
-          eventRef.current?.(payload);
-        } catch {
-          // Ignore malformed status updates without dropping a live transport connection.
-        }
-      };
-      socket.onclose = (event) => {
-        if (socketRef.current === socket) socketRef.current = null;
-        if (disposed) return;
-        // control 소켓이 끊기면 위젯 상태를 관측할 수 없다 — 낙관적 잔상(stale
-        // presence) 대신 미확인=false 로 되돌린다. 재접속 시 스냅숏이 즉시 복원한다.
-        // (disposed=의도된 소켓 교체는 새 스냅숏이 바로 재동기화하므로 제외.)
-        setWidgetPresence({ player: false, display: false });
-        if (event.code === 1008 || event.code === 1011) {
-          clearSession();
-          setConnectionState('ended');
-          return;
-        }
-        setConnectionState('reconnecting');
-        reconnectAttempts += 1;
-        const delay = Math.min(30000, 1500 * 1.5 ** (reconnectAttempts - 1));
-        reconnectRef.current = window.setTimeout(connect, delay);
-      };
-      socket.onerror = () => socket.close();
-    };
-
-    connect();
-    return () => {
-      disposed = true;
-      if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
-      if (socketRef.current) socketRef.current.close();
-      socketRef.current = null;
-    };
-  }, [clearSession, session]);
+    return managerRef.current.activate({ enabled, session });
+  }, [enabled, session]);
 
   const playerUrl = session && SESSION_BASE_URL
     ? `${window.location.origin}${window.location.pathname}#/widget?mode=player&session=${encodeURIComponent(session.room)}&token=${encodeURIComponent(session.playerToken)}&api=${encodeURIComponent(SESSION_BASE_URL)}`
@@ -221,11 +365,11 @@ export function useOnAirSession(onEvent) {
 
   return {
     configured: Boolean(SESSION_BASE_URL),
-    connectionState,
+    connectionState: enabled ? connectionState : (SESSION_BASE_URL ? 'disabled' : 'unconfigured'),
     // OBS 위젯의 실제 연결 여부(서버 presence 근거) — connectionState 와 혼동 금지.
-    playerConnected: widgetPresence.player,
-    displayConnected: widgetPresence.display,
-    transport,
+    playerConnected: enabled ? widgetPresence.player : false,
+    displayConnected: enabled ? widgetPresence.display : false,
+    transport: enabled ? transport : IDLE_TRANSPORT,
     session,
     playerUrl,
     displayUrl,

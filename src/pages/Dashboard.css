@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Nanum+Pen+Script&display=swap');
+
 /* Dashboard Base - Eureka Signature Theme
    [Phase 08 반응형 통일] wide(>1100px)에서는 대시보드가 뷰포트(100vh)에 잠기고
    페이지 스크롤 없이 각 패널의 리스트만 내부 스크롤한다. narrow(<=1100px)에서는
@@ -517,38 +519,6 @@
   color: var(--text-muted);
 }
 
-/* Audio Visualizer */
-.visualizer-container {
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 20px;
-  margin-top: 10px;
-}
-
-.visualizer-bar {
-  width: 4px;
-  background-color: var(--eureka-emerald);
-  border-radius: 2px;
-  height: 4px;
-  transition: height 0.1s ease;
-}
-
-.visualizer-bar.playing {
-  animation: visualize 1s ease-in-out infinite alternate;
-}
-
-.visualizer-bar.playing:nth-child(1) { animation-delay: 0.1s; }
-.visualizer-bar.playing:nth-child(2) { animation-delay: 0.3s; }
-.visualizer-bar.playing:nth-child(3) { animation-delay: 0.2s; }
-.visualizer-bar.playing:nth-child(4) { animation-delay: 0.5s; }
-.visualizer-bar.playing:nth-child(5) { animation-delay: 0.4s; }
-
-@keyframes visualize {
-  0% { height: 4px; }
-  100% { height: 20px; }
-}
-
 .btn-remove {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-muted);
@@ -1013,12 +983,6 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .playback-now { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 1rem; }
 .playback-title-row { min-width: 0; display: flex; align-items: center; gap: 0.7rem; }
 .playback-title-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.1rem; }
-.playback-title-row .visualizer-container { margin-left: auto; }
-.visualizer-container i { display: inline-block; width: 3px; height: 9px; margin: 0 1px; border-radius: 4px; background: var(--text-muted); }
-.visualizer-container i.playing { background: var(--eureka-emerald); animation: visualizerDance 0.8s ease-in-out infinite alternate; }
-.visualizer-container i:nth-child(2) { animation-delay: 0.16s; }
-.visualizer-container i:nth-child(3) { animation-delay: 0.32s; }
-.visualizer-container i:nth-child(4) { animation-delay: 0.12s; }
 .playback-controls { display: flex; align-items: center; gap: 0.35rem; }
 .playback-controls .volume-slider { width: 110px; }
 /* 재생 버튼: 네온 에메랄드가 허용되는 '현재 재생' 핵심 CTA. 아이콘은 네이비로 대비 확보 */
@@ -1034,21 +998,29 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .obs-setup-dialog h2 { margin: 0.1rem 0 0; font-size: 1.25rem; }
 .obs-setup-eyebrow { color: var(--text-muted); font-size: 0.74rem; font-weight: 700; }
 .obs-setup-intro { margin: 1rem 0; color: var(--text-muted); font-size: 0.88rem; line-height: 1.55; }
+.obs-session-url-note { margin: -0.25rem 0 0.85rem; padding: 0.65rem 0.75rem; border: 1px solid rgba(109, 154, 189, 0.38); border-radius: 8px; background: rgba(109, 154, 189, 0.08); color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; }
 .obs-setup-steps { display: grid; gap: 0.7rem; margin: 0; padding: 0; list-style: none; }
 .obs-setup-steps li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 0.7rem; padding: 0.85rem; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--bg-deep); }
 .obs-setup-step-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--bg-mid); color: var(--chr-vest); }
 .obs-setup-steps strong { display: block; font-size: 0.91rem; }
+.obs-step-requirement { display: inline-flex; margin-left: 0.35rem; padding: 0.1rem 0.38rem; border: 1px solid var(--glass-border); border-radius: 999px; color: var(--text-muted); font-size: 0.66rem; font-weight: 700; vertical-align: 0.08rem; }
+.obs-step-requirement.is-required { border-color: rgba(109, 154, 189, 0.55); color: var(--eureka-azure); }
 .obs-setup-steps p { margin: 0.24rem 0 0.55rem; color: var(--text-muted); font-size: 0.79rem; line-height: 1.45; }
 .obs-setup-steps .btn-copy { display: inline-flex; width: auto; align-items: center; gap: 0.35rem; }
 .obs-player-status { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.55rem; color: var(--text-muted); font-size: 0.76rem; transition: color 0.2s ease; }
-/* 위젯 연결 성공 — 초록은 여기(성공 상태)에만 절제해서 쓴다. */
-.obs-player-status.is-on { color: var(--chr-vest); font-weight: 700; }
+/* 페이지 presence는 OBS 송출 성공이 아니므로 완료색 대신 중립적인 정보색으로 표시한다. */
+.obs-player-status.is-on { color: var(--eureka-azure); font-weight: 700; }
 .obs-player-status.is-waiting { color: var(--text-muted); }
-/* 대기 표시등: 회색 점. 연결되면 칩 전체가 초록 텍스트+체크로 바뀐다. */
+/* 대기 표시등: 회색 점. 연결되면 칩 전체가 정보색 텍스트+체크로 바뀐다. */
 .obs-status-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.45; }
 /* 대시보드↔서버(control) 상태 — 위젯 연결 칩과 혼동되지 않게 무채색 한 줄. */
 .obs-server-note { display: flex; align-items: center; gap: 0.4rem; margin: -0.35rem 0 0.75rem; color: var(--text-muted); font-size: 0.76rem; }
 .obs-server-note .obs-status-dot.is-live { background: var(--chr-vest); opacity: 0.75; }
+.obs-source-settings { margin-top: 0.8rem; padding: 0.75rem 0.85rem; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--bg-deep); }
+.obs-source-settings h3 { margin: 0; color: var(--text-main); font-size: 0.88rem; }
+.obs-source-settings ul { margin: 0.5rem 0; padding-left: 1.15rem; color: var(--text-muted); font-size: 0.77rem; line-height: 1.55; }
+.obs-source-settings li + li { margin-top: 0.18rem; }
+.obs-source-settings p { margin: 0; color: var(--text-muted); font-size: 0.73rem; line-height: 1.45; }
 .obs-session-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--glass-border); }
 .obs-session-actions p { margin: 0; color: var(--text-muted); font-size: 0.75rem; line-height: 1.45; }
 /* 대기열 패널: 그리드 셀 높이를 정확히 채우고, 리스트만 넘칠 때 내부 스크롤 */
@@ -1154,7 +1126,6 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   .search-input { font-size: 0.9rem; }
   .btn-primary { padding: 0.6rem 1rem; font-size: 0.9rem; }
   .playback-panel { padding: 0.85rem; }
-  .playback-title-row .visualizer-container { display: none; }
   .playback-controls .volume-slider { width: 86px; }
   .playback-progress { width: 100%; }
   .queue-panel { padding: 0.85rem; }

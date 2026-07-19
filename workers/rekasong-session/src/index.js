@@ -4,6 +4,52 @@ const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 const PREPARE_LEASE_MS = 120 * 1000;
+const PROTOCOL_V2 = 2;
+const PLAYER_HEARTBEAT_WARNING_MS = 500;
+const PLAYER_HEARTBEAT_STALE_MS = 2 * 1000;
+const V2_PLAYER_KINDS = ['dashboard-speaker', 'obs-browser-source', 'generic-browser'];
+const V2_OUTPUT_MODES = ['speaker', 'obs'];
+const V2_RUN_COMMANDS = ['load', 'play', 'pause', 'seek', 'volume', 'stop'];
+const V2_ROUTE_COMMANDS = ['activate_output', 'deactivate_output'];
+const V2_TEST_COMMANDS = ['start_test', 'stop_test'];
+const V2_CONTROL_TAKEOVER_COMMAND = 'control_takeover';
+const V2_CONTROL_AUX_COMMANDS = ['end_session', 'display_state', 'prefetch'];
+const V2_PLAYBACK_EVENTS = [
+  'command_received', 'command_applied', 'command_failed',
+  'ready', 'playing', 'paused', 'buffering', 'position', 'ended', 'error', 'level'
+];
+const V2_ROUTE_EVENTS = [
+  'output_deactivated',
+  'output_ready',
+  'output_activation_failed',
+  'output_deactivation_failed'
+];
+const V2_TEST_EVENTS = ['test_started', 'test_marker', 'test_complete', 'test_failed'];
+const V2_TEST_ACTIVE_MEDIA_STATUSES = new Set([
+  'loading', 'ready', 'playing', 'paused', 'buffering'
+]);
+const V2_COMMAND_RESULT_CACHE_MAX_ENTRIES = 32;
+const V2_COMMAND_RESULT_CACHE_MAX_BYTES = 12 * 1024;
+const V2_EVENT_RESULT_CACHE_MAX_ENTRIES = 32;
+const V2_SOCKET_ATTACHMENT_SAFE_MAX_BYTES = 15 * 1024;
+const V2_EVENT_SEQUENCE_NAMESPACES = [
+  'heartbeat', 'runTelemetry', 'runReceipt', 'runAuthoritative',
+  'route', 'test', 'testTelemetry', 'emergency'
+];
+const V2_DURABLE_EVENT_NAMESPACES = ['runAuthoritative', 'route', 'test', 'emergency'];
+const V2_DURABLE_EVENT_MAX_PLAYERS = 4;
+const V2_DURABLE_EVENT_MAX_ENTRIES = 32;
+const V2_DURABLE_EVENT_CHECKPOINT_MAX_BYTES = 64 * 1024;
+const V2_FAILURE_DETAIL_MAX_BYTES = 2 * 1024;
+const V2_TEST_MAX_MARKERS = 64;
+const V2_DURABLE_MUTATION_QUEUE_KEY = Symbol('durable_mutation');
+const V2_ACTIVE_OUTPUT_LIVENESS_REASONS = [
+  'target_disconnected', 'target_heartbeat_stale', 'target_source_inactive'
+];
+const WEBSOCKET_MESSAGE_MAX_BYTES = 64 * 1024;
+const LEGACY_WEBSOCKET_MESSAGE_MAX_BYTES = 1024 * 1024;
+const WEBSOCKET_MESSAGE_MAX_DEPTH = 32;
+const WEBSOCKET_MESSAGE_MAX_NODES = 4096;
 // YouTube videoId는 정확히 11자다. 이 검증이 R2 키(audio/{videoId}) 오염과
 // /v1/prepare/{stats|claim} 리터럴 라우트 충돌을 동시에 막는다.
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
@@ -39,6 +85,124 @@ const assetKey = (room, assetId) => `sessions/${room}/${assetId}`;
 // deleteAssets()가 세션 종료 시 세션 경로를 지우므로, 여기에 섞이면 방송마다
 // 캐시가 사라져 봇월 압력이 되돌아온다. (PREPARE_PIPELINE.md §1)
 const audioKey = (videoId) => `audio/${videoId}`;
+
+// Protocol v2 identity fields are deliberately bounded before they enter a
+// WebSocket attachment or Durable Object storage. They are opaque IDs, not
+// user-facing text; clients localize the stable status/error codes themselves.
+const protocolId = (value, maxLength = 256) => {
+  if (typeof value !== 'string') return null;
+  const candidate = value.trim();
+  const hasControlCharacter = [...candidate]
+    .some((character) => character.codePointAt(0) <= 31 || character.codePointAt(0) === 127);
+  if (!candidate || candidate !== value || candidate.length > maxLength || hasControlCharacter) return null;
+  return candidate;
+};
+
+const finiteEpoch = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+
+const boundedRecord = (value, allowedKeys) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(allowedKeys
+    .filter((key) => ['string', 'number', 'boolean'].includes(typeof value[key]))
+    .map((key) => [key, typeof value[key] === 'string' ? value[key].slice(0, 160) : value[key]]));
+};
+
+const boundedFailureDetail = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const detail = structuredClone(value);
+  const bytes = new TextEncoder().encode(JSON.stringify(detail)).byteLength;
+  if (bytes <= V2_FAILURE_DETAIL_MAX_BYTES) return detail;
+  return { truncated: true, originalBytes: bytes };
+};
+
+// JSON object key order is not an identity. Canonicalization lets retries use
+// the same fingerprint even if a client reconstructs an equivalent object in
+// a different insertion order. Incoming WebSocket messages are JSON, so the
+// supported value set is deliberately the JSON value set.
+const canonicalProtocolJson = (value) => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalProtocolJson).join(',')}]`;
+  return `{${Object.keys(value).sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalProtocolJson(value[key])}`)
+    .join(',')}}`;
+};
+
+// JSON.parse itself is iterative/native, but the canonical fingerprint walk is
+// recursive. Inspect every parsed frame (including unknown future extensions)
+// before any type dispatch or canonicalization so a deeply nested or very wide
+// value cannot turn into unbounded stack/CPU work.
+const inspectProtocolJsonShape = (value) => {
+  const stack = [{ value, depth: 0 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    nodes += 1;
+    if (nodes > WEBSOCKET_MESSAGE_MAX_NODES) {
+      return { ok: false, reason: 'message_too_complex', limit: WEBSOCKET_MESSAGE_MAX_NODES };
+    }
+    if (current.depth > WEBSOCKET_MESSAGE_MAX_DEPTH) {
+      return { ok: false, reason: 'message_too_deep', limit: WEBSOCKET_MESSAGE_MAX_DEPTH };
+    }
+    if (current.value === null || typeof current.value !== 'object') continue;
+    const children = Array.isArray(current.value)
+      ? current.value
+      : Object.values(current.value);
+    for (const child of children) stack.push({ value: child, depth: current.depth + 1 });
+  }
+  return { ok: true };
+};
+
+const decodeWebSocketPayload = (rawMessage, maxBytes) => {
+  if (typeof rawMessage === 'string') {
+    const bytes = new TextEncoder().encode(rawMessage).byteLength;
+    if (bytes > maxBytes) return { ok: false, reason: 'message_too_large', bytes, limit: maxBytes };
+    return { ok: true, text: rawMessage };
+  }
+  if (rawMessage instanceof ArrayBuffer || ArrayBuffer.isView(rawMessage)) {
+    const bytes = rawMessage.byteLength;
+    if (bytes > maxBytes) return { ok: false, reason: 'message_too_large', bytes, limit: maxBytes };
+    return { ok: true, text: new TextDecoder('utf-8', { fatal: true }).decode(rawMessage) };
+  }
+  return { ok: false, reason: 'unsupported_message_encoding' };
+};
+
+// Keep this classification in lock-step with getOnAirSequenceNamespace() in
+// src/lib/onAirProtocol.js. Samples and command receipt evidence must never
+// consume authoritative playback/test lifecycle transition streams.
+const v2EventSequenceNamespace = (message) => {
+  if (message.type === 'player_heartbeat') return 'heartbeat';
+  if (message.type === 'playback_event') {
+    if (message.event === 'position' || message.event === 'level') return 'runTelemetry';
+    if (message.event === 'command_received') return 'runReceipt';
+    return 'runAuthoritative';
+  }
+  if (message.type === 'route_event') return 'route';
+  if (message.type === 'test_event') {
+    return message.event === 'test_marker' ? 'testTelemetry' : 'test';
+  }
+  if (message.type === 'emergency_stop_ack') return 'emergency';
+  return null;
+};
+
+// connectionId is a transport fence, not semantic event content. Excluding it
+// permits an already-applied event result to be recovered after a normal live
+// reconnect while the new connection is still required to present its own ID.
+const canonicalV2EventJson = (message) => {
+  const semantic = { ...message };
+  // Emergency postconditions prove that one exact transport stopped. Unlike
+  // ordinary run/route/test retries, that proof must never migrate to a
+  // replacement connection.
+  if (message.type !== 'emergency_stop_ack') delete semantic.connectionId;
+  return canonicalProtocolJson(semantic);
+};
+
+const isV2ControlCommandType = (type) => V2_RUN_COMMANDS.includes(type)
+  || V2_ROUTE_COMMANDS.includes(type)
+  || V2_TEST_COMMANDS.includes(type)
+  || V2_CONTROL_AUX_COMMANDS.includes(type)
+  || type === V2_CONTROL_TAKEOVER_COMMAND
+  || type === 'emergency_stop';
 
 // botwall은 재시도 자체가 압력이므로 일반 백오프보다 훨씬 길게(5분→30분).
 const retryDelayMs = (failureKind, attempts) => {
@@ -182,6 +346,15 @@ export class SessionRoom {
     // 최적화가 안전하려면, 미영속 변경(진행도)이 같은 인스턴스 내 후속 읽기에
     // 일관되게 보여야 한다 — DO 는 단일 스레드라 이 캐시가 경합 없이 성립한다.
     this.sessionState = null;
+    // Same-live-connection commands can overlap while the first handler awaits
+    // storage. The terminal cache lives in the socket attachment (hibernation
+    // safe); this Map only coalesces that short in-flight window and is rebuilt
+    // empty after a Durable Object restart.
+    this.pendingV2Commands = new Map();
+    // Player events are serialized per instance; authoritative commits also
+    // take one shared queue key so different players cannot overwrite the same
+    // bounded session checkpoint while a storage write is in flight.
+    this.pendingV2EventQueues = new Map();
   }
 
   async fetch(request) {
@@ -209,6 +382,28 @@ export class SessionRoom {
       displayHash: await hashToken(displayToken),
       assets: {},
       transport: { status: 'idle', song: null, sessionId: null, position: 0, volume: 100 },
+      protocolV2: {
+        controlEpoch: 0,
+        writableControlInstanceId: null,
+        leaseEpoch: 0,
+        leaseTarget: null,
+        leaseClientKind: null,
+        leaseStatus: 'inactive',
+        selectedOutputMode: null,
+        switchId: null,
+        activeFamily: null,
+        activeCheckId: null,
+        activeCheckProgress: null,
+        pendingEmergencyCommandId: null,
+        pendingEmergencyControlInstanceId: null,
+        pendingEmergencyTargets: [],
+        pendingEmergencyTargetInstances: {},
+        emergencyAcknowledgedTargets: [],
+        pendingEmergencyLegacyCount: 0,
+        playerEventCheckpoints: [],
+        desiredTransport: { status: 'idle', song: null, entryId: null, runId: null, position: 0, volume: 100 },
+        confirmedPlayback: { status: 'unknown', reasonCode: 'not_confirmed' }
+      },
       display: { currentSong: null, history: [] },
       endedAt: null,
       cleanupAt: null
@@ -267,7 +462,14 @@ export class SessionRoom {
     const url = new URL(request.url);
     const role = url.searchParams.get('role');
     const token = url.searchParams.get('token') || '';
+    const requestedProtocol = url.searchParams.get('protocol');
     if (!['control', 'player', 'display'].includes(role)) return json({ error: 'Invalid socket role' }, 400);
+    if (requestedProtocol && requestedProtocol !== String(PROTOCOL_V2)) {
+      return json({ error: 'unsupported_socket_protocol' }, 400);
+    }
+    if (requestedProtocol === String(PROTOCOL_V2) && role === 'display') {
+      return json({ error: 'unsupported_socket_protocol_role' }, 400);
+    }
 
     const session = await this.getSession();
     if (!session || session.status !== 'active' || !(await this.authenticate(session, token, role))) {
@@ -276,52 +478,2825 @@ export class SessionRoom {
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
+    const protocolV2OptIn = requestedProtocol === String(PROTOCOL_V2);
     this.ctx.acceptWebSocket(server, [role]);
-    server.serializeAttachment({ role });
+    server.serializeAttachment({
+      role,
+      protocolVersion: protocolV2OptIn ? PROTOCOL_V2 : 1,
+      negotiationState: protocolV2OptIn ? 'unnegotiated' : 'legacy',
+      connectionId: crypto.randomUUID(),
+      connectedAt: Date.now(),
+      lastSeenAt: Date.now()
+    });
     // The OBS player being back is the only signal that broadcast output is
     // live again. A controller refresh must not keep abandoned media alive.
-    if (role === 'player') await this.ctx.storage.deleteAlarm();
-    this.send(server, {
-      type: 'snapshot',
-      transport: session.transport,
-      display: session.display || { currentSong: null, history: [] },
-      // 현재 위젯 연결 상태(런타임 소켓 집계 — 스토리지 스키마 불변).
-      // control 이 언제 붙거나 재접속해도 이미 연결된 위젯을 즉시 안다.
-      presence: this.connectedWidgetPresence(),
-      session: { room: session.room, status: session.status }
-    });
+    if (role === 'player' && !protocolV2OptIn) await this.ctx.storage.deleteAlarm();
+    if (!protocolV2OptIn) {
+      this.send(server, {
+        type: 'snapshot',
+        transport: session.transport,
+        display: session.display || { currentSong: null, history: [] },
+        // 현재 위젯 연결 상태(런타임 소켓 집계 — 스토리지 스키마 불변).
+        // control 이 언제 붙거나 재접속해도 이미 연결된 위젯을 즉시 안다.
+        presence: this.connectedWidgetPresence(),
+        protocolV2: this.protocolV2Snapshot(session),
+        session: { room: session.room, status: session.status }
+      });
+    }
     // 위젯(player·display) 연결은 control 에, control 연결은 player 에 알린다.
     // display 도 대칭으로 브로드캐스트한다 — OBS 설정 흐름에서 화면 정보 위젯이
     // 실제로 들어왔는지 대시보드가 확인해야 하기 때문.
-    if (role === 'player' || role === 'display') this.broadcast({ type: 'presence', role, connected: true }, 'control');
-    if (role === 'control') this.broadcast({ type: 'presence', role, connected: true }, 'player');
+    if (!protocolV2OptIn && (role === 'player' || role === 'display')) {
+      this.broadcastLegacyControls({ type: 'presence', role, connected: true });
+    }
+    if (!protocolV2OptIn && role === 'control') {
+      this.broadcastLegacyPlayers({ type: 'presence', role, connected: true });
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(socket, rawMessage) {
+    const attachment = socket.deserializeAttachment() || {};
+    const maxBytes = attachment.protocolVersion === PROTOCOL_V2
+      ? WEBSOCKET_MESSAGE_MAX_BYTES
+      : LEGACY_WEBSOCKET_MESSAGE_MAX_BYTES;
+    let decoded;
     let message;
     try {
-      message = JSON.parse(typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage));
+      decoded = decodeWebSocketPayload(rawMessage, maxBytes);
+      if (!decoded.ok) return this.sendInvalidMessage(socket, decoded);
+      message = JSON.parse(decoded.text);
     } catch {
-      return this.send(socket, { type: 'error', code: 'invalid_message' });
+      return this.sendInvalidMessage(socket, { reason: 'invalid_json' });
+    }
+    const shape = inspectProtocolJsonShape(message);
+    if (!shape.ok || !message || typeof message !== 'object' || Array.isArray(message)) {
+      return this.sendInvalidMessage(socket, shape.ok ? { reason: 'message_must_be_object' } : shape);
     }
 
-    const role = socket.deserializeAttachment()?.role;
+    const role = attachment.role;
     const session = await this.getSession();
-    if (!session || session.status !== 'active') return this.send(socket, { type: 'session_ended' });
+    if (!session || session.status !== 'active') {
+      if (role === 'control' && attachment.protocolVersion === PROTOCOL_V2
+        && attachment.negotiationState === 'negotiated') {
+        if (isV2ControlCommandType(message.type)
+          && await this.replayCachedV2Command(socket, message)) return;
+        if (!isV2ControlCommandType(message.type)
+          && this.rejectCachedV2CommandIdConflict(socket, message)) return;
+      }
+      return this.sendSessionEnded(socket, session, 'session_inactive');
+    }
 
     if (role === 'control') {
+      if (message.type === 'control_hello') {
+        await this.handleControlHello(socket, session, message);
+        return;
+      }
+
+      const directV2Command = isV2ControlCommandType(message.type);
+      if (directV2Command) {
+        await this.handleV2Command(socket, session, message);
+        return;
+      }
+      if (message.type === 'command' && attachment.protocolVersion === PROTOCOL_V2) {
+        return this.sendProtocolError(socket, 'legacy_envelope_forbidden');
+      }
+      if (attachment.protocolVersion === PROTOCOL_V2
+        && attachment.negotiationState === 'negotiated') {
+        if (this.rejectCachedV2CommandIdConflict(socket, message)) return;
+        return this.sendProtocolError(socket, 'unknown_message_type', { type: message.type });
+      }
       if (message.type === 'command') await this.handleCommand(socket, session, message);
       return;
     }
-    if (role === 'player' && message.type === 'event') await this.handlePlayerEvent(session, message);
+    if (role !== 'player') return;
+
+    if (message.type === 'player_hello') {
+      await this.handlePlayerHello(socket, session, message);
+      return;
+    }
+    if (attachment.protocolVersion === PROTOCOL_V2) {
+      if (message.type === 'player_heartbeat') return this.handleV2Heartbeat(socket, session, message);
+      if (message.type === 'playback_event') return this.handleV2PlaybackEvent(socket, session, message);
+      if (message.type === 'route_event') return this.handleV2RouteEvent(socket, session, message);
+      if (message.type === 'test_event') return this.handleV2TestEvent(socket, session, message);
+      if (message.type === 'emergency_stop_ack') return this.handleV2EmergencyAck(socket, session, message);
+      return this.sendProtocolError(socket, 'unknown_message_type', { type: message.type });
+    }
+    if (message.type === 'event') await this.handlePlayerEvent(session, message);
+  }
+
+  ensureProtocolV2(session) {
+    const prior = session.protocolV2 || {};
+    const transport = session.transport || {};
+    const pendingEmergencyTargets = Array.isArray(prior.pendingEmergencyTargets)
+      ? [...new Set(prior.pendingEmergencyTargets
+        .map((value) => protocolId(value))
+        .filter(Boolean))].slice(0, 32)
+      : [];
+    const pendingEmergencyTargetSet = new Set(pendingEmergencyTargets);
+    const pendingEmergencyTargetInstances = prior.pendingEmergencyTargetInstances
+      && typeof prior.pendingEmergencyTargetInstances === 'object'
+      && !Array.isArray(prior.pendingEmergencyTargetInstances)
+      ? Object.fromEntries(Object.entries(prior.pendingEmergencyTargetInstances)
+        .map(([connectionId, playerInstanceId]) => [protocolId(connectionId), protocolId(playerInstanceId)])
+        .filter(([connectionId, playerInstanceId]) => (
+          connectionId && playerInstanceId && pendingEmergencyTargetSet.has(connectionId)
+        ))
+        .slice(0, 32))
+      : {};
+    const activeCheckId = protocolId(prior.activeCheckId);
+    const priorCheckProgress = prior.activeCheckProgress
+      && typeof prior.activeCheckProgress === 'object'
+      && !Array.isArray(prior.activeCheckProgress)
+      && protocolId(prior.activeCheckProgress.checkId) === activeCheckId
+      ? prior.activeCheckProgress
+      : null;
+    const priorMarkerCount = finiteEpoch(priorCheckProgress?.markerCount);
+    const checkStarted = priorCheckProgress?.started === true;
+    session.protocolV2 = {
+      controlEpoch: finiteEpoch(prior.controlEpoch) ?? 0,
+      writableControlInstanceId: protocolId(prior.writableControlInstanceId),
+      leaseEpoch: finiteEpoch(prior.leaseEpoch) ?? 0,
+      leaseTarget: protocolId(prior.leaseTarget),
+      leaseClientKind: V2_PLAYER_KINDS.includes(prior.leaseClientKind) ? prior.leaseClientKind : null,
+      leaseStatus: protocolId(prior.leaseStatus) || 'inactive',
+      selectedOutputMode: V2_OUTPUT_MODES.includes(prior.selectedOutputMode) ? prior.selectedOutputMode : null,
+      switchId: protocolId(prior.switchId),
+      activeFamily: prior.activeFamily && typeof prior.activeFamily === 'object'
+        ? { entryId: protocolId(prior.activeFamily.entryId), runId: protocolId(prior.activeFamily.runId) }
+        : null,
+      activeCheckId,
+      activeCheckProgress: activeCheckId
+        ? {
+            checkId: activeCheckId,
+            started: checkStarted,
+            markerCount: checkStarted && priorMarkerCount !== null
+              && priorMarkerCount <= V2_TEST_MAX_MARKERS ? priorMarkerCount : 0
+          }
+        : null,
+      pendingEmergencyCommandId: protocolId(prior.pendingEmergencyCommandId),
+      pendingEmergencyControlInstanceId: protocolId(prior.pendingEmergencyControlInstanceId),
+      pendingEmergencyTargets,
+      pendingEmergencyTargetInstances,
+      emergencyAcknowledgedTargets: Array.isArray(prior.emergencyAcknowledgedTargets)
+        ? prior.emergencyAcknowledgedTargets.map((value) => protocolId(value)).filter(Boolean).slice(0, 32)
+        : [],
+      pendingEmergencyLegacyCount: finiteEpoch(prior.pendingEmergencyLegacyCount) ?? 0,
+      playerEventCheckpoints: this.normalizedV2DurableEventCheckpoints(prior.playerEventCheckpoints),
+      desiredTransport: prior.desiredTransport && typeof prior.desiredTransport === 'object'
+        ? prior.desiredTransport
+        : {
+            status: transport.status || 'idle',
+            song: transport.song || null,
+            entryId: null,
+            runId: null,
+            position: Number(transport.position) || 0,
+            volume: Number.isFinite(transport.volume) ? transport.volume : 100
+          },
+      confirmedPlayback: prior.confirmedPlayback && typeof prior.confirmedPlayback === 'object'
+        ? prior.confirmedPlayback
+        : { status: 'unknown', reasonCode: 'not_confirmed' }
+    };
+    if (!session.protocolV2.activeFamily?.entryId || !session.protocolV2.activeFamily?.runId) {
+      session.protocolV2.activeFamily = null;
+    }
+    return session.protocolV2;
+  }
+
+  sessionEndBlockDetail(session) {
+    const protocol = this.ensureProtocolV2(session);
+    const activeTransportStates = new Set(['loading', 'playing', 'paused', 'buffering']);
+    const leaseStatus = protocol.leaseStatus || 'inactive';
+    const desiredStatus = protocol.desiredTransport?.status || null;
+    const confirmedStatus = protocol.confirmedPlayback?.status || null;
+    const transportStatus = session.transport?.status || null;
+    const blocked = Boolean(
+      protocol.activeFamily
+      || protocol.activeCheckId
+      || !['inactive', 'ready'].includes(leaseStatus)
+      || activeTransportStates.has(desiredStatus)
+      || activeTransportStates.has(confirmedStatus)
+      || activeTransportStates.has(transportStatus)
+    );
+    if (!blocked) return null;
+    return {
+      leaseStatus,
+      desiredStatus,
+      confirmedStatus,
+      transportStatus,
+      activeFamily: Boolean(protocol.activeFamily),
+      activeCheck: Boolean(protocol.activeCheckId)
+    };
+  }
+
+  livePlayerRecords(excluded) {
+    const records = [];
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === excluded) continue;
+      const attachment = socket.deserializeAttachment() || {};
+      if (attachment.role !== 'player' || attachment.protocolVersion !== PROTOCOL_V2
+        || attachment.negotiationState !== 'negotiated' || !attachment.playerInstanceId) continue;
+      records.push({ socket, attachment });
+    }
+    return records;
+  }
+
+  playerHeartbeatHealth(attachment, now = Date.now()) {
+    const observedAt = Number.isFinite(attachment?.lastSeenAt)
+      ? attachment.lastSeenAt
+      : Number.isFinite(attachment?.connectedAt) ? attachment.connectedAt : now;
+    const heartbeatAgeMs = Math.max(0, now - observedAt);
+    return {
+      lastSeenAt: observedAt,
+      heartbeatAgeMs,
+      heartbeatWarning: heartbeatAgeMs >= PLAYER_HEARTBEAT_WARNING_MS,
+      heartbeatStale: heartbeatAgeMs >= PLAYER_HEARTBEAT_STALE_MS
+    };
+  }
+
+  eligiblePlayerRecords(mode, excluded) {
+    const now = Date.now();
+    return this.livePlayerRecords(excluded).filter(({ attachment }) => {
+      if (this.playerHeartbeatHealth(attachment, now).heartbeatStale) return false;
+      if (mode === 'speaker') {
+        return attachment.clientKind === 'dashboard-speaker'
+          && attachment.runtime?.sourceActive !== false;
+      }
+      if (mode === 'obs') {
+        return attachment.clientKind === 'obs-browser-source'
+          && attachment.runtime?.sourceActive === true
+          && (attachment.capabilities?.obsRuntime === true || attachment.capabilities?.obsStudioBinding === true);
+      }
+      return false;
+    });
+  }
+
+  protocolV2Snapshot(session, excluded) {
+    const protocol = this.ensureProtocolV2(session);
+    const now = Date.now();
+    const players = this.livePlayerRecords(excluded).map(({ attachment }) => {
+      const health = this.playerHeartbeatHealth(attachment, now);
+      return {
+        playerInstanceId: attachment.playerInstanceId,
+        connectionId: attachment.connectionId,
+        clientKind: attachment.clientKind,
+        state: attachment.state || 'standby',
+        lastSeenAt: health.lastSeenAt,
+        heartbeatAgeMs: health.heartbeatAgeMs,
+        heartbeatWarning: health.heartbeatWarning,
+        heartbeatStale: health.heartbeatStale,
+        buildId: attachment.buildId,
+        capabilities: attachment.capabilities || {},
+        runtime: attachment.runtime || {}
+      };
+    });
+    const idsForMode = (mode) => [...new Set(this.eligiblePlayerRecords(mode, excluded)
+      .map(({ attachment }) => attachment.playerInstanceId))];
+    const writableConnected = this.ctx.getWebSockets().some((candidate) => {
+      if (candidate === excluded) return false;
+      const attachment = candidate.deserializeAttachment() || {};
+      return attachment.role === 'control'
+        && attachment.protocolVersion === PROTOCOL_V2
+        && attachment.negotiationState === 'negotiated'
+        && attachment.controlInstanceId === protocol.writableControlInstanceId;
+    });
+    return {
+      protocolVersion: PROTOCOL_V2,
+      selectedOutputMode: protocol.selectedOutputMode,
+      players,
+      eligibleCandidates: {
+        speaker: idsForMode('speaker'),
+        obs: idsForMode('obs')
+      },
+      lease: {
+        epoch: protocol.leaseEpoch,
+        leaseTarget: protocol.leaseTarget,
+        clientKind: protocol.leaseClientKind,
+        status: protocol.leaseStatus,
+        switchId: protocol.switchId
+      },
+      controlLease: {
+        controlEpoch: protocol.controlEpoch,
+        writableControlInstanceId: protocol.writableControlInstanceId,
+        writableConnected
+      },
+      activeFamily: protocol.activeFamily,
+      activeCheckId: protocol.activeCheckId,
+      desiredTransport: protocol.desiredTransport,
+      confirmedPlayback: protocol.confirmedPlayback
+    };
+  }
+
+  broadcastProtocolV2Snapshot(session, excluded) {
+    const snapshot = this.protocolV2Snapshot(session, excluded);
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === excluded) continue;
+      const attachment = socket.deserializeAttachment() || {};
+      if (attachment.role === 'control' && attachment.protocolVersion === PROTOCOL_V2
+        && attachment.negotiationState === 'negotiated') {
+        this.send(socket, { type: 'player_snapshot', ...snapshot });
+      }
+    }
+  }
+
+  activeOutputLivenessIssue(session, targetPlayerInstanceId, {
+    now = Date.now(),
+    overrideAttachment = null
+  } = {}) {
+    const protocol = this.ensureProtocolV2(session);
+    if (!targetPlayerInstanceId || protocol.leaseTarget !== targetPlayerInstanceId) return null;
+    const retainedUnknown = protocol.leaseStatus === 'unknown'
+      && V2_ACTIVE_OUTPUT_LIVENESS_REASONS.includes(protocol.confirmedPlayback?.reasonCode);
+    if (!retainedUnknown && !['activating', 'ready', 'audible'].includes(protocol.leaseStatus)) return null;
+
+    const records = this.livePlayerRecords()
+      .filter(({ attachment }) => attachment.playerInstanceId === targetPlayerInstanceId)
+      .map((record) => (overrideAttachment
+        && record.attachment.connectionId === overrideAttachment.connectionId
+        ? { ...record, attachment: overrideAttachment }
+        : record));
+    if (records.length === 0) {
+      return {
+        reasonCode: 'target_disconnected',
+        targetPlayerInstanceId,
+        connected: false,
+        heartbeatAgeMs: null,
+        heartbeatWarning: true,
+        heartbeatStale: true,
+        sourceActive: null
+      };
+    }
+
+    const selected = records.map((record) => ({
+      ...record,
+      health: this.playerHeartbeatHealth(record.attachment, now)
+    })).sort((left, right) => left.health.heartbeatAgeMs - right.health.heartbeatAgeMs)[0];
+    const detail = {
+      targetPlayerInstanceId,
+      connected: true,
+      heartbeatAgeMs: selected.health.heartbeatAgeMs,
+      heartbeatWarning: selected.health.heartbeatWarning,
+      heartbeatStale: selected.health.heartbeatStale,
+      sourceActive: selected.attachment.runtime?.sourceActive ?? null
+    };
+    if (selected.attachment.runtime?.sourceActive === false) {
+      return { reasonCode: 'target_source_inactive', ...detail };
+    }
+    if (selected.health.heartbeatStale) {
+      return { reasonCode: 'target_heartbeat_stale', ...detail };
+    }
+    if (retainedUnknown) {
+      return { reasonCode: protocol.confirmedPlayback.reasonCode, ...detail };
+    }
+    return null;
+  }
+
+  async persistActiveOutputUnknown(session, issue, { mutationLockHeld = false } = {}) {
+    const release = mutationLockHeld
+      ? null
+      : await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      const protocol = this.ensureProtocolV2(session);
+      if (!issue || protocol.leaseTarget !== issue.targetPlayerInstanceId
+        || ['deactivating', 'inactive', 'emergency_stopping'].includes(protocol.leaseStatus)) {
+        return false;
+      }
+      const alreadyPersisted = protocol.leaseStatus === 'unknown'
+        && protocol.confirmedPlayback?.status === 'unknown'
+        && protocol.confirmedPlayback?.reasonCode === issue.reasonCode
+        && session.transport?.status === 'unknown';
+      if (alreadyPersisted) return false;
+
+      const candidate = structuredClone(session);
+      const candidateProtocol = this.ensureProtocolV2(candidate);
+      candidateProtocol.leaseStatus = 'unknown';
+      candidateProtocol.confirmedPlayback = {
+        status: 'unknown',
+        reasonCode: issue.reasonCode,
+        playerInstanceId: issue.targetPlayerInstanceId,
+        leaseEpoch: candidateProtocol.leaseEpoch
+      };
+      candidate.transport = { ...(candidate.transport || {}), status: 'unknown' };
+      await this.ctx.storage.put('session', candidate);
+      this.adoptPersistedSession(session, candidate);
+      return true;
+    } finally {
+      if (release) release();
+    }
+  }
+
+  publishActiveOutputUnknown(session) {
+    this.broadcastLegacyControls({ type: 'transport', transport: session.transport });
+    this.broadcastProtocolV2Snapshot(session);
+  }
+
+  async guardActiveOutputLiveness(session, targetPlayerInstanceId, { mutationLockHeld = false } = {}) {
+    const issue = this.activeOutputLivenessIssue(session, targetPlayerInstanceId);
+    if (!issue) return { ok: true };
+    const transitioned = await this.persistActiveOutputUnknown(session, issue, { mutationLockHeld });
+    if (transitioned) this.publishActiveOutputUnknown(session);
+    return {
+      ok: false,
+      code: 'active_output_unavailable',
+      detail: {
+        ...issue,
+        leaseEpoch: this.ensureProtocolV2(session).leaseEpoch
+      }
+    };
+  }
+
+  sendProtocolError(socket, code, detail = {}) {
+    this.send(socket, { type: 'protocol_error', protocolVersion: PROTOCOL_V2, code, detail });
+  }
+
+  sendInvalidMessage(socket, detail = {}) {
+    const attachment = socket.deserializeAttachment() || {};
+    if (attachment.protocolVersion === PROTOCOL_V2) {
+      return this.sendProtocolError(socket, 'invalid_message', detail);
+    }
+    return this.send(socket, { type: 'error', code: 'invalid_message' });
+  }
+
+  v2CommandCacheEntries(socket) {
+    const attachment = socket.deserializeAttachment() || {};
+    return Array.isArray(attachment.commandResultCache)
+      ? attachment.commandResultCache.filter((entry) => entry && typeof entry === 'object'
+        && protocolId(entry.i) && protocolId(entry.f) && entry.r && typeof entry.r === 'object')
+      : [];
+  }
+
+  // Terminal results cover only the recent window of one live connection and
+  // survive DO hibernation through serializeAttachment. They intentionally
+  // disappear when that WebSocket closes; a replacement connection must
+  // reconcile from the authoritative snapshot rather than inheriting an old
+  // connection's command namespace. Cache hits move to the tail, so count/byte
+  // eviction is bounded LRU.
+  // TODO(protocol-v2-durable-command-ledger): cross-connection exactly-once and
+  // player-side command dedupe require a durable ledger/resume contract and are
+  // deliberately outside this live-connection cache.
+  writeV2CommandCache(socket, entries) {
+    const attachment = socket.deserializeAttachment() || {};
+    const bounded = entries.slice(-V2_COMMAND_RESULT_CACHE_MAX_ENTRIES);
+    const encoder = new TextEncoder();
+    const attachmentBytes = () => encoder.encode(JSON.stringify({
+      ...attachment,
+      commandResultCache: bounded
+    })).byteLength;
+    while (bounded.length > 0 && (
+      encoder.encode(JSON.stringify(bounded)).byteLength > V2_COMMAND_RESULT_CACHE_MAX_BYTES
+      || attachmentBytes() > V2_SOCKET_ATTACHMENT_SAFE_MAX_BYTES
+    )) {
+      bounded.shift();
+    }
+    socket.serializeAttachment({ ...attachment, commandResultCache: bounded });
+  }
+
+  v2CommandPendingKey(socket, commandId) {
+    const connectionId = socket.deserializeAttachment()?.connectionId || 'unknown_connection';
+    return `${connectionId}\u0000${commandId}`;
+  }
+
+  commandIdConflictResult(command, cachedType) {
+    return {
+      type: 'command_rejected',
+      protocolVersion: PROTOCOL_V2,
+      commandId: command.commandId,
+      code: 'command_id_conflict',
+      detail: { cachedType: cachedType || null, receivedType: command.type }
+    };
+  }
+
+  hashV2CommandFingerprint(canonical) {
+    return hashToken(canonical);
+  }
+
+  rejectCachedV2CommandIdConflict(socket, command) {
+    const commandId = protocolId(command?.commandId);
+    const commandType = protocolId(command?.type);
+    if (!commandId || !commandType) return false;
+    const cached = this.v2CommandCacheEntries(socket).find((entry) => entry.i === commandId);
+    const pending = this.pendingV2Commands.get(this.v2CommandPendingKey(socket, commandId));
+    const previousType = cached?.t || pending?.commandType;
+    if (!previousType) return false;
+    this.send(socket, this.commandIdConflictResult(command, previousType));
+    return true;
+  }
+
+  async replayCachedV2Command(socket, command) {
+    if (!command || typeof command !== 'object' || Array.isArray(command)
+      || !protocolId(command.commandId) || !protocolId(command.type)) return false;
+    const fingerprint = await this.hashV2CommandFingerprint(canonicalProtocolJson(command));
+    const entries = this.v2CommandCacheEntries(socket);
+    const cachedIndex = entries.findIndex((entry) => entry.i === command.commandId);
+    if (cachedIndex < 0) return false;
+    const cached = entries[cachedIndex];
+    const result = cached.f === fingerprint
+      ? cached.r
+      : this.commandIdConflictResult(command, cached.t);
+    if (cached.f === fingerprint) {
+      entries.splice(cachedIndex, 1);
+      entries.push(cached);
+      this.writeV2CommandCache(socket, entries);
+    }
+    this.send(socket, result);
+    return true;
+  }
+
+  async beginV2Command(socket, command) {
+    const canonical = canonicalProtocolJson(command);
+    const pendingKey = this.v2CommandPendingKey(socket, command.commandId);
+    const existingPending = this.pendingV2Commands.get(pendingKey);
+    if (existingPending) {
+      if (existingPending.canonical !== canonical) {
+        this.send(socket, this.commandIdConflictResult(command, existingPending.commandType));
+        return { handled: true };
+      }
+      const result = await existingPending.promise;
+      if (!result) return this.beginV2Command(socket, command);
+      this.send(socket, result);
+      return { handled: true };
+    }
+
+    let resolvePending;
+    const promise = new Promise((resolve) => { resolvePending = resolve; });
+    const pending = {
+      canonical,
+      commandType: command.type,
+      fingerprint: null,
+      promise,
+      resolve: resolvePending
+    };
+    this.pendingV2Commands.set(pendingKey, pending);
+    try {
+      pending.fingerprint = await this.hashV2CommandFingerprint(canonical);
+
+      const entries = this.v2CommandCacheEntries(socket);
+      const cachedIndex = entries.findIndex((entry) => entry.i === command.commandId);
+      if (cachedIndex >= 0) {
+        const cached = entries[cachedIndex];
+        const result = cached.f === pending.fingerprint
+          ? cached.r
+          : this.commandIdConflictResult(command, cached.t);
+        if (cached.f === pending.fingerprint) {
+          entries.splice(cachedIndex, 1);
+          entries.push(cached);
+          this.writeV2CommandCache(socket, entries);
+        }
+        this.send(socket, result);
+        pending.resolve(result);
+        this.pendingV2Commands.delete(pendingKey);
+        return { handled: true };
+      }
+      return { handled: false, pending };
+    } catch (error) {
+      pending.resolve(null);
+      if (this.pendingV2Commands.get(pendingKey) === pending) {
+        this.pendingV2Commands.delete(pendingKey);
+      }
+      throw error;
+    }
+  }
+
+  completeV2Command(socket, command, result) {
+    const pendingKey = this.v2CommandPendingKey(socket, command.commandId);
+    const pending = this.pendingV2Commands.get(pendingKey);
+    const wireResult = JSON.parse(JSON.stringify(result));
+    try {
+      if (pending?.fingerprint) {
+        const entries = this.v2CommandCacheEntries(socket)
+          .filter((entry) => entry.i !== command.commandId);
+        entries.push({
+          i: command.commandId,
+          f: pending.fingerprint,
+          t: command.type,
+          r: wireResult
+        });
+        this.writeV2CommandCache(socket, entries);
+      }
+    } catch (error) {
+      pending?.resolve(null);
+      if (this.pendingV2Commands.get(pendingKey) === pending) {
+        this.pendingV2Commands.delete(pendingKey);
+      }
+      throw error;
+    }
+    this.send(socket, wireResult);
+    pending?.resolve(wireResult);
+    this.pendingV2Commands.delete(pendingKey);
+  }
+
+  abandonV2Command(socket, command, expectedPending = null) {
+    const pendingKey = this.v2CommandPendingKey(socket, command.commandId);
+    const pending = this.pendingV2Commands.get(pendingKey);
+    if (expectedPending && pending !== expectedPending) return;
+    pending?.resolve(null);
+    if (pending) this.pendingV2Commands.delete(pendingKey);
+  }
+
+  v2EventCacheEntriesFromAttachment(attachment) {
+    return Array.isArray(attachment?.eventResultCache)
+      ? attachment.eventResultCache.filter((entry) => entry && typeof entry === 'object'
+        && protocolId(entry.i) && protocolId(entry.f) && protocolId(entry.n))
+      : [];
+  }
+
+  v2EventCacheEntries(socket) {
+    return this.v2EventCacheEntriesFromAttachment(socket.deserializeAttachment() || {});
+  }
+
+  normalizedV2SequenceHighWater(attachment) {
+    const source = attachment?.sequenceHighWater;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
+    return Object.fromEntries(V2_EVENT_SEQUENCE_NAMESPACES
+      .filter((namespace) => finiteEpoch(source[namespace]) !== null)
+      .map((namespace) => [namespace, source[namespace]]));
+  }
+
+  isV2DurableEventNamespace(namespace) {
+    return V2_DURABLE_EVENT_NAMESPACES.includes(namespace);
+  }
+
+  normalizedV2DurableEventHighWater(source) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
+    return Object.fromEntries(V2_DURABLE_EVENT_NAMESPACES
+      .filter((namespace) => finiteEpoch(source[namespace]) !== null)
+      .map((namespace) => [namespace, source[namespace]]));
+  }
+
+  boundedV2DurableEventCheckpoints(checkpoints) {
+    const bounded = checkpoints.slice(-V2_DURABLE_EVENT_MAX_PLAYERS).map((checkpoint) => ({
+      p: checkpoint.p,
+      h: { ...checkpoint.h },
+      e: checkpoint.e.slice(-V2_DURABLE_EVENT_MAX_ENTRIES).map((entry) => ({
+        i: entry.i,
+        f: entry.f,
+        n: entry.n,
+        r: { s: entry.r.s, q: entry.r.q }
+      }))
+    }));
+    const encoder = new TextEncoder();
+    const serializedBytes = () => encoder.encode(JSON.stringify({
+      playerEventCheckpoints: bounded
+    })).byteLength;
+    while (bounded.length > 0
+      && serializedBytes() > V2_DURABLE_EVENT_CHECKPOINT_MAX_BYTES) {
+      const oldestWithResult = bounded.find((checkpoint) => checkpoint.e.length > 0);
+      if (oldestWithResult) {
+        oldestWithResult.e.shift();
+      } else {
+        bounded.shift();
+      }
+    }
+    return bounded;
+  }
+
+  normalizedV2DurableEventCheckpoints(source) {
+    if (!Array.isArray(source)) return [];
+    const checkpoints = [];
+    for (const rawCheckpoint of source.slice(-V2_DURABLE_EVENT_MAX_PLAYERS)) {
+      if (!rawCheckpoint || typeof rawCheckpoint !== 'object' || Array.isArray(rawCheckpoint)) continue;
+      const playerInstanceId = protocolId(rawCheckpoint.p);
+      if (!playerInstanceId) continue;
+      const priorIndex = checkpoints.findIndex((checkpoint) => checkpoint.p === playerInstanceId);
+      const checkpoint = priorIndex >= 0
+        ? checkpoints.splice(priorIndex, 1)[0]
+        : { p: playerInstanceId, h: {}, e: [] };
+      const highWater = this.normalizedV2DurableEventHighWater(rawCheckpoint.h);
+      for (const [namespace, sequence] of Object.entries(highWater)) {
+        checkpoint.h[namespace] = Math.max(finiteEpoch(checkpoint.h[namespace]) ?? -1, sequence);
+      }
+      const rawEntries = Array.isArray(rawCheckpoint.e)
+        ? rawCheckpoint.e.slice(-V2_DURABLE_EVENT_MAX_ENTRIES)
+        : [];
+      for (const rawEntry of rawEntries) {
+        const eventId = protocolId(rawEntry?.i);
+        const fingerprint = protocolId(rawEntry?.f, 128);
+        const namespace = protocolId(rawEntry?.n);
+        const status = protocolId(rawEntry?.r?.s, 64);
+        const sequence = finiteEpoch(rawEntry?.r?.q);
+        if (!eventId || !fingerprint || !this.isV2DurableEventNamespace(namespace)
+          || !status || sequence === null) continue;
+        const priorEventIndex = checkpoint.e.findIndex((entry) => entry.i === eventId);
+        if (priorEventIndex >= 0) checkpoint.e.splice(priorEventIndex, 1);
+        checkpoint.e.push({
+          i: eventId,
+          f: fingerprint,
+          n: namespace,
+          r: { s: status, q: sequence }
+        });
+        checkpoint.h[namespace] = Math.max(
+          finiteEpoch(checkpoint.h[namespace]) ?? -1,
+          sequence
+        );
+      }
+      checkpoints.push(checkpoint);
+    }
+    return this.boundedV2DurableEventCheckpoints(checkpoints);
+  }
+
+  v2DurableEventCheckpoint(session, playerInstanceId) {
+    if (!playerInstanceId) return null;
+    return this.ensureProtocolV2(session).playerEventCheckpoints
+      .find((checkpoint) => checkpoint.p === playerInstanceId) || null;
+  }
+
+  appendV2DurableEventCheckpoint(session, message, namespace, fingerprint, status) {
+    const protocol = this.ensureProtocolV2(session);
+    const checkpoints = protocol.playerEventCheckpoints;
+    const playerInstanceId = protocolId(message.playerInstanceId);
+    const priorIndex = checkpoints.findIndex((checkpoint) => checkpoint.p === playerInstanceId);
+    const checkpoint = priorIndex >= 0
+      ? checkpoints.splice(priorIndex, 1)[0]
+      : { p: playerInstanceId, h: {}, e: [] };
+    const priorEventIndex = checkpoint.e.findIndex((entry) => entry.i === message.eventId);
+    if (priorEventIndex >= 0) checkpoint.e.splice(priorEventIndex, 1);
+    checkpoint.h[namespace] = Math.max(
+      finiteEpoch(checkpoint.h[namespace]) ?? -1,
+      message.sequence
+    );
+    checkpoint.e.push({
+      i: message.eventId,
+      f: fingerprint,
+      n: namespace,
+      r: { s: status, q: message.sequence }
+    });
+    checkpoints.push(checkpoint);
+    protocol.playerEventCheckpoints = this.boundedV2DurableEventCheckpoints(checkpoints);
+    return protocol.playerEventCheckpoints;
+  }
+
+  hydrateV2EventAttachmentFromCheckpoint(socket, session, checkpoint, cached) {
+    try {
+      const attachment = socket.deserializeAttachment() || {};
+      let baseAttachment = attachment;
+      if (cached.n === 'route') {
+        const protocol = this.ensureProtocolV2(session);
+        const state = protocol.leaseTarget === attachment.playerInstanceId
+          ? protocol.leaseStatus
+          : 'standby';
+        baseAttachment = { ...attachment, state, lastSeenAt: Date.now() };
+      }
+      const sequences = this.normalizedV2SequenceHighWater(attachment);
+      for (const [namespace, sequence] of Object.entries(checkpoint.h)) {
+        sequences[namespace] = Math.max(finiteEpoch(sequences[namespace]) ?? -1, sequence);
+      }
+      const entries = this.v2EventCacheEntriesFromAttachment(attachment)
+        .filter((entry) => entry.i !== cached.i);
+      entries.push({ i: cached.i, f: cached.f, n: cached.n });
+      this.writeV2EventState(socket, entries, sequences, baseAttachment);
+    } catch {
+      // Durable state is the recovery source. Attachment hydration is only the
+      // fast path for subsequent events and must not suppress a duplicate ACK.
+    }
+  }
+
+  boundedV2EventAttachment(attachment, entries, sequenceHighWater) {
+    const bounded = entries.slice(-V2_EVENT_RESULT_CACHE_MAX_ENTRIES);
+    const encoder = new TextEncoder();
+    const build = () => ({
+      ...attachment,
+      sequenceHighWater: { ...sequenceHighWater },
+      eventResultCache: bounded
+    });
+    while (bounded.length > 0
+      && encoder.encode(JSON.stringify(build())).byteLength > V2_SOCKET_ATTACHMENT_SAFE_MAX_BYTES) {
+      bounded.shift();
+    }
+    return build();
+  }
+
+  writeV2EventState(socket, entries, sequenceHighWater, baseAttachment = null) {
+    const attachment = baseAttachment || socket.deserializeAttachment() || {};
+    const nextAttachment = this.boundedV2EventAttachment(
+      attachment,
+      entries,
+      sequenceHighWater
+    );
+    socket.serializeAttachment(nextAttachment);
+    return nextAttachment;
+  }
+
+  sendV2EventAck(socket, message, status) {
+    this.send(socket, {
+      type: 'event_ack',
+      protocolVersion: PROTOCOL_V2,
+      eventId: message.eventId,
+      playerInstanceId: message.playerInstanceId,
+      sequence: message.sequence,
+      status
+    });
+  }
+
+  eventIdConflict(socket, message, cachedNamespace) {
+    this.sendProtocolError(socket, 'event_id_conflict', {
+      eventId: message.eventId,
+      cachedNamespace: cachedNamespace || null,
+      receivedNamespace: v2EventSequenceNamespace(message)
+    });
+  }
+
+  previewV2EventSequence(attachment, namespace, sequence) {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) {
+      return { ok: false, code: 'invalid_sequence' };
+    }
+    const sequences = this.normalizedV2SequenceHighWater(attachment);
+    const previous = finiteEpoch(sequences[namespace]);
+    if (previous !== null && sequence <= previous) {
+      return {
+        ok: false,
+        code: sequence === previous ? 'duplicate_sequence' : 'out_of_order_sequence',
+        detail: { family: namespace, previous, actual: sequence }
+      };
+    }
+    return { ok: true, sequences, previous };
+  }
+
+  async beginV2Event(socket, session, message, namespace) {
+    const attachment = socket.deserializeAttachment() || {};
+    if (attachment.protocolVersion !== PROTOCOL_V2
+      || attachment.negotiationState !== 'negotiated'
+      || attachment.playerInstanceId !== protocolId(message.playerInstanceId)
+      || attachment.connectionId !== protocolId(message.connectionId)) {
+      this.sendProtocolError(socket, 'foreign_connection', {
+        expected: attachment.connectionId || null,
+        actual: protocolId(message.connectionId)
+      });
+      return { handled: true };
+    }
+
+    const fingerprint = await hashToken(canonicalV2EventJson(message));
+    const entries = this.v2EventCacheEntries(socket);
+    const cachedIndex = entries.findIndex((entry) => entry.i === message.eventId);
+    if (cachedIndex >= 0) {
+      const cached = entries[cachedIndex];
+      if (cached.f !== fingerprint) {
+        this.eventIdConflict(socket, message, cached.n);
+        return { handled: true };
+      }
+      entries.splice(cachedIndex, 1);
+      entries.push(cached);
+      try {
+        this.writeV2EventState(
+          socket,
+          entries,
+          this.normalizedV2SequenceHighWater(socket.deserializeAttachment() || {})
+        );
+      } catch {
+        // The cache entry already proves this event. LRU maintenance is a
+        // best-effort optimization and must not turn a duplicate into a retry.
+      }
+      this.sendV2EventAck(socket, message, 'duplicate');
+      return { handled: true };
+    }
+
+    const durableCheckpoint = this.isV2DurableEventNamespace(namespace)
+      ? this.v2DurableEventCheckpoint(session, attachment.playerInstanceId)
+      : null;
+    const durableCached = durableCheckpoint?.e
+      .find((entry) => entry.i === message.eventId);
+    if (durableCached) {
+      if (durableCached.f !== fingerprint) {
+        this.eventIdConflict(socket, message, durableCached.n);
+        return { handled: true };
+      }
+      this.hydrateV2EventAttachmentFromCheckpoint(socket, session, durableCheckpoint, durableCached);
+      this.sendV2EventAck(socket, message, 'duplicate');
+      return { handled: true };
+    }
+
+    const sequence = this.previewV2EventSequence(attachment, namespace, message.sequence);
+    if (!sequence.ok) {
+      this.sendProtocolError(socket, sequence.code, sequence.detail);
+      return { handled: true };
+    }
+    const durableHighWater = finiteEpoch(durableCheckpoint?.h?.[namespace]);
+    if (durableHighWater !== null && message.sequence <= durableHighWater) {
+      this.sendProtocolError(socket, 'event_before_checkpoint', {
+        family: namespace,
+        checkpoint: durableHighWater,
+        actual: message.sequence
+      });
+      return { handled: true };
+    }
+    return { handled: false, fingerprint };
+  }
+
+  commitV2Event(socket, message, namespace, fingerprint) {
+    const attachment = socket.deserializeAttachment() || {};
+    if (attachment.protocolVersion !== PROTOCOL_V2
+      || attachment.negotiationState !== 'negotiated'
+      || attachment.playerInstanceId !== message.playerInstanceId
+      || attachment.connectionId !== message.connectionId) return false;
+    const sequences = this.normalizedV2SequenceHighWater(attachment);
+    sequences[namespace] = Math.max(finiteEpoch(sequences[namespace]) ?? -1, message.sequence);
+    const entries = this.v2EventCacheEntriesFromAttachment(attachment)
+      .filter((entry) => entry.i !== message.eventId);
+    entries.push({ i: message.eventId, f: fingerprint, n: namespace });
+    this.writeV2EventState(socket, entries, sequences, attachment);
+    return true;
+  }
+
+  async acquireV2PlayerQueue(playerInstanceId) {
+    const previous = this.pendingV2EventQueues.get(playerInstanceId) || Promise.resolve();
+    let releaseCurrent;
+    const current = new Promise((resolve) => { releaseCurrent = resolve; });
+    const tail = previous.catch(() => {}).then(() => current);
+    this.pendingV2EventQueues.set(playerInstanceId, tail);
+    await previous.catch(() => {});
+    return () => {
+      releaseCurrent();
+      if (this.pendingV2EventQueues.get(playerInstanceId) === tail) {
+        this.pendingV2EventQueues.delete(playerInstanceId);
+      }
+    };
+  }
+
+  async runV2EventGuard(socket, session, message, namespace, applyEvent) {
+    const playerInstanceId = protocolId(message.playerInstanceId) || 'unknown_player';
+    const releasePlayer = await this.acquireV2PlayerQueue(playerInstanceId);
+    const durable = this.isV2DurableEventNamespace(namespace);
+    let releaseDurable = null;
+    try {
+      if (durable) releaseDurable = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+      const gate = await this.beginV2Event(socket, session, message, namespace);
+      if (gate.handled) return;
+      const targetSession = durable ? structuredClone(session) : session;
+      const outcome = await applyEvent(targetSession);
+      if (!outcome) return;
+      if (durable) {
+        this.appendV2DurableEventCheckpoint(
+          targetSession,
+          message,
+          namespace,
+          gate.fingerprint,
+          outcome.status
+        );
+        await this.ctx.storage.put('session', targetSession);
+        this.adoptPersistedSession(session, targetSession);
+        if (typeof outcome.afterCommit === 'function') outcome.afterCommit();
+      }
+      if (!this.commitV2Event(socket, message, namespace, gate.fingerprint)) {
+        this.sendProtocolError(socket, 'foreign_connection', {
+          expected: socket.deserializeAttachment()?.connectionId || null,
+          actual: protocolId(message.connectionId)
+        });
+        return;
+      }
+      if (!durable && typeof outcome.afterCommit === 'function') outcome.afterCommit();
+      this.sendV2EventAck(socket, message, outcome.status);
+    } finally {
+      if (releaseDurable) releaseDurable();
+      releasePlayer();
+    }
+  }
+
+  adoptPersistedSession(session, candidate) {
+    for (const key of Object.keys(session)) {
+      if (!hasOwn(candidate, key)) delete session[key];
+    }
+    Object.assign(session, candidate);
+    this.sessionState = session;
+    return session;
+  }
+
+  rejectProtocolNegotiation(socket, code, detail = {}) {
+    this.sendProtocolError(socket, code, detail);
+    try {
+      socket.close(4002, 'protocol_negotiation_rejected');
+    } catch {
+      // The runtime may already be closing a rejected socket.
+    }
+  }
+
+  rejectV2Command(socket, command, code, detail = {}) {
+    const commandId = protocolId(command?.commandId);
+    if (!commandId) return this.sendProtocolError(socket, code, detail);
+    this.completeV2Command(socket, command, {
+      type: 'command_rejected',
+      protocolVersion: PROTOCOL_V2,
+      commandId,
+      code,
+      detail
+    });
+  }
+
+  matchingSocketsWithIdentity(socket, identityField, identityValue) {
+    const currentAttachment = socket.deserializeAttachment() || {};
+    return this.ctx.getWebSockets().flatMap((other) => {
+      if (other === socket) return [];
+      const attachment = other.deserializeAttachment() || {};
+      if (attachment.role !== currentAttachment.role || attachment[identityField] !== identityValue) return [];
+      return [{ socket: other, attachment }];
+    });
+  }
+
+  replaceSocketWithLatestInstance(socket, identityField, identityValue, matchingSockets = null) {
+    const currentAttachment = socket.deserializeAttachment() || {};
+    const inheritedPlayerAttachments = [];
+    const matches = matchingSockets || this.matchingSocketsWithIdentity(socket, identityField, identityValue);
+    for (const { socket: other, attachment } of matches) {
+      // Fence the old transport before copying any of its retry state. A late
+      // frame therefore fails negotiation/connection checks even if close is
+      // delayed by the runtime.
+      other.serializeAttachment({ ...attachment, negotiationState: 'superseded' });
+      if (currentAttachment.role === 'player' && attachment.protocolVersion === PROTOCOL_V2) {
+        inheritedPlayerAttachments.push(attachment);
+      }
+      this.send(other, {
+        type: 'connection_superseded',
+        protocolVersion: PROTOCOL_V2,
+        code: 'newer_connection_registered'
+      });
+      try {
+        other.close(4001, 'connection_superseded');
+      } catch {
+        // The close callback will remove a socket that is already closing.
+      }
+    }
+
+    if (currentAttachment.role === 'player' && inheritedPlayerAttachments.length > 0) {
+      const sequenceHighWater = this.normalizedV2SequenceHighWater(currentAttachment);
+      const eventEntries = new Map();
+      for (const inherited of [...inheritedPlayerAttachments, currentAttachment]) {
+        for (const [namespace, value] of Object.entries(this.normalizedV2SequenceHighWater(inherited))) {
+          sequenceHighWater[namespace] = Math.max(sequenceHighWater[namespace] ?? -1, value);
+        }
+        for (const entry of this.v2EventCacheEntriesFromAttachment(inherited)) {
+          eventEntries.delete(entry.i);
+          eventEntries.set(entry.i, entry);
+        }
+      }
+      this.writeV2EventState(socket, [...eventEntries.values()], sequenceHighWater, currentAttachment);
+    }
+    // Overlapping sockets still inherit the full attachment as the fastest
+    // path. A fully closed socket can recover exact authoritative results and
+    // sequence floors from the bounded session checkpoint; resume tokens and
+    // gap reconciliation remain a separate wire-protocol concern.
+  }
+
+  pendingEmergencyReconnect(session, playerInstanceId, connectionId, matchingSockets) {
+    const protocol = this.ensureProtocolV2(session);
+    if (protocol.leaseStatus !== 'emergency_stopping'
+      || !protocol.pendingEmergencyCommandId
+      || !protocol.pendingEmergencyControlInstanceId) {
+      return { candidate: null, shouldDispatch: false };
+    }
+
+    const targetInstances = protocol.pendingEmergencyTargetInstances || {};
+    const priorConnectionIds = new Set(Object.entries(targetInstances)
+      .filter(([, instanceId]) => instanceId === playerInstanceId)
+      .map(([targetConnectionId]) => targetConnectionId));
+    for (const { attachment } of matchingSockets) {
+      if (attachment.protocolVersion === PROTOCOL_V2 && attachment.connectionId) {
+        priorConnectionIds.add(attachment.connectionId);
+      }
+    }
+
+    const alreadyPending = protocol.pendingEmergencyTargets.includes(connectionId);
+    const alreadyAcknowledged = protocol.emergencyAcknowledgedTargets.includes(connectionId);
+    const sameConnectionRetry = priorConnectionIds.size === 1
+      && priorConnectionIds.has(connectionId)
+      && matchingSockets.length === 0;
+    if (sameConnectionRetry) {
+      return { candidate: null, shouldDispatch: alreadyPending && !alreadyAcknowledged };
+    }
+
+    const candidate = structuredClone(session);
+    const candidateProtocol = this.ensureProtocolV2(candidate);
+    candidateProtocol.pendingEmergencyTargets = [
+      ...candidateProtocol.pendingEmergencyTargets.filter((target) => (
+        target !== connectionId && !priorConnectionIds.has(target)
+      )),
+      connectionId
+    ].slice(-32);
+    candidateProtocol.emergencyAcknowledgedTargets = candidateProtocol.emergencyAcknowledgedTargets
+      .filter((target) => target !== connectionId && !priorConnectionIds.has(target));
+    candidateProtocol.pendingEmergencyTargetInstances = Object.fromEntries([
+      ...Object.entries(candidateProtocol.pendingEmergencyTargetInstances || {})
+        .filter(([target]) => target !== connectionId && !priorConnectionIds.has(target)),
+      [connectionId, playerInstanceId]
+    ].slice(-32));
+    return { candidate, shouldDispatch: true };
+  }
+
+  sendPendingV2EmergencyStop(socket, session) {
+    const protocol = this.ensureProtocolV2(session);
+    const attachment = socket.deserializeAttachment() || {};
+    const targetInstances = protocol.pendingEmergencyTargetInstances || {};
+    if (protocol.leaseStatus !== 'emergency_stopping'
+      || !protocol.pendingEmergencyCommandId
+      || !protocol.pendingEmergencyControlInstanceId
+      || attachment.protocolVersion !== PROTOCOL_V2
+      || attachment.negotiationState !== 'negotiated'
+      || !protocol.pendingEmergencyTargets.includes(attachment.connectionId)
+      || targetInstances[attachment.connectionId] !== attachment.playerInstanceId) return false;
+    return this.send(socket, {
+      type: 'emergency_stop',
+      protocolVersion: PROTOCOL_V2,
+      commandId: protocol.pendingEmergencyCommandId,
+      sessionId: session.room,
+      authenticatedControlInstanceId: protocol.pendingEmergencyControlInstanceId,
+      targetConnectionId: attachment.connectionId
+    });
+  }
+
+  async handlePlayerHello(socket, session, message) {
+    const prior = socket.deserializeAttachment() || {};
+    const playerInstanceId = protocolId(message.playerInstanceId);
+    const buildId = protocolId(message.buildId);
+    if (prior.protocolVersion !== PROTOCOL_V2
+      || !['unnegotiated', 'negotiated'].includes(prior.negotiationState)) {
+      return this.rejectProtocolNegotiation(socket, 'protocol_opt_in_required');
+    }
+    if (message.protocolVersion !== PROTOCOL_V2) {
+      return this.rejectProtocolNegotiation(socket, 'unsupported_protocol_version', { supported: [PROTOCOL_V2] });
+    }
+    const capabilityKeys = ['audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding'];
+    const invalidCapability = message.capabilities && typeof message.capabilities === 'object'
+      && capabilityKeys.some((key) => hasOwn(message.capabilities, key) && typeof message.capabilities[key] !== 'boolean');
+    if (!playerInstanceId || !buildId || !V2_PLAYER_KINDS.includes(message.clientKind)
+      || !message.capabilities || typeof message.capabilities !== 'object' || Array.isArray(message.capabilities)
+      || invalidCapability) {
+      return this.rejectProtocolNegotiation(socket, 'invalid_player_hello');
+    }
+
+    if (prior.protocolVersion === PROTOCOL_V2
+      && prior.playerInstanceId
+      && prior.playerInstanceId !== playerInstanceId) {
+      return this.rejectProtocolNegotiation(socket, 'identity_rebind_forbidden', {
+        identity: 'playerInstanceId'
+      });
+    }
+    const releasePlayerQueue = await this.acquireV2PlayerQueue(playerInstanceId);
+    try {
+      const currentPrior = socket.deserializeAttachment() || {};
+      if (currentPrior.connectionId !== prior.connectionId
+        || !['unnegotiated', 'negotiated'].includes(currentPrior.negotiationState)) {
+        return this.rejectProtocolNegotiation(socket, 'connection_state_changed');
+      }
+      let protocol = this.ensureProtocolV2(session);
+      const capabilities = boundedRecord(message.capabilities, [
+        'audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding'
+      ]);
+      const runtime = boundedRecord(message.runtime, [
+        'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'recording'
+      ]);
+      const matchingSockets = this.matchingSocketsWithIdentity(socket, 'playerInstanceId', playerInstanceId);
+      const finalAttachment = {
+        ...currentPrior,
+        protocolVersion: PROTOCOL_V2,
+        negotiationState: 'reconnecting',
+        playerInstanceId,
+        clientKind: message.clientKind,
+        buildId,
+        capabilities,
+        runtime,
+        state: protocol.leaseStatus === 'emergency_stopping'
+          ? 'emergency_stopping'
+          : protocol.leaseTarget === playerInstanceId ? protocol.leaseStatus : 'standby',
+        lastSeenAt: Date.now()
+      };
+      const emergencyReconnect = this.pendingEmergencyReconnect(
+        session,
+        playerInstanceId,
+        currentPrior.connectionId,
+        matchingSockets
+      );
+      socket.serializeAttachment(finalAttachment);
+      try {
+        await this.ctx.storage.deleteAlarm();
+        if (emergencyReconnect.candidate) {
+          await this.ctx.storage.put('session', emergencyReconnect.candidate);
+          this.adoptPersistedSession(session, emergencyReconnect.candidate);
+          protocol = this.ensureProtocolV2(session);
+        }
+      } catch (error) {
+        socket.serializeAttachment(currentPrior);
+        throw error;
+      }
+      socket.serializeAttachment({ ...finalAttachment, negotiationState: 'negotiated' });
+      this.replaceSocketWithLatestInstance(
+        socket,
+        'playerInstanceId',
+        playerInstanceId,
+        matchingSockets
+      );
+      this.send(socket, {
+        type: 'player_welcome',
+        protocolVersion: PROTOCOL_V2,
+        connectionId: currentPrior.connectionId,
+        playerInstanceId,
+        leaseEpoch: protocol.leaseEpoch,
+        leaseTarget: protocol.leaseTarget,
+        leaseStatus: protocol.leaseStatus
+      });
+      if (emergencyReconnect.shouldDispatch) this.sendPendingV2EmergencyStop(socket, session);
+      this.broadcastV2Controls({
+        type: 'presence',
+        role: 'player',
+        connected: true,
+        protocolVersion: PROTOCOL_V2,
+        playerInstanceId,
+        clientKind: message.clientKind
+      });
+      this.broadcastProtocolV2Snapshot(session);
+    } finally {
+      releasePlayerQueue();
+    }
+  }
+
+  async handleControlHello(socket, session, message) {
+    const prior = socket.deserializeAttachment() || {};
+    const controlInstanceId = protocolId(message.controlInstanceId);
+    const buildId = protocolId(message.buildId);
+    if (prior.protocolVersion !== PROTOCOL_V2
+      || !['unnegotiated', 'negotiated'].includes(prior.negotiationState)) {
+      return this.rejectProtocolNegotiation(socket, 'protocol_opt_in_required');
+    }
+    if (message.protocolVersion !== PROTOCOL_V2) {
+      return this.rejectProtocolNegotiation(socket, 'unsupported_protocol_version', { supported: [PROTOCOL_V2] });
+    }
+    const invalidCapabilities = hasOwn(message, 'capabilities')
+      && (!message.capabilities || typeof message.capabilities !== 'object' || Array.isArray(message.capabilities));
+    const containsTakeoverRequest = ['takeover', 'requestTakeover', 'expectedControlEpoch', 'controlEpoch', 'commandId']
+      .some((field) => hasOwn(message, field));
+    if (!controlInstanceId || !buildId || invalidCapabilities || containsTakeoverRequest) {
+      return this.rejectProtocolNegotiation(socket, 'invalid_control_hello');
+    }
+
+    if (prior.protocolVersion === PROTOCOL_V2
+      && prior.controlInstanceId
+      && prior.controlInstanceId !== controlInstanceId) {
+      return this.rejectProtocolNegotiation(socket, 'identity_rebind_forbidden', {
+        identity: 'controlInstanceId'
+      });
+    }
+    const protocol = this.ensureProtocolV2(session);
+    const previousOwner = protocol.writableControlInstanceId;
+    // A hello never steals a lease. A different instance must send the
+    // explicit, CAS-guarded control_takeover command while that owner is live.
+    // A persisted owner without a live negotiated socket is an expired lease,
+    // so a new instance can recover it with a new epoch during hello.
+    const previousOwnerConnected = this.ctx.getWebSockets().some((candidate) => {
+      if (candidate === socket) return false;
+      const attachment = candidate.deserializeAttachment() || {};
+      return attachment.role === 'control'
+        && attachment.protocolVersion === PROTOCOL_V2
+        && attachment.negotiationState === 'negotiated'
+        && attachment.controlInstanceId === previousOwner;
+    });
+    const mayClaim = !previousOwner || previousOwner === controlInstanceId || !previousOwnerConnected;
+    let granted = false;
+    if (mayClaim) {
+      granted = true;
+      if (previousOwner !== controlInstanceId) {
+        protocol.controlEpoch += 1;
+        protocol.writableControlInstanceId = controlInstanceId;
+        await this.ctx.storage.put('session', session);
+      }
+    }
+    socket.serializeAttachment({
+      ...prior,
+      protocolVersion: PROTOCOL_V2,
+      negotiationState: 'negotiated',
+      controlInstanceId,
+      buildId,
+      capabilities: boundedRecord(message.capabilities, ['outputRouting', 'verificationUi']),
+      lastSeenAt: Date.now()
+    });
+    this.replaceSocketWithLatestInstance(socket, 'controlInstanceId', controlInstanceId);
+    this.send(socket, {
+      type: 'control_welcome',
+      protocolVersion: PROTOCOL_V2,
+      connectionId: prior.connectionId,
+      controlInstanceId,
+      writable: granted,
+      controlEpoch: protocol.controlEpoch,
+      writableControlInstanceId: protocol.writableControlInstanceId,
+      code: granted ? 'control_lease_granted' : 'control_lease_read_only'
+    });
+    this.send(socket, { type: 'player_snapshot', ...this.protocolV2Snapshot(session) });
+    this.broadcastProtocolV2Snapshot(session);
+  }
+
+  validateWritableControl(socket, protocol, command) {
+    const attachment = socket.deserializeAttachment() || {};
+    if (attachment.protocolVersion !== PROTOCOL_V2 || attachment.negotiationState !== 'negotiated'
+      || !attachment.controlInstanceId) {
+      return { ok: false, code: 'control_hello_required' };
+    }
+    if (attachment.controlInstanceId !== protocol.writableControlInstanceId) {
+      return {
+        ok: false,
+        code: 'control_lease_read_only',
+        detail: { writableControlInstanceId: protocol.writableControlInstanceId }
+      };
+    }
+    const commandEpoch = finiteEpoch(command.controlEpoch);
+    if (commandEpoch === null || commandEpoch !== protocol.controlEpoch) {
+      return {
+        ok: false,
+        code: 'stale_control_epoch',
+        detail: { expected: protocol.controlEpoch, actual: commandEpoch }
+      };
+    }
+    return { ok: true, attachment };
+  }
+
+  sendV2CommandAck(socket, command, detail = {}) {
+    this.completeV2Command(socket, command, {
+      type: 'command_ack',
+      protocolVersion: PROTOCOL_V2,
+      commandId: command.commandId,
+      ...detail
+    });
+  }
+
+  sendToPlayerInstance(playerInstanceId, message) {
+    let delivered = 0;
+    for (const { socket, attachment } of this.livePlayerRecords()) {
+      if (attachment.playerInstanceId !== playerInstanceId) continue;
+      if (this.send(socket, { ...message, targetConnectionId: attachment.connectionId })) delivered += 1;
+    }
+    return delivered;
+  }
+
+  setPlayerInstanceState(playerInstanceId, state) {
+    for (const { socket, attachment } of this.livePlayerRecords()) {
+      if (attachment.playerInstanceId !== playerInstanceId) continue;
+      socket.serializeAttachment({ ...attachment, state, lastSeenAt: Date.now() });
+    }
+  }
+
+  async handleV2Command(socket, session, command) {
+    let protocol = this.ensureProtocolV2(session);
+    if (!command || typeof command !== 'object' || Array.isArray(command)) {
+      return this.rejectV2Command(socket, command, 'invalid_command');
+    }
+    if (!protocolId(command.commandId) || !protocolId(command.type)) {
+      return this.rejectV2Command(socket, command, 'invalid_command');
+    }
+    let gate;
+    let releaseStatefulCommand = null;
+    try {
+      gate = await this.beginV2Command(socket, command);
+      if (gate.handled) return;
+      if (V2_ROUTE_COMMANDS.includes(command.type)
+        || V2_RUN_COMMANDS.includes(command.type)
+        || V2_TEST_COMMANDS.includes(command.type)
+        || command.type === 'end_session'
+        || command.type === 'emergency_stop') {
+        releaseStatefulCommand = await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+      }
+      if (session.status !== 'active') {
+        return this.rejectV2Command(socket, command, 'session_inactive');
+      }
+      protocol = this.ensureProtocolV2(session);
+
+      if (command.type === 'emergency_stop') return await this.handleV2EmergencyStop(socket, session, command);
+      if (command.type === V2_CONTROL_TAKEOVER_COMMAND) {
+        return await this.handleV2ControlTakeover(socket, session, command);
+      }
+
+      const control = this.validateWritableControl(socket, protocol, command);
+      if (!control.ok) return this.rejectV2Command(socket, command, control.code, control.detail);
+      if (V2_CONTROL_AUX_COMMANDS.includes(command.type)
+        && [
+          'entryId', 'runId', 'switchId', 'checkId', 'leaseEpoch', 'targetPlayerInstanceId',
+          'targetConnectionId', 'controlInstanceId', 'expectedControlEpoch'
+        ]
+          .some((field) => hasOwn(command, field))) {
+        return this.rejectV2Command(socket, command, 'invalid_aux_identity');
+      }
+
+      if (command.type === 'end_session') {
+        const invalidPayload = hasOwn(command, 'payload')
+          && (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload)
+            || Object.keys(command.payload).length > 0);
+        if (invalidPayload) return this.rejectV2Command(socket, command, 'invalid_aux_payload');
+        const blocked = this.sessionEndBlockDetail(session);
+        if (blocked) return this.rejectV2Command(socket, command, 'session_end_requires_idle', blocked);
+        await this.endSession(session, 'explicit');
+        return this.sendV2CommandAck(socket, command, { controlEpoch: protocol.controlEpoch });
+      }
+      if (command.type === 'display_state') {
+        if (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload)
+          || !command.payload.display || typeof command.payload.display !== 'object'
+          || Array.isArray(command.payload.display)) {
+          return this.rejectV2Command(socket, command, 'invalid_aux_payload');
+        }
+        session.display = displayState(command.payload.display);
+        await this.ctx.storage.put('session', session);
+        this.broadcast({ type: 'display_state', display: session.display }, 'display');
+        return this.sendV2CommandAck(socket, command, { controlEpoch: protocol.controlEpoch });
+      }
+      if (command.type === 'prefetch') {
+        const videoIds = command.payload?.videoIds;
+        if (!Array.isArray(videoIds) || videoIds.length > 2
+          || videoIds.some((id) => typeof id !== 'string' || !VIDEO_ID_PATTERN.test(id))) {
+          return this.rejectV2Command(socket, command, 'invalid_aux_payload');
+        }
+        for (const playerSocket of this.ctx.getWebSockets()) {
+          const attachment = playerSocket.deserializeAttachment() || {};
+          if (attachment.role !== 'player') continue;
+          if (attachment.protocolVersion === PROTOCOL_V2 && attachment.negotiationState === 'negotiated') {
+            this.send(playerSocket, { ...command, protocolVersion: PROTOCOL_V2, payload: { videoIds } });
+          } else if (attachment.protocolVersion !== PROTOCOL_V2) {
+            this.send(playerSocket, {
+              type: 'command',
+              command: { type: 'prefetch', commandId: command.commandId, videoIds }
+            });
+          }
+        }
+        return this.sendV2CommandAck(socket, command, { controlEpoch: protocol.controlEpoch });
+      }
+      if (V2_ROUTE_COMMANDS.includes(command.type)) return await this.handleV2RouteCommand(socket, session, command);
+      if (V2_RUN_COMMANDS.includes(command.type)) return await this.handleV2RunCommand(socket, session, command);
+      if (V2_TEST_COMMANDS.includes(command.type)) return await this.handleV2TestCommand(socket, session, command);
+      return this.rejectV2Command(socket, command, 'unsupported_command', { type: command.type });
+    } catch (error) {
+      if (gate?.pending) this.abandonV2Command(socket, command, gate.pending);
+      throw error;
+    } finally {
+      if (releaseStatefulCommand) releaseStatefulCommand();
+    }
+  }
+
+  async handleV2ControlTakeover(socket, session, command) {
+    const attachment = socket.deserializeAttachment() || {};
+    const controlInstanceId = protocolId(command.controlInstanceId);
+    const expectedControlEpoch = finiteEpoch(command.expectedControlEpoch);
+    let protocol = this.ensureProtocolV2(session);
+    const hasForeignIdentity = [
+      'entryId', 'runId', 'switchId', 'checkId', 'leaseEpoch', 'controlEpoch',
+      'targetPlayerInstanceId', 'targetConnectionId'
+    ].some((field) => hasOwn(command, field));
+    const invalidPayload = hasOwn(command, 'payload')
+      && (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload));
+    if (attachment.protocolVersion !== PROTOCOL_V2 || attachment.negotiationState !== 'negotiated'
+      || !attachment.controlInstanceId) {
+      return this.rejectV2Command(socket, command, 'control_hello_required');
+    }
+    if (!controlInstanceId || hasForeignIdentity || invalidPayload || controlInstanceId !== attachment.controlInstanceId) {
+      return this.rejectV2Command(socket, command, 'foreign_control_instance', {
+        expected: attachment.controlInstanceId,
+        actual: controlInstanceId
+      });
+    }
+    if (expectedControlEpoch === null || expectedControlEpoch !== protocol.controlEpoch) {
+      return this.rejectV2Command(socket, command, 'stale_control_epoch', {
+        expected: protocol.controlEpoch,
+        actual: expectedControlEpoch
+      });
+    }
+    if (protocol.writableControlInstanceId !== controlInstanceId) {
+      const candidate = structuredClone(session);
+      const candidateProtocol = this.ensureProtocolV2(candidate);
+      candidateProtocol.controlEpoch += 1;
+      candidateProtocol.writableControlInstanceId = controlInstanceId;
+      await this.ctx.storage.put('session', candidate);
+      this.adoptPersistedSession(session, candidate);
+      protocol = this.ensureProtocolV2(session);
+    }
+    this.sendV2CommandAck(socket, command, {
+      code: 'control_lease_granted',
+      controlEpoch: protocol.controlEpoch,
+      writableControlInstanceId: protocol.writableControlInstanceId
+    });
+    this.broadcastProtocolV2Snapshot(session);
+  }
+
+  async handleV2RouteCommand(socket, session, command) {
+    let protocol = this.ensureProtocolV2(session);
+    const targetPlayerInstanceId = protocolId(command.targetPlayerInstanceId);
+    const switchId = protocolId(command.switchId);
+    const expectedLeaseEpoch = finiteEpoch(command.leaseEpoch);
+    const hasForeignIdentity = ['entryId', 'runId', 'checkId', 'targetConnectionId']
+      .some((field) => hasOwn(command, field));
+    const invalidPayload = hasOwn(command, 'payload')
+      && (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload));
+    if (!targetPlayerInstanceId || !switchId || expectedLeaseEpoch === null || hasForeignIdentity || invalidPayload) {
+      return this.rejectV2Command(socket, command, 'invalid_route_identity');
+    }
+    if (expectedLeaseEpoch !== protocol.leaseEpoch) {
+      return this.rejectV2Command(socket, command, 'stale_lease_epoch', {
+        expected: protocol.leaseEpoch,
+        actual: expectedLeaseEpoch
+      });
+    }
+
+    if (command.type === 'activate_output') {
+      const outputMode = command.payload?.outputMode;
+      if (!command.payload || !V2_OUTPUT_MODES.includes(outputMode)) {
+        return this.rejectV2Command(socket, command, 'invalid_output_mode', { outputMode });
+      }
+      if (protocol.leaseStatus === 'emergency_stopping') {
+        return this.rejectV2Command(socket, command, 'emergency_stop_confirmation_required', {
+          pendingEmergencyCommandId: protocol.pendingEmergencyCommandId
+        });
+      }
+      if (protocol.leaseTarget) {
+        if (protocol.leaseTarget === targetPlayerInstanceId
+          && protocol.switchId === switchId
+          && ['activating', 'ready', 'audible'].includes(protocol.leaseStatus)) {
+          return this.sendV2CommandAck(socket, command, {
+            controlEpoch: protocol.controlEpoch,
+            leaseEpoch: protocol.leaseEpoch,
+            targetPlayerInstanceId,
+            status: protocol.leaseStatus,
+            duplicate: true
+          });
+        }
+        return this.rejectV2Command(socket, command, 'output_deactivation_required', {
+          leaseTarget: protocol.leaseTarget,
+          leaseEpoch: protocol.leaseEpoch,
+          status: protocol.leaseStatus
+        });
+      }
+
+      const legacyPlayerCount = this.ctx.getWebSockets()
+        .filter((candidate) => {
+          const attachment = candidate.deserializeAttachment() || {};
+          return attachment.role === 'player' && attachment.protocolVersion !== PROTOCOL_V2;
+        }).length;
+      if (legacyPlayerCount > 0) {
+        return this.rejectV2Command(socket, command, 'legacy_player_present', {
+          count: legacyPlayerCount
+        });
+      }
+
+      const candidates = [...new Set(this.eligiblePlayerRecords(outputMode)
+        .map(({ attachment }) => attachment.playerInstanceId))];
+      if (candidates.length !== 1) {
+        return this.rejectV2Command(socket, command, 'output_candidate_count', {
+          outputMode,
+          count: candidates.length,
+          candidates: candidates.slice(0, 16)
+        });
+      }
+      if (candidates[0] !== targetPlayerInstanceId) {
+        return this.rejectV2Command(socket, command, 'target_not_eligible', {
+          outputMode,
+          targetPlayerInstanceId,
+          eligibleTarget: candidates[0]
+        });
+      }
+
+      const target = this.livePlayerRecords()
+        .find(({ attachment }) => attachment.playerInstanceId === targetPlayerInstanceId);
+      if (!target) return this.rejectV2Command(socket, command, 'target_not_connected');
+
+      const candidate = structuredClone(session);
+      const candidateProtocol = this.ensureProtocolV2(candidate);
+      candidateProtocol.leaseEpoch += 1;
+      candidateProtocol.leaseTarget = targetPlayerInstanceId;
+      candidateProtocol.leaseClientKind = target.attachment.clientKind;
+      candidateProtocol.leaseStatus = 'activating';
+      candidateProtocol.selectedOutputMode = outputMode;
+      candidateProtocol.switchId = switchId;
+      candidateProtocol.activeFamily = null;
+      candidateProtocol.activeCheckId = null;
+      candidateProtocol.activeCheckProgress = null;
+      candidateProtocol.pendingEmergencyCommandId = null;
+      candidateProtocol.pendingEmergencyControlInstanceId = null;
+      candidateProtocol.pendingEmergencyTargets = [];
+      candidateProtocol.pendingEmergencyTargetInstances = {};
+      candidateProtocol.emergencyAcknowledgedTargets = [];
+      candidateProtocol.pendingEmergencyLegacyCount = 0;
+      candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_activating' };
+      await this.ctx.storage.put('session', candidate);
+      this.adoptPersistedSession(session, candidate);
+      protocol = this.ensureProtocolV2(session);
+
+      const forwarded = {
+        ...command,
+        protocolVersion: PROTOCOL_V2,
+        outputMode,
+        leaseEpoch: protocol.leaseEpoch,
+        targetPlayerInstanceId
+      };
+      const delivered = this.sendToPlayerInstance(targetPlayerInstanceId, forwarded);
+      if (!delivered) {
+        const failedCandidate = structuredClone(session);
+        const failedProtocol = this.ensureProtocolV2(failedCandidate);
+        failedProtocol.leaseStatus = 'unknown';
+        failedProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'target_disconnected' };
+        await this.ctx.storage.put('session', failedCandidate);
+        this.adoptPersistedSession(session, failedCandidate);
+        this.broadcastProtocolV2Snapshot(session);
+        return this.rejectV2Command(socket, command, 'target_not_connected');
+      }
+      this.setPlayerInstanceState(targetPlayerInstanceId, 'activation');
+      this.sendV2CommandAck(socket, command, {
+        controlEpoch: protocol.controlEpoch,
+        leaseEpoch: protocol.leaseEpoch,
+        targetPlayerInstanceId,
+        status: protocol.leaseStatus
+      });
+      this.broadcastProtocolV2Snapshot(session);
+      return;
+    }
+
+    if (!protocol.leaseTarget || protocol.leaseTarget !== targetPlayerInstanceId) {
+      return this.rejectV2Command(socket, command, 'foreign_target_player', {
+        expected: protocol.leaseTarget,
+        actual: targetPlayerInstanceId
+      });
+    }
+    if (protocol.switchId === switchId && protocol.leaseStatus === 'deactivating') {
+      return this.sendV2CommandAck(socket, command, {
+        controlEpoch: protocol.controlEpoch,
+        leaseEpoch: protocol.leaseEpoch,
+        targetPlayerInstanceId,
+        status: protocol.leaseStatus,
+        duplicate: true
+      });
+    }
+
+    const candidate = structuredClone(session);
+    const candidateProtocol = this.ensureProtocolV2(candidate);
+    candidateProtocol.switchId = switchId;
+    candidateProtocol.leaseStatus = 'deactivating';
+    candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_deactivating' };
+    await this.ctx.storage.put('session', candidate);
+    this.adoptPersistedSession(session, candidate);
+    protocol = this.ensureProtocolV2(session);
+    const delivered = this.sendToPlayerInstance(targetPlayerInstanceId, {
+      ...command,
+      protocolVersion: PROTOCOL_V2,
+      leaseEpoch: protocol.leaseEpoch,
+      targetPlayerInstanceId
+    });
+    if (!delivered) {
+      const failedCandidate = structuredClone(session);
+      const failedProtocol = this.ensureProtocolV2(failedCandidate);
+      failedProtocol.leaseStatus = 'unknown';
+      failedProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'target_disconnected' };
+      await this.ctx.storage.put('session', failedCandidate);
+      this.adoptPersistedSession(session, failedCandidate);
+      this.broadcastProtocolV2Snapshot(session);
+      return this.rejectV2Command(socket, command, 'target_not_connected');
+    }
+    this.setPlayerInstanceState(targetPlayerInstanceId, 'deactivating');
+    this.sendV2CommandAck(socket, command, {
+      controlEpoch: protocol.controlEpoch,
+      leaseEpoch: protocol.leaseEpoch,
+      targetPlayerInstanceId,
+      status: protocol.leaseStatus
+    });
+    this.broadcastProtocolV2Snapshot(session);
+  }
+
+  async handleV2RunCommand(socket, session, command) {
+    let protocol = this.ensureProtocolV2(session);
+    const targetPlayerInstanceId = protocolId(command.targetPlayerInstanceId);
+    const entryId = protocolId(command.entryId);
+    const runId = protocolId(command.runId);
+    const leaseEpoch = finiteEpoch(command.leaseEpoch);
+    const hasForeignIdentity = ['switchId', 'checkId', 'targetConnectionId']
+      .some((field) => hasOwn(command, field));
+    const payloadIsRecord = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload);
+    const invalidLoadPayload = command.type === 'load'
+      && (!payloadIsRecord || !command.payload.song || typeof command.payload.song !== 'object' || Array.isArray(command.payload.song)
+        || (hasOwn(command.payload, 'position') && (!Number.isFinite(command.payload.position) || command.payload.position < 0))
+        || (hasOwn(command.payload, 'volume')
+          && (!Number.isFinite(command.payload.volume) || command.payload.volume < 0 || command.payload.volume > 100)));
+    const invalidSeekPayload = command.type === 'seek'
+      && (!payloadIsRecord || !Number.isFinite(command.payload.position) || command.payload.position < 0);
+    const invalidVolumePayload = command.type === 'volume'
+      && (!payloadIsRecord || !Number.isFinite(command.payload.volume)
+        || command.payload.volume < 0 || command.payload.volume > 100);
+    const invalidOptionalPayload = !['load', 'seek', 'volume'].includes(command.type)
+      && hasOwn(command, 'payload') && !payloadIsRecord;
+    if (!targetPlayerInstanceId || !entryId || !runId || leaseEpoch === null || hasForeignIdentity
+      || invalidLoadPayload || invalidSeekPayload || invalidVolumePayload || invalidOptionalPayload) {
+      return this.rejectV2Command(socket, command, 'invalid_run_identity');
+    }
+    if (leaseEpoch !== protocol.leaseEpoch) {
+      return this.rejectV2Command(socket, command, 'stale_lease_epoch', {
+        expected: protocol.leaseEpoch,
+        actual: leaseEpoch
+      });
+    }
+    if (targetPlayerInstanceId !== protocol.leaseTarget) {
+      return this.rejectV2Command(socket, command, 'foreign_target_player', {
+        expected: protocol.leaseTarget,
+        actual: targetPlayerInstanceId
+      });
+    }
+    if (protocol.activeCheckId) {
+      return this.rejectV2Command(socket, command, 'test_active', {
+        activeCheckId: protocol.activeCheckId
+      });
+    }
+    const liveness = await this.guardActiveOutputLiveness(
+      session,
+      targetPlayerInstanceId,
+      { mutationLockHeld: true }
+    );
+    if (!liveness.ok) {
+      return this.rejectV2Command(socket, command, liveness.code, liveness.detail);
+    }
+    protocol = this.ensureProtocolV2(session);
+    if (!['ready', 'audible'].includes(protocol.leaseStatus)) {
+      return this.rejectV2Command(socket, command, 'output_not_ready', { status: protocol.leaseStatus });
+    }
+    if (command.type !== 'load'
+      && (protocol.activeFamily?.entryId !== entryId || protocol.activeFamily?.runId !== runId)) {
+      return this.rejectV2Command(socket, command, 'stale_run_identity', {
+        expected: protocol.activeFamily,
+        actual: { entryId, runId }
+      });
+    }
+
+    const playerConnected = this.livePlayerRecords()
+      .some(({ attachment }) => attachment.playerInstanceId === targetPlayerInstanceId);
+    if (!playerConnected) return this.rejectV2Command(socket, command, 'target_not_connected');
+
+    const priorRunState = {
+      activeFamily: structuredClone(protocol.activeFamily),
+      desiredTransport: structuredClone(protocol.desiredTransport),
+      confirmedPlayback: structuredClone(protocol.confirmedPlayback)
+    };
+    const candidate = structuredClone(session);
+    const candidateProtocol = this.ensureProtocolV2(candidate);
+    const payload = payloadIsRecord ? command.payload : {};
+    const desired = { ...(candidateProtocol.desiredTransport || {}) };
+    if (command.type === 'load') {
+      candidateProtocol.activeFamily = { entryId, runId };
+      desired.status = 'loading';
+      desired.song = payload.song || null;
+      desired.entryId = entryId;
+      desired.runId = runId;
+      desired.position = Math.max(0, Number(payload.position) || 0);
+      if (Number.isFinite(payload.volume)) desired.volume = Math.max(0, Math.min(100, payload.volume));
+      candidateProtocol.confirmedPlayback = {
+        status: 'unknown',
+        reasonCode: 'load_not_confirmed',
+        entryId,
+        runId,
+        playerInstanceId: targetPlayerInstanceId,
+        leaseEpoch
+      };
+    } else if (command.type === 'play') {
+      desired.status = 'playing';
+    } else if (command.type === 'pause') {
+      desired.status = 'paused';
+    } else if (command.type === 'seek') {
+      desired.position = Math.max(0, Number(payload.position) || 0);
+    } else if (command.type === 'volume') {
+      desired.volume = Math.max(0, Math.min(100, Number(payload.volume) || 0));
+    } else if (command.type === 'stop') {
+      desired.status = 'stopped';
+      desired.position = 0;
+    }
+    candidateProtocol.desiredTransport = desired;
+
+    const persistent = !['seek', 'volume'].includes(command.type);
+    if (persistent) {
+      await this.ctx.storage.put('session', candidate);
+      this.adoptPersistedSession(session, candidate);
+      protocol = this.ensureProtocolV2(session);
+    }
+
+    const delivered = this.sendToPlayerInstance(targetPlayerInstanceId, {
+      ...command,
+      protocolVersion: PROTOCOL_V2,
+      leaseEpoch,
+      targetPlayerInstanceId,
+      entryId,
+      runId
+    });
+    if (!delivered) {
+      if (persistent) {
+        const failedCandidate = structuredClone(session);
+        const failedProtocol = this.ensureProtocolV2(failedCandidate);
+        failedProtocol.activeFamily = priorRunState.activeFamily;
+        failedProtocol.desiredTransport = priorRunState.desiredTransport;
+        failedProtocol.confirmedPlayback = priorRunState.confirmedPlayback;
+        await this.ctx.storage.put('session', failedCandidate);
+        this.adoptPersistedSession(session, failedCandidate);
+      }
+      return this.rejectV2Command(socket, command, 'target_not_connected');
+    }
+    if (!persistent) {
+      this.adoptPersistedSession(session, candidate);
+      protocol = this.ensureProtocolV2(session);
+    }
+    this.sendV2CommandAck(socket, command, {
+      controlEpoch: protocol.controlEpoch,
+      leaseEpoch,
+      targetPlayerInstanceId,
+      entryId,
+      runId
+    });
+    this.broadcastV2Controls({
+      type: 'desired_transport',
+      protocolVersion: PROTOCOL_V2,
+      desiredTransport: protocol.desiredTransport
+    });
+  }
+
+  async handleV2TestCommand(socket, session, command) {
+    let protocol = this.ensureProtocolV2(session);
+    const targetPlayerInstanceId = protocolId(command.targetPlayerInstanceId);
+    const checkId = protocolId(command.checkId);
+    const leaseEpoch = finiteEpoch(command.leaseEpoch);
+    const hasForeignIdentity = ['entryId', 'runId', 'switchId', 'targetConnectionId']
+      .some((field) => hasOwn(command, field));
+    const payloadIsRecord = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload);
+    const invalidStartPayload = command.type === 'start_test'
+      && (!payloadIsRecord || !protocolId(command.payload.fixtureId)
+        || !Number.isSafeInteger(command.payload.durationMs)
+        || command.payload.durationMs < 1_000
+        || command.payload.durationMs > 10_000);
+    const invalidStopPayload = command.type === 'stop_test' && hasOwn(command, 'payload') && !payloadIsRecord;
+    if (!targetPlayerInstanceId || !checkId || leaseEpoch === null || hasForeignIdentity
+      || invalidStartPayload || invalidStopPayload) {
+      return this.rejectV2Command(socket, command, 'invalid_test_identity');
+    }
+    if (leaseEpoch !== protocol.leaseEpoch) {
+      return this.rejectV2Command(socket, command, 'stale_lease_epoch', {
+        expected: protocol.leaseEpoch,
+        actual: leaseEpoch
+      });
+    }
+    if (targetPlayerInstanceId !== protocol.leaseTarget) {
+      return this.rejectV2Command(socket, command, 'foreign_target_player', {
+        expected: protocol.leaseTarget,
+        actual: targetPlayerInstanceId
+      });
+    }
+    if (command.type === 'start_test' && protocol.activeCheckId) {
+      return this.rejectV2Command(socket, command, 'test_already_active', {
+        activeCheckId: protocol.activeCheckId
+      });
+    }
+    if (command.type === 'start_test') {
+      const desiredStatus = protocol.desiredTransport?.status ?? null;
+      const confirmedStatus = protocol.confirmedPlayback?.status ?? null;
+      const transportStatus = session.transport?.status ?? null;
+      const hasActiveMediaState = [desiredStatus, confirmedStatus, transportStatus]
+        .some((status) => V2_TEST_ACTIVE_MEDIA_STATUSES.has(status));
+      const requiresIdle = hasActiveMediaState || Boolean(protocol.activeFamily);
+      if (requiresIdle) {
+        return this.rejectV2Command(socket, command, 'test_requires_idle', {
+          desiredStatus,
+          confirmedStatus,
+          transportStatus,
+          activeFamilyPresent: Boolean(protocol.activeFamily)
+        });
+      }
+    }
+    const liveness = await this.guardActiveOutputLiveness(
+      session,
+      targetPlayerInstanceId,
+      { mutationLockHeld: true }
+    );
+    if (!liveness.ok) {
+      return this.rejectV2Command(socket, command, liveness.code, liveness.detail);
+    }
+    protocol = this.ensureProtocolV2(session);
+    if (!['ready', 'audible'].includes(protocol.leaseStatus)) {
+      return this.rejectV2Command(socket, command, 'output_not_ready', { status: protocol.leaseStatus });
+    }
+    if (command.type === 'stop_test' && protocol.activeCheckId !== checkId) {
+      return this.rejectV2Command(socket, command, 'stale_check_identity', {
+        expected: protocol.activeCheckId,
+        actual: checkId
+      });
+    }
+
+    const priorActiveCheckId = protocol.activeCheckId;
+    const priorActiveCheckProgress = structuredClone(protocol.activeCheckProgress);
+    const candidate = structuredClone(session);
+    const candidateProtocol = this.ensureProtocolV2(candidate);
+    if (command.type === 'start_test') {
+      candidateProtocol.activeCheckId = checkId;
+      candidateProtocol.activeCheckProgress = { checkId, started: false, markerCount: 0 };
+    }
+    await this.ctx.storage.put('session', candidate);
+    this.adoptPersistedSession(session, candidate);
+    protocol = this.ensureProtocolV2(session);
+
+    const delivered = this.sendToPlayerInstance(targetPlayerInstanceId, {
+      ...command,
+      protocolVersion: PROTOCOL_V2,
+      leaseEpoch,
+      targetPlayerInstanceId,
+      checkId
+    });
+    if (!delivered) {
+      const failedCandidate = structuredClone(session);
+      const failedProtocol = this.ensureProtocolV2(failedCandidate);
+      failedProtocol.activeCheckId = priorActiveCheckId;
+      failedProtocol.activeCheckProgress = priorActiveCheckProgress;
+      await this.ctx.storage.put('session', failedCandidate);
+      this.adoptPersistedSession(session, failedCandidate);
+      return this.rejectV2Command(socket, command, 'target_not_connected');
+    }
+    this.sendV2CommandAck(socket, command, {
+      controlEpoch: protocol.controlEpoch,
+      leaseEpoch,
+      targetPlayerInstanceId,
+      checkId
+    });
+  }
+
+  async handleV2EmergencyStop(socket, session, command) {
+    const attachment = socket.deserializeAttachment() || {};
+    const commandId = protocolId(command.commandId);
+    const sessionId = protocolId(command.sessionId);
+    const authenticatedControlInstanceId = protocolId(command.authenticatedControlInstanceId);
+    if (attachment.protocolVersion !== PROTOCOL_V2 || attachment.negotiationState !== 'negotiated'
+      || !attachment.controlInstanceId) {
+      return this.rejectV2Command(socket, command, 'control_hello_required');
+    }
+    const hasForeignIdentity = [
+      'entryId', 'runId', 'switchId', 'checkId', 'leaseEpoch', 'controlEpoch',
+      'targetPlayerInstanceId', 'targetConnectionId'
+    ].some((field) => hasOwn(command, field));
+    const invalidPayload = hasOwn(command, 'payload')
+      && (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload));
+    if (!commandId || hasForeignIdentity || invalidPayload || sessionId !== session.room
+      || authenticatedControlInstanceId !== attachment.controlInstanceId) {
+      return this.rejectV2Command(socket, command, 'invalid_emergency_identity', {
+        expectedSessionId: session.room,
+        authenticatedControlInstanceId: attachment.controlInstanceId
+      });
+    }
+
+    let protocol = this.ensureProtocolV2(session);
+    const v2Targets = [];
+    const legacyTargets = [];
+    const emergencyTargets = [];
+    const emergencyTargetInstances = {};
+    for (const playerSocket of this.ctx.getWebSockets()) {
+      const playerAttachment = playerSocket.deserializeAttachment() || {};
+      if (playerAttachment.role !== 'player') continue;
+      if (playerAttachment.protocolVersion === PROTOCOL_V2
+        && playerAttachment.negotiationState === 'negotiated') {
+        v2Targets.push({ socket: playerSocket, attachment: playerAttachment });
+        if (playerAttachment.connectionId && playerAttachment.playerInstanceId) {
+          emergencyTargets.push(playerAttachment.connectionId);
+          emergencyTargetInstances[playerAttachment.connectionId] = playerAttachment.playerInstanceId;
+        }
+      } else if (playerAttachment.protocolVersion !== PROTOCOL_V2) {
+        legacyTargets.push(playerSocket);
+      }
+    }
+
+    const candidate = structuredClone(session);
+    const candidateProtocol = this.ensureProtocolV2(candidate);
+    candidateProtocol.leaseEpoch += 1;
+    candidateProtocol.leaseTarget = null;
+    candidateProtocol.leaseClientKind = null;
+    candidateProtocol.leaseStatus = 'emergency_stopping';
+    candidateProtocol.switchId = null;
+    candidateProtocol.activeFamily = null;
+    candidateProtocol.activeCheckId = null;
+    candidateProtocol.activeCheckProgress = null;
+    candidateProtocol.pendingEmergencyCommandId = commandId;
+    candidateProtocol.pendingEmergencyControlInstanceId = authenticatedControlInstanceId;
+    candidateProtocol.pendingEmergencyTargets = [...new Set(emergencyTargets)];
+    candidateProtocol.pendingEmergencyTargetInstances = emergencyTargetInstances;
+    candidateProtocol.emergencyAcknowledgedTargets = [];
+    candidateProtocol.pendingEmergencyLegacyCount = legacyTargets.length;
+    candidateProtocol.desiredTransport = {
+      ...(candidateProtocol.desiredTransport || {}),
+      status: 'stopped',
+      position: 0,
+      entryId: null,
+      runId: null
+    };
+    candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'emergency_stop_unconfirmed' };
+    candidate.transport = { ...candidate.transport, status: 'unknown' };
+    await this.ctx.storage.put('session', candidate);
+    this.adoptPersistedSession(session, candidate);
+    protocol = this.ensureProtocolV2(session);
+
+    let deliveredV2 = 0;
+    let deliveredV1 = 0;
+    for (const { socket: playerSocket } of v2Targets) {
+      if (this.sendPendingV2EmergencyStop(playerSocket, session)) deliveredV2 += 1;
+    }
+    for (const playerSocket of legacyTargets) {
+      if (this.send(playerSocket, { type: 'command', command: { type: 'stop', commandId } })) {
+        deliveredV1 += 1;
+      }
+    }
+
+    this.broadcastLegacyControls({ type: 'transport', transport: session.transport });
+    this.sendV2CommandAck(socket, command, {
+      code: 'emergency_stop_dispatched',
+      delivered: { protocolV2: deliveredV2, legacy: deliveredV1 },
+      leaseEpoch: protocol.leaseEpoch
+    });
+    this.broadcastProtocolV2Snapshot(session);
+  }
+
+  validateV2PlayerConnectionIdentity(socket, message) {
+    const attachment = socket.deserializeAttachment() || {};
+    const playerInstanceId = protocolId(message.playerInstanceId);
+    if (attachment.protocolVersion !== PROTOCOL_V2 || attachment.negotiationState !== 'negotiated'
+      || !attachment.playerInstanceId) {
+      return { ok: false, code: 'player_hello_required' };
+    }
+    if (!playerInstanceId || playerInstanceId !== attachment.playerInstanceId) {
+      return {
+        ok: false,
+        code: 'foreign_player_instance',
+        detail: { expected: attachment.playerInstanceId, actual: playerInstanceId }
+      };
+    }
+    const connectionId = protocolId(message.connectionId);
+    if (!connectionId || connectionId !== attachment.connectionId) {
+      return {
+        ok: false,
+        code: 'foreign_connection',
+        detail: { expected: attachment.connectionId, actual: connectionId }
+      };
+    }
+    return { ok: true, attachment, playerInstanceId, connectionId };
+  }
+
+  validateV2PlayerIdentity(socket, protocol, message, family) {
+    const connection = this.validateV2PlayerConnectionIdentity(socket, message);
+    if (!connection.ok) return connection;
+    const { playerInstanceId } = connection;
+    const leaseEpoch = finiteEpoch(message.leaseEpoch);
+    const isHeartbeat = family === 'heartbeat';
+    const isActiveLeaseTarget = protocol.leaseTarget === playerInstanceId;
+    const invalidHeartbeatEpoch = isHeartbeat && (
+      leaseEpoch === null
+      || (isActiveLeaseTarget
+        ? leaseEpoch !== protocol.leaseEpoch
+        : leaseEpoch > protocol.leaseEpoch)
+    );
+    if (invalidHeartbeatEpoch || (!isHeartbeat
+      && (leaseEpoch === null || leaseEpoch !== protocol.leaseEpoch))) {
+      return {
+        ok: false,
+        code: leaseEpoch !== null && leaseEpoch > protocol.leaseEpoch
+          ? 'future_lease_epoch'
+          : 'stale_lease_epoch',
+        detail: { expected: protocol.leaseEpoch, actual: leaseEpoch }
+      };
+    }
+    if (family !== 'heartbeat' && protocol.leaseTarget !== playerInstanceId) {
+      return {
+        ok: false,
+        code: 'foreign_lease_target',
+        detail: { expected: protocol.leaseTarget, actual: playerInstanceId }
+      };
+    }
+    if (family !== 'heartbeat' && (!Number.isFinite(message.monotonicTimeMs) || message.monotonicTimeMs < 0)) {
+      return { ok: false, code: 'invalid_monotonic_time' };
+    }
+    if (family === 'heartbeat' && hasOwn(message, 'monotonicTimeMs')
+      && (!Number.isFinite(message.monotonicTimeMs) || message.monotonicTimeMs < 0)) {
+      return { ok: false, code: 'invalid_monotonic_time' };
+    }
+    return { ...connection, leaseEpoch };
+  }
+
+  stageV2Sequence(attachment, family, sequence, observedAt = Date.now()) {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) return { ok: false, code: 'invalid_sequence' };
+    const sequences = attachment.sequenceHighWater && typeof attachment.sequenceHighWater === 'object'
+      ? { ...attachment.sequenceHighWater }
+      : {};
+    const previous = finiteEpoch(sequences[family]);
+    if (previous !== null && sequence <= previous) {
+      return {
+        ok: false,
+        code: sequence === previous ? 'duplicate_sequence' : 'out_of_order_sequence',
+        detail: { family, previous, actual: sequence }
+      };
+    }
+    sequences[family] = sequence;
+    const nextAttachment = { ...attachment, sequenceHighWater: sequences, lastSeenAt: observedAt };
+    return { ok: true, attachment: nextAttachment };
+  }
+
+  async handleV2Heartbeat(socket, session, message) {
+    const playerInstanceId = protocolId(message.playerInstanceId) || 'unknown_player';
+    const release = await this.acquireV2PlayerQueue(playerInstanceId);
+    try {
+      const protocol = this.ensureProtocolV2(session);
+      const hasForeignIdentity = [
+        'entryId', 'runId', 'switchId', 'checkId', 'controlEpoch', 'targetPlayerInstanceId',
+        'targetConnectionId'
+      ].some((field) => hasOwn(message, field));
+      if (hasForeignIdentity) return this.sendProtocolError(socket, 'invalid_heartbeat_identity');
+      const identity = this.validateV2PlayerIdentity(socket, protocol, message, 'heartbeat');
+      if (!identity.ok) return this.sendProtocolError(socket, identity.code, identity.detail);
+      if (protocolId(message.connectionId) !== identity.attachment.connectionId) {
+        return this.sendProtocolError(socket, 'foreign_connection', {
+          expected: identity.attachment.connectionId,
+          actual: protocolId(message.connectionId)
+        });
+      }
+
+      const observedAt = Date.now();
+      const priorHealth = this.playerHeartbeatHealth(identity.attachment, observedAt);
+      const sequence = this.stageV2Sequence(
+        identity.attachment,
+        v2EventSequenceNamespace(message),
+        message.sequence,
+        observedAt
+      );
+      if (!sequence.ok) return this.sendProtocolError(socket, sequence.code, sequence.detail);
+      let nextAttachment = sequence.attachment;
+      if (message.runtime && typeof message.runtime === 'object' && !Array.isArray(message.runtime)) {
+        nextAttachment = {
+          ...nextAttachment,
+          runtime: {
+            ...(nextAttachment.runtime || {}),
+            ...boundedRecord(message.runtime, [
+              'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'recording'
+            ])
+          }
+        };
+      }
+
+      let issue = null;
+      const activeTarget = protocol.leaseTarget === identity.playerInstanceId
+        && ['activating', 'ready', 'audible'].includes(protocol.leaseStatus);
+      if (activeTarget && nextAttachment.runtime?.sourceActive === false) {
+        issue = {
+          reasonCode: 'target_source_inactive',
+          targetPlayerInstanceId: identity.playerInstanceId,
+          connected: true,
+          heartbeatAgeMs: priorHealth.heartbeatAgeMs,
+          heartbeatWarning: priorHealth.heartbeatWarning,
+          heartbeatStale: priorHealth.heartbeatStale,
+          sourceActive: false
+        };
+      } else if (activeTarget && priorHealth.heartbeatStale) {
+        issue = {
+          reasonCode: 'target_heartbeat_stale',
+          targetPlayerInstanceId: identity.playerInstanceId,
+          connected: true,
+          heartbeatAgeMs: priorHealth.heartbeatAgeMs,
+          heartbeatWarning: true,
+          heartbeatStale: true,
+          sourceActive: nextAttachment.runtime?.sourceActive ?? null
+        };
+      } else {
+        issue = this.activeOutputLivenessIssue(session, identity.playerInstanceId, {
+          now: observedAt,
+          overrideAttachment: nextAttachment
+        });
+      }
+      const transitioned = issue
+        ? await this.persistActiveOutputUnknown(session, issue)
+        : false;
+      socket.serializeAttachment(nextAttachment);
+      if (transitioned) this.publishActiveOutputUnknown(session);
+
+      for (const controlSocket of this.ctx.getWebSockets()) {
+        const controlAttachment = controlSocket.deserializeAttachment() || {};
+        if (controlAttachment.role === 'control' && controlAttachment.protocolVersion === PROTOCOL_V2
+          && controlAttachment.negotiationState === 'negotiated') {
+          this.send(controlSocket, message);
+        }
+      }
+      this.send(socket, {
+        type: 'heartbeat_ack',
+        protocolVersion: PROTOCOL_V2,
+        playerInstanceId: identity.playerInstanceId,
+        connectionId: identity.connectionId,
+        leaseEpoch: this.ensureProtocolV2(session).leaseEpoch,
+        sequence: message.sequence
+      });
+    } finally {
+      release();
+    }
+  }
+
+  isExactV2StrongStopPostcondition(postcondition) {
+    if (!postcondition || typeof postcondition !== 'object' || Array.isArray(postcondition)) return false;
+    const expectedFields = [
+      'audible',
+      'autoplayCancelled',
+      'mediaPaused',
+      'sourceDetached',
+      'status'
+    ];
+    const actualFields = Object.keys(postcondition).sort();
+    return actualFields.length === expectedFields.length
+      && actualFields.every((field, index) => field === expectedFields[index])
+      && postcondition.status === 'stopped'
+      && postcondition.mediaPaused === true
+      && postcondition.sourceDetached === true
+      && postcondition.autoplayCancelled === true
+      && postcondition.audible === false;
+  }
+
+  isExactV2AppliedSeekPostcondition(postcondition) {
+    if (!postcondition || typeof postcondition !== 'object' || Array.isArray(postcondition)) return false;
+    const actualFields = Object.keys(postcondition).sort();
+    return actualFields.length === 2
+      && actualFields[0] === 'position'
+      && actualFields[1] === 'status'
+      && Boolean(protocolId(postcondition.status))
+      && Number.isFinite(postcondition.position)
+      && postcondition.position >= 0;
+  }
+
+  isExactV2AppliedVolumePostcondition(postcondition) {
+    if (!postcondition || typeof postcondition !== 'object' || Array.isArray(postcondition)) return false;
+    const actualFields = Object.keys(postcondition).sort();
+    return actualFields.length === 2
+      && actualFields[0] === 'status'
+      && actualFields[1] === 'volume'
+      && Boolean(protocolId(postcondition.status))
+      && Number.isFinite(postcondition.volume)
+      && postcondition.volume >= 0
+      && postcondition.volume <= 100;
+  }
+
+  validV2PlaybackPostcondition(message, eventType) {
+    const nonNegative = (value) => Number.isFinite(value) && value >= 0;
+    const validReadyState = Number.isInteger(message.readyState) && message.readyState >= 0 && message.readyState <= 4;
+    if (hasOwn(message, 'commandType') && eventType !== 'command_applied') return false;
+    if (hasOwn(message, 'safetyPostcondition') && eventType !== 'command_failed') return false;
+    if (hasOwn(message, 'readyState') && !validReadyState) return false;
+    for (const field of ['mediaTime', 'duration', 'bufferedEnd', 'rmsDbfs', 'peakDbfs']) {
+      if (hasOwn(message, field) && !Number.isFinite(message[field])) return false;
+    }
+    if (hasOwn(message, 'commandId') && !protocolId(message.commandId)) return false;
+    for (const field of ['paused', 'seeking']) {
+      if (hasOwn(message, field) && typeof message[field] !== 'boolean') return false;
+    }
+
+    if (eventType === 'command_received') return Boolean(protocolId(message.commandId));
+    if (eventType === 'command_applied') {
+      const baseValid = Boolean(protocolId(message.commandId)
+        && message.postcondition && typeof message.postcondition === 'object'
+        && !Array.isArray(message.postcondition) && protocolId(message.postcondition.status));
+      if (!baseValid) return false;
+      if (message.postcondition.status === 'stopped') {
+        return message.commandType === 'STOP'
+          && this.isExactV2StrongStopPostcondition(message.postcondition);
+      }
+      if (hasOwn(message, 'commandType')) {
+        if (message.commandType === 'SEEK') {
+          return this.isExactV2AppliedSeekPostcondition(message.postcondition);
+        }
+        if (message.commandType === 'VOLUME') {
+          return this.isExactV2AppliedVolumePostcondition(message.postcondition);
+        }
+        if (message.commandType === 'STOP') {
+          return this.isExactV2StrongStopPostcondition(message.postcondition);
+        }
+        return false;
+      }
+      return !hasOwn(message.postcondition, 'position')
+        && !hasOwn(message.postcondition, 'volume');
+    }
+    if (eventType === 'command_failed') {
+      const baseValid = Boolean(protocolId(message.commandId) && protocolId(message.code)
+        && (!hasOwn(message, 'detail') || (message.detail && typeof message.detail === 'object' && !Array.isArray(message.detail))));
+      if (!baseValid) return false;
+      return !hasOwn(message, 'safetyPostcondition')
+        || this.isExactV2StrongStopPostcondition(message.safetyPostcondition);
+    }
+    if (eventType === 'ready') {
+      return nonNegative(message.mediaTime) && nonNegative(message.duration)
+        && Number.isInteger(message.readyState) && message.readyState >= 2 && message.readyState <= 4
+        && message.paused === true;
+    }
+    if (eventType === 'playing') return nonNegative(message.mediaTime) && message.paused === false;
+    if (eventType === 'paused') return nonNegative(message.mediaTime) && message.paused === true;
+    if (eventType === 'buffering') {
+      return nonNegative(message.mediaTime) && Number.isInteger(message.readyState)
+        && message.readyState >= 0 && message.readyState <= 3;
+    }
+    if (eventType === 'position') {
+      return nonNegative(message.mediaTime) && nonNegative(message.duration) && validReadyState
+        && typeof message.paused === 'boolean' && typeof message.seeking === 'boolean';
+    }
+    if (eventType === 'ended') {
+      return nonNegative(message.mediaTime) && nonNegative(message.duration) && message.paused === true;
+    }
+    if (eventType === 'error') {
+      return Boolean(protocolId(message.code)
+        && (!hasOwn(message, 'detail') || (message.detail && typeof message.detail === 'object' && !Array.isArray(message.detail))));
+    }
+    if (eventType === 'level') {
+      return Number.isFinite(message.rmsDbfs) && Number.isFinite(message.peakDbfs)
+        && message.peakDbfs >= message.rmsDbfs;
+    }
+    return false;
+  }
+
+  async handleV2PlaybackEvent(socket, session, message) {
+    const eventType = protocolId(message.event);
+    const hasForeignIdentity = ['switchId', 'checkId', 'controlEpoch', 'targetPlayerInstanceId', 'targetConnectionId']
+      .some((field) => hasOwn(message, field));
+    if (!protocolId(message.eventId) || !V2_PLAYBACK_EVENTS.includes(eventType)
+      || !protocolId(message.connectionId) || hasForeignIdentity
+      || !this.validV2PlaybackPostcondition(message, eventType)) {
+      return this.sendProtocolError(socket, 'invalid_playback_event');
+    }
+    const connection = this.validateV2PlayerConnectionIdentity(socket, message);
+    if (!connection.ok) return this.sendProtocolError(socket, connection.code, connection.detail);
+    const namespace = v2EventSequenceNamespace(message);
+    return this.runV2EventGuard(socket, session, message, namespace, async (targetSession) => {
+      const currentProtocol = this.ensureProtocolV2(targetSession);
+      const identity = this.validateV2PlayerIdentity(socket, currentProtocol, message, 'run_event');
+      if (!identity.ok) {
+        this.sendProtocolError(socket, identity.code, identity.detail);
+        return null;
+      }
+      const entryId = protocolId(message.entryId);
+      const runId = protocolId(message.runId);
+      if (!entryId || !runId
+        || currentProtocol.activeFamily?.entryId !== entryId
+        || currentProtocol.activeFamily?.runId !== runId) {
+        this.sendProtocolError(socket, 'stale_run_identity', {
+          expected: currentProtocol.activeFamily,
+          actual: { entryId, runId }
+        });
+        return null;
+      }
+
+      const persistent = namespace === 'runAuthoritative';
+      const previous = currentProtocol.confirmedPlayback || {};
+      const appliedStop = eventType === 'command_applied'
+        && message.commandType === 'STOP'
+        && this.isExactV2StrongStopPostcondition(message.postcondition);
+      const safetyStoppedAfterFailure = eventType === 'command_failed'
+        && this.isExactV2StrongStopPostcondition(message.safetyPostcondition);
+      const strongStopped = appliedStop || safetyStoppedAfterFailure;
+      const appliedSeek = eventType === 'command_applied'
+        && message.commandType === 'SEEK'
+        && this.isExactV2AppliedSeekPostcondition(message.postcondition);
+      const appliedVolume = eventType === 'command_applied'
+        && message.commandType === 'VOLUME'
+        && this.isExactV2AppliedVolumePostcondition(message.postcondition);
+      const confirmed = strongStopped
+        ? {
+            status: 'stopped',
+            reasonCode: eventType === 'command_applied'
+              ? 'stop_command_applied'
+              : 'command_failed_after_safety_stop',
+            playerInstanceId: identity.playerInstanceId,
+            leaseEpoch: identity.leaseEpoch,
+            entryId,
+            runId,
+            event: eventType,
+            commandId: message.commandId,
+            ...(eventType === 'command_failed' ? { failureCode: message.code } : {}),
+            position: 0,
+            paused: true,
+            sourceDetached: true,
+            autoplayCancelled: true,
+            audible: false,
+            lastSeenAt: Date.now()
+          }
+        : {
+            ...previous,
+            playerInstanceId: identity.playerInstanceId,
+            leaseEpoch: identity.leaseEpoch,
+            entryId,
+            runId,
+            event: eventType,
+            lastSeenAt: Date.now()
+          };
+      const mediaTime = Number.isFinite(message.mediaTime)
+        ? Math.max(0, message.mediaTime)
+        : Number.isFinite(message.position) ? Math.max(0, message.position) : null;
+      if (mediaTime !== null) confirmed.position = mediaTime;
+      if (Number.isFinite(message.duration)) confirmed.duration = Math.max(0, message.duration);
+      if (Number.isFinite(message.bufferedEnd)) confirmed.bufferedEnd = Math.max(0, message.bufferedEnd);
+      if (Number.isFinite(message.readyState)) confirmed.readyState = Math.max(0, Math.min(4, Math.trunc(message.readyState)));
+      if (typeof message.paused === 'boolean') confirmed.paused = message.paused;
+      if (typeof message.seeking === 'boolean') confirmed.seeking = message.seeking;
+      if (Number.isFinite(message.rmsDbfs)) confirmed.rmsDbfs = message.rmsDbfs;
+      if (Number.isFinite(message.peakDbfs)) confirmed.peakDbfs = message.peakDbfs;
+      if (appliedSeek) confirmed.position = message.postcondition.position;
+      if (appliedVolume) confirmed.volume = message.postcondition.volume;
+      if (['ready', 'playing', 'paused', 'buffering', 'ended', 'error'].includes(eventType)) {
+        confirmed.status = eventType;
+      }
+      currentProtocol.confirmedPlayback = confirmed;
+      if (strongStopped) currentProtocol.activeFamily = null;
+
+      // Route readiness and confirmed media activity are separate truths. Only
+      // an authoritative HTMLMediaElement `playing` event proves the active
+      // player is presently audible; command receipt/application and telemetry
+      // do not. A route already made unknown/deactivating by stronger safety
+      // evidence is never resurrected by a late playback event.
+      if (safetyStoppedAfterFailure && ['ready', 'audible'].includes(currentProtocol.leaseStatus)) {
+        currentProtocol.leaseStatus = 'unknown';
+      } else if (['ready', 'audible'].includes(currentProtocol.leaseStatus)) {
+        if (appliedStop) currentProtocol.leaseStatus = 'ready';
+        else if (eventType === 'playing') currentProtocol.leaseStatus = 'audible';
+        else if (['ready', 'paused', 'buffering', 'ended', 'error'].includes(eventType)) {
+          currentProtocol.leaseStatus = 'ready';
+        }
+      }
+
+      const nextTransport = { ...targetSession.transport };
+      if (strongStopped) {
+        nextTransport.status = 'stopped';
+        nextTransport.position = 0;
+      } else if (mediaTime !== null) nextTransport.position = mediaTime;
+      if (Number.isFinite(message.duration)) nextTransport.duration = Math.max(0, message.duration);
+      if (appliedSeek) nextTransport.position = message.postcondition.position;
+      if (appliedVolume) nextTransport.volume = message.postcondition.volume;
+      if (!strongStopped
+        && ['ready', 'playing', 'paused', 'buffering', 'ended', 'error'].includes(eventType)) {
+        nextTransport.status = eventType;
+      }
+      targetSession.transport = nextTransport;
+
+      return {
+        status: persistent ? 'applied' : 'relayed',
+        afterCommit: () => {
+          this.broadcastV2Controls(message);
+          if (persistent) this.broadcastProtocolV2Snapshot(session);
+          this.broadcastLegacyControls({
+            type: 'player_event',
+            event: {
+              type: eventType,
+              sessionId: runId,
+              position: confirmed.position,
+              duration: confirmed.duration
+            },
+            transport: nextTransport,
+            protocolVersion: PROTOCOL_V2
+          });
+        }
+      };
+    });
+  }
+
+  async handleV2RouteEvent(socket, session, message) {
+    const eventType = protocolId(message.event);
+    const postcondition = message.postcondition;
+    const validFailureDetail = !hasOwn(message, 'detail')
+      || (message.detail && typeof message.detail === 'object' && !Array.isArray(message.detail));
+    const failurePostconditionFields = ['mediaPaused', 'sourceDetached', 'autoplayCancelled', 'audible'];
+    const validFailurePostcondition = !hasOwn(message, 'postcondition')
+      || (postcondition && typeof postcondition === 'object' && !Array.isArray(postcondition)
+        && Object.keys(postcondition).every((field) => failurePostconditionFields.includes(field))
+        && Object.values(postcondition).every((value) => typeof value === 'boolean')
+        && !(postcondition.mediaPaused === true
+          && postcondition.sourceDetached === true
+          && postcondition.autoplayCancelled === true
+          && postcondition.audible === false));
+    const readyPostconditionFields = [
+      'mediaPaused', 'sourceDetached', 'autoplayCancelled', 'outputPathReady', 'audible'
+    ];
+    const validPostcondition = eventType === 'output_deactivated'
+      ? postcondition && typeof postcondition === 'object' && !Array.isArray(postcondition)
+        && postcondition.mediaPaused === true && postcondition.sourceDetached === true
+        && postcondition.autoplayCancelled === true
+      : eventType === 'output_ready'
+        ? postcondition && typeof postcondition === 'object' && !Array.isArray(postcondition)
+          && Object.keys(postcondition).length === readyPostconditionFields.length
+          && Object.keys(postcondition).every((field) => readyPostconditionFields.includes(field))
+          && postcondition.mediaPaused === true && postcondition.sourceDetached === true
+          && postcondition.autoplayCancelled === true && postcondition.outputPathReady === true
+          && postcondition.audible === false
+        : eventType === 'output_activation_failed'
+          ? Boolean(protocolId(message.code) && validFailureDetail)
+          : eventType === 'output_deactivation_failed'
+            ? Boolean(protocolId(message.code) && validFailureDetail && validFailurePostcondition)
+          : false;
+    const hasForeignIdentity = [
+      'entryId', 'runId', 'checkId', 'controlEpoch', 'targetPlayerInstanceId', 'targetConnectionId'
+    ]
+      .some((field) => hasOwn(message, field));
+    if (!protocolId(message.eventId) || !protocolId(message.connectionId)
+      || !V2_ROUTE_EVENTS.includes(eventType)
+      || hasForeignIdentity || !validPostcondition) {
+      return this.sendProtocolError(socket, 'invalid_route_event');
+    }
+    const connection = this.validateV2PlayerConnectionIdentity(socket, message);
+    if (!connection.ok) return this.sendProtocolError(socket, connection.code, connection.detail);
+    const namespace = v2EventSequenceNamespace(message);
+    return this.runV2EventGuard(socket, session, message, namespace, async (candidate) => {
+      const currentProtocol = this.ensureProtocolV2(candidate);
+      const identity = this.validateV2PlayerIdentity(socket, currentProtocol, message, 'route_event');
+      if (!identity.ok) {
+        this.sendProtocolError(socket, identity.code, identity.detail);
+        return null;
+      }
+      const switchId = protocolId(message.switchId);
+      if (!switchId || switchId !== currentProtocol.switchId) {
+        this.sendProtocolError(socket, 'stale_switch_identity', {
+          expected: currentProtocol.switchId,
+          actual: switchId
+        });
+        return null;
+      }
+      const protocol = currentProtocol;
+      let playerState;
+      if (eventType === 'output_ready') {
+        if (protocol.leaseStatus !== 'activating') {
+          this.sendProtocolError(socket, 'invalid_route_transition', {
+            expected: 'activating',
+            actual: protocol.leaseStatus
+          });
+          return null;
+        }
+        protocol.leaseStatus = 'ready';
+        protocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_ready_no_playback' };
+        playerState = 'ready';
+      } else if (eventType === 'output_activation_failed') {
+        if (protocol.leaseStatus !== 'activating') {
+          this.sendProtocolError(socket, 'invalid_route_transition', {
+            expected: 'activating',
+            actual: protocol.leaseStatus
+          });
+          return null;
+        }
+        protocol.leaseStatus = 'failed';
+        protocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_activation_failed' };
+        playerState = 'failed';
+      } else if (eventType === 'output_deactivation_failed') {
+        if (protocol.leaseStatus !== 'deactivating') {
+          this.sendProtocolError(socket, 'invalid_route_transition', {
+            expected: 'deactivating',
+            actual: protocol.leaseStatus
+          });
+          return null;
+        }
+        const detail = boundedFailureDetail(message.detail);
+        protocol.leaseStatus = 'unknown';
+        protocol.confirmedPlayback = {
+          status: 'unknown',
+          reasonCode: 'output_deactivation_failed',
+          code: protocolId(message.code),
+          ...(detail ? { detail } : {})
+        };
+        candidate.transport = { ...(candidate.transport || {}), status: 'unknown' };
+        playerState = 'unknown';
+      } else {
+        if (protocol.leaseStatus !== 'deactivating') {
+          this.sendProtocolError(socket, 'invalid_route_transition', {
+            expected: 'deactivating',
+            actual: protocol.leaseStatus
+          });
+          return null;
+        }
+        playerState = 'standby';
+        protocol.leaseTarget = null;
+        protocol.leaseClientKind = null;
+        protocol.leaseStatus = 'inactive';
+        protocol.switchId = null;
+        protocol.activeFamily = null;
+        protocol.activeCheckId = null;
+        protocol.activeCheckProgress = null;
+        protocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_inactive' };
+      }
+      return {
+        status: 'applied',
+        afterCommit: () => {
+          this.broadcastV2Controls(message);
+          this.broadcastProtocolV2Snapshot(session);
+          this.setPlayerInstanceState(identity.playerInstanceId, playerState);
+        }
+      };
+    });
+  }
+
+  async handleV2TestEvent(socket, session, message) {
+    const eventType = protocolId(message.event);
+    const postcondition = message.postcondition;
+    const validSafetyPostcondition = eventType === 'test_failed'
+      ? !hasOwn(message, 'safetyPostcondition')
+        || this.isExactV2StrongStopPostcondition(message.safetyPostcondition)
+      : !hasOwn(message, 'safetyPostcondition');
+    const validPostcondition = eventType === 'test_marker'
+      ? Number.isSafeInteger(message.markerIndex) && message.markerIndex >= 0
+        && Number.isFinite(message.markerTimeMs) && message.markerTimeMs >= 0
+      : eventType === 'test_complete'
+        ? Number.isSafeInteger(message.markerCount) && message.markerCount >= 0
+          && postcondition && typeof postcondition === 'object' && !Array.isArray(postcondition)
+          && postcondition.stopped === true
+        : eventType === 'test_failed'
+          ? Boolean(protocolId(message.code)
+            && (!hasOwn(message, 'detail')
+              || (message.detail && typeof message.detail === 'object' && !Array.isArray(message.detail))))
+          : eventType === 'test_started';
+    const invalidTelemetry = ['markerTimeMs', 'rmsDbfs', 'peakDbfs']
+      .some((field) => hasOwn(message, field) && !Number.isFinite(message[field]));
+    const hasForeignIdentity = [
+      'entryId', 'runId', 'switchId', 'controlEpoch', 'targetPlayerInstanceId', 'targetConnectionId'
+    ]
+      .some((field) => hasOwn(message, field));
+    if (!protocolId(message.eventId) || !protocolId(message.connectionId)
+      || !V2_TEST_EVENTS.includes(eventType)
+      || invalidTelemetry || hasForeignIdentity || !validPostcondition
+      || !validSafetyPostcondition) {
+      return this.sendProtocolError(socket, 'invalid_test_event');
+    }
+    const connection = this.validateV2PlayerConnectionIdentity(socket, message);
+    if (!connection.ok) return this.sendProtocolError(socket, connection.code, connection.detail);
+    const namespace = v2EventSequenceNamespace(message);
+    return this.runV2EventGuard(socket, session, message, namespace, async (candidate) => {
+      const currentProtocol = this.ensureProtocolV2(candidate);
+      const identity = this.validateV2PlayerIdentity(socket, currentProtocol, message, 'test_event');
+      if (!identity.ok) {
+        this.sendProtocolError(socket, identity.code, identity.detail);
+        return null;
+      }
+      const checkId = protocolId(message.checkId);
+      if (!checkId || checkId !== currentProtocol.activeCheckId) {
+        this.sendProtocolError(socket, 'stale_check_identity', {
+          expected: currentProtocol.activeCheckId,
+          actual: checkId
+        });
+        return null;
+      }
+      const progress = currentProtocol.activeCheckProgress;
+      if (!progress || progress.checkId !== checkId) {
+        this.sendProtocolError(socket, 'invalid_test_progress', {
+          event: eventType,
+          checkId,
+          reason: 'missing_check_progress'
+        });
+        return null;
+      }
+      if (eventType === 'test_started') {
+        if (progress.started) {
+          this.sendProtocolError(socket, 'invalid_test_progress', {
+            event: eventType,
+            checkId,
+            reason: 'test_already_started'
+          });
+          return null;
+        }
+        progress.started = true;
+        progress.markerCount = 0;
+      } else if (eventType === 'test_marker') {
+        if (!progress.started) {
+          this.sendProtocolError(socket, 'invalid_test_progress', {
+            event: eventType,
+            checkId,
+            reason: 'test_not_started'
+          });
+          return null;
+        }
+        if (progress.markerCount >= V2_TEST_MAX_MARKERS) {
+          this.sendProtocolError(socket, 'invalid_test_progress', {
+            event: eventType,
+            checkId,
+            reason: 'marker_limit_exceeded',
+            limit: V2_TEST_MAX_MARKERS
+          });
+          return null;
+        }
+        if (message.markerIndex !== progress.markerCount) {
+          this.sendProtocolError(socket, 'invalid_test_progress', {
+            event: eventType,
+            checkId,
+            reason: 'marker_index_mismatch',
+            expectedMarkerIndex: progress.markerCount,
+            actualMarkerIndex: message.markerIndex
+          });
+          return null;
+        }
+      } else if (eventType === 'test_complete') {
+        if (!progress.started) {
+          this.sendProtocolError(socket, 'invalid_test_progress', {
+            event: eventType,
+            checkId,
+            reason: 'test_not_started'
+          });
+          return null;
+        }
+        if (progress.markerCount < 1 || message.markerCount !== progress.markerCount) {
+          this.sendProtocolError(socket, 'invalid_test_progress', {
+            event: eventType,
+            checkId,
+            reason: progress.markerCount < 1 ? 'markers_required' : 'marker_count_mismatch',
+            expectedMarkerCount: progress.markerCount,
+            actualMarkerCount: message.markerCount
+          });
+          return null;
+        }
+      }
+      const terminal = ['test_complete', 'test_failed'].includes(eventType);
+      const safetyStopUnproven = eventType === 'test_failed'
+        && !this.isExactV2StrongStopPostcondition(message.safetyPostcondition);
+      if (terminal) {
+        const protocol = this.ensureProtocolV2(candidate);
+        protocol.activeCheckId = null;
+        protocol.activeCheckProgress = null;
+        if (safetyStopUnproven) {
+          const detail = boundedFailureDetail(message.detail);
+          protocol.leaseStatus = 'unknown';
+          protocol.confirmedPlayback = {
+            status: 'unknown',
+            reasonCode: 'test_safety_stop_failed',
+            code: protocolId(message.code),
+            ...(detail ? { detail } : {})
+          };
+          candidate.transport = { ...(candidate.transport || {}), status: 'unknown' };
+        }
+      }
+      return {
+        status: terminal ? 'applied' : 'relayed',
+        afterCommit: () => {
+          if (eventType === 'test_marker') {
+            const committedProgress = this.ensureProtocolV2(session).activeCheckProgress;
+            if (committedProgress?.checkId === checkId
+              && committedProgress.started
+              && committedProgress.markerCount === message.markerIndex) {
+              committedProgress.markerCount += 1;
+            }
+          }
+          if (safetyStopUnproven) this.setPlayerInstanceState(identity.playerInstanceId, 'unknown');
+          this.broadcastV2Controls(message);
+          if (terminal) this.broadcastProtocolV2Snapshot(session);
+        }
+      };
+    });
+  }
+
+  async handleV2EmergencyAck(socket, session, message) {
+    const attachment = socket.deserializeAttachment() || {};
+    const playerInstanceId = protocolId(message.playerInstanceId);
+    const commandId = protocolId(message.commandId);
+    const hasForeignIdentity = [
+      'entryId', 'runId', 'switchId', 'checkId', 'leaseEpoch', 'controlEpoch', 'targetPlayerInstanceId',
+      'targetConnectionId'
+    ].some((field) => hasOwn(message, field));
+    const invalidMonotonicTime = !Number.isFinite(message.monotonicTimeMs) || message.monotonicTimeMs < 0;
+    const invalidPostcondition = !message.postcondition || typeof message.postcondition !== 'object'
+      || Array.isArray(message.postcondition)
+      || message.postcondition.mediaPaused !== true
+      || message.postcondition.sourceDetached !== true
+      || message.postcondition.autoplayCancelled !== true;
+    if (!protocolId(message.eventId)
+      || attachment.protocolVersion !== PROTOCOL_V2
+      || attachment.negotiationState !== 'negotiated'
+      || hasForeignIdentity
+      || invalidMonotonicTime
+      || invalidPostcondition
+      || playerInstanceId !== attachment.playerInstanceId
+      || protocolId(message.connectionId) !== attachment.connectionId
+      || protocolId(message.sessionId) !== session.room) {
+      return this.sendProtocolError(socket, 'invalid_emergency_ack_identity');
+    }
+    const namespace = v2EventSequenceNamespace(message);
+    return this.runV2EventGuard(socket, session, message, namespace, async (candidate) => {
+      const currentAttachment = socket.deserializeAttachment() || {};
+      const currentProtocol = this.ensureProtocolV2(candidate);
+      if (!(currentProtocol.pendingEmergencyTargets || []).includes(currentAttachment.connectionId)
+        || commandId !== currentProtocol.pendingEmergencyCommandId) {
+        this.sendProtocolError(socket, 'invalid_emergency_ack_identity');
+        return null;
+      }
+      const protocol = currentProtocol;
+      protocol.emergencyAcknowledgedTargets = [...new Set([
+        ...(protocol.emergencyAcknowledgedTargets || []),
+        currentAttachment.connectionId
+      ])];
+      const allV2TargetsAcknowledged = (protocol.pendingEmergencyTargets || [])
+        .every((target) => protocol.emergencyAcknowledgedTargets.includes(target));
+      if (allV2TargetsAcknowledged && protocol.pendingEmergencyLegacyCount === 0) {
+        protocol.leaseStatus = 'inactive';
+        protocol.pendingEmergencyCommandId = null;
+        protocol.pendingEmergencyControlInstanceId = null;
+        protocol.pendingEmergencyTargets = [];
+        protocol.pendingEmergencyTargetInstances = {};
+        protocol.emergencyAcknowledgedTargets = [];
+      }
+      return {
+        status: 'applied',
+        afterCommit: () => {
+          this.broadcastV2Controls(message);
+          this.broadcastProtocolV2Snapshot(session);
+        }
+      };
+    });
   }
 
   async handleCommand(socket, session, message) {
     const command = message.command || {};
     if (!command.commandId || !command.type) return this.send(socket, { type: 'error', code: 'invalid_command' });
 
+    const protocol = this.ensureProtocolV2(session);
+    if (protocol.writableControlInstanceId) {
+      return this.send(socket, { type: 'error', code: 'protocol_v2_control_active' });
+    }
+
     if (command.type === 'end_session') {
+      const blocked = this.sessionEndBlockDetail(session);
+      if (blocked) return this.send(socket, {
+        type: 'error',
+        code: 'session_end_requires_idle',
+        detail: blocked,
+        commandId: command.commandId
+      });
       await this.endSession(session, 'explicit');
       return this.send(socket, { type: 'command_ack', commandId: command.commandId });
     }
@@ -346,6 +3321,27 @@ export class SessionRoom {
         .slice(0, 2);
       this.broadcast({ type: 'command', command: { type: 'prefetch', commandId: command.commandId, videoIds } }, 'player');
       return this.send(socket, { type: 'command_ack', commandId: command.commandId });
+    }
+
+    // A legacy control command has no target/epoch identity. Once a v2 lease is
+    // active it must not bypass that lease; during mixed rollout it is relayed
+    // only to legacy players so a standby v2 output can never start audibly.
+    if (protocol.leaseTarget) {
+      return this.send(socket, { type: 'error', code: 'protocol_v2_lease_active' });
+    }
+    const liveLegacyPlayers = this.ctx.getWebSockets().filter((candidate) => {
+      const attachment = candidate.deserializeAttachment() || {};
+      return attachment.role === 'player' && attachment.protocolVersion !== PROTOCOL_V2;
+    });
+    // Legacy commands have no target identity. They are safe only when exactly
+    // one legacy player exists; broadcasting to two browser sources can create
+    // real double audio before Protocol v2 has a chance to arbitrate a lease.
+    if (liveLegacyPlayers.length !== 1) {
+      return this.send(socket, {
+        type: 'error',
+        code: 'legacy_player_count',
+        detail: { expected: 1, actual: liveLegacyPlayers.length }
+      });
     }
 
     const nextTransport = { ...session.transport };
@@ -378,14 +3374,18 @@ export class SessionRoom {
     // 브로드캐스트는 유지해 플레이어가 즉시 반응하되, 스토리지에는 남기지 않는다.
     // (Antigravity f461686 은 position 이벤트만 막았고 이 명령 쪽 폭풍은 놓쳤다.)
     if (command.type !== 'seek') await this.ctx.storage.put('session', session);
-    this.broadcast({ type: 'command', command: { ...command, sessionId: nextTransport.sessionId } }, 'player');
-    this.broadcast({ type: 'transport', transport: nextTransport }, 'control');
+    this.broadcastLegacyPlayers({ type: 'command', command: { ...command, sessionId: nextTransport.sessionId } });
+    this.broadcastLegacyControls({ type: 'transport', transport: nextTransport });
     this.send(socket, { type: 'command_ack', commandId: command.commandId });
   }
 
   async handlePlayerEvent(session, message) {
     const event = message.event || {};
     if (!event.type) return;
+
+    // Legacy events do not carry player/run/lease identity and therefore
+    // cannot confirm a v2-routed output.
+    if (this.ensureProtocolV2(session).leaseTarget) return;
 
     if (event.sessionId && session.transport.sessionId && event.sessionId !== session.transport.sessionId) return;
 
@@ -401,7 +3401,7 @@ export class SessionRoom {
     // 를 동시 스트리머 몇 명이면 소진한다. 인메모리 캐시(this.sessionState)에는
     // 반영되므로 후속 읽기는 최신 위치를 보고, 다음 상태변경 이벤트에서 함께 영속된다.
     if (event.type !== 'position') await this.ctx.storage.put('session', session);
-    this.broadcast({ type: 'player_event', event, transport: nextTransport }, 'control');
+    this.broadcastLegacyControls({ type: 'player_event', event, transport: nextTransport });
   }
 
   async uploadAsset(request) {
@@ -449,24 +3449,82 @@ export class SessionRoom {
   }
 
   async webSocketClose(socket) {
-    const role = socket.deserializeAttachment()?.role;
+    const closingAttachment = socket.deserializeAttachment() || {};
+    const role = closingAttachment.role;
     // 같은 역할의 다른 소켓이 남아 있으면(위젯 새로고침 시 새/구 연결 겹침 등)
     // connected 는 여전히 true 다 — 닫히는 소켓 자신은 집계에서 제외한다.
     // (거짓 false 로 대시보드 표시가 깜빡이거나 재생 게이트가 오작동하지 않게.)
     const stillConnected = this.ctx.getWebSockets()
-      .some((other) => other !== socket && other.deserializeAttachment()?.role === role);
-    this.broadcast({ type: 'presence', role, connected: stillConnected });
+      .some((other) => {
+        if (other === socket) return false;
+        const attachment = other.deserializeAttachment() || {};
+        return attachment.role === role && attachment.negotiationState !== 'unnegotiated';
+      });
+    const session = await this.getSession();
+    const candidateSession = session ? structuredClone(session) : null;
+    let shouldPersist = false;
+    let transportChanged = false;
+    if (session && role === 'control' && closingAttachment.protocolVersion === PROTOCOL_V2
+      && closingAttachment.negotiationState === 'negotiated') {
+      const protocol = this.ensureProtocolV2(candidateSession);
+      const sameOwnerConnected = this.ctx.getWebSockets().some((candidate) => {
+        if (candidate === socket) return false;
+        const attachment = candidate.deserializeAttachment() || {};
+        return attachment.role === 'control'
+          && attachment.protocolVersion === PROTOCOL_V2
+          && attachment.negotiationState === 'negotiated'
+          && attachment.controlInstanceId === closingAttachment.controlInstanceId;
+      });
+      if (protocol.writableControlInstanceId === closingAttachment.controlInstanceId && !sameOwnerConnected) {
+        protocol.controlEpoch += 1;
+        protocol.writableControlInstanceId = null;
+        shouldPersist = true;
+      }
+    }
+    if (session && role === 'player' && closingAttachment.protocolVersion === PROTOCOL_V2) {
+      const protocol = this.ensureProtocolV2(candidateSession);
+      const sameInstanceConnected = this.livePlayerRecords(socket)
+        .some(({ attachment }) => attachment.playerInstanceId === closingAttachment.playerInstanceId);
+      if (protocol.leaseTarget === closingAttachment.playerInstanceId && !sameInstanceConnected) {
+        protocol.leaseStatus = 'unknown';
+        protocol.confirmedPlayback = {
+          status: 'unknown',
+          reasonCode: 'target_disconnected',
+          playerInstanceId: closingAttachment.playerInstanceId,
+          leaseEpoch: protocol.leaseEpoch
+        };
+        if (['loading', 'playing', 'buffering', 'ready'].includes(candidateSession.transport?.status)) {
+          candidateSession.transport = { ...candidateSession.transport, status: 'unknown' };
+          transportChanged = true;
+        }
+        shouldPersist = true;
+      }
+    }
     if (!this.hasConnectedPlayer(socket)) {
-      // 플레이어(OBS 위젯)가 모두 끊기면 재생 중이던 상태를 paused 로 내려
-      // 대시보드가 진실을 반영하게 한다(Gemini f461686 — 허공 재생 표시 방지).
-      const session = await this.getSession();
-      if (session && ['loading', 'playing', 'buffering'].includes(session.transport?.status)) {
-        session.transport = { ...session.transport, status: 'paused' };
-        await this.ctx.storage.put('session', session);
-        this.broadcast({ type: 'transport', transport: session.transport }, 'control');
+      // A disconnected media element did not prove that it paused. Preserve
+      // uncertainty explicitly instead of manufacturing a paused confirmation.
+      if (candidateSession && ['loading', 'playing', 'buffering'].includes(candidateSession.transport?.status)) {
+        candidateSession.transport = { ...candidateSession.transport, status: 'unknown' };
+        shouldPersist = true;
+        transportChanged = true;
       }
       await this.ctx.storage.setAlarm(Date.now() + SESSION_GRACE_MS);
     }
+    if (session && shouldPersist) {
+      await this.ctx.storage.put('session', candidateSession);
+      this.adoptPersistedSession(session, candidateSession);
+    }
+    if (closingAttachment.negotiationState !== 'unnegotiated') {
+      if (role === 'control') {
+        this.broadcastLegacyPlayers({ type: 'presence', role, connected: stillConnected });
+      } else {
+        this.broadcastLegacyControls({ type: 'presence', role, connected: stillConnected });
+      }
+    }
+    if (session && transportChanged) {
+      this.broadcastLegacyControls({ type: 'transport', transport: session.transport });
+    }
+    if (session) this.broadcastProtocolV2Snapshot(session, socket);
   }
 
   async alarm() {
@@ -481,12 +3539,14 @@ export class SessionRoom {
 
   async endSession(session, reason) {
     if (session.status === 'ended') return;
-    session.status = 'ended';
-    session.endedAt = Date.now();
-    session.cleanupAt = session.endedAt + ASSET_DELETE_DELAY_MS;
-    session.transport = { ...session.transport, status: 'stopped', position: 0 };
-    await this.ctx.storage.put('session', session);
-    this.broadcast({ type: 'session_ended', reason, cleanupAt: session.cleanupAt });
+    const candidate = structuredClone(session);
+    candidate.status = 'ended';
+    candidate.endedAt = Date.now();
+    candidate.cleanupAt = candidate.endedAt + ASSET_DELETE_DELAY_MS;
+    candidate.transport = { ...candidate.transport, status: 'stopped', position: 0 };
+    await this.ctx.storage.put('session', candidate);
+    this.adoptPersistedSession(session, candidate);
+    for (const socket of this.ctx.getWebSockets()) this.sendSessionEnded(socket, session, reason);
     await this.ctx.storage.setAlarm(session.cleanupAt);
   }
 
@@ -504,11 +3564,53 @@ export class SessionRoom {
     }
   }
 
+  broadcastV2Controls(message) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() || {};
+      if (attachment.role === 'control' && attachment.protocolVersion === PROTOCOL_V2
+        && attachment.negotiationState === 'negotiated') this.send(socket, message);
+    }
+  }
+
+  broadcastLegacyControls(message) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() || {};
+      if (attachment.role === 'control' && attachment.protocolVersion !== PROTOCOL_V2) this.send(socket, message);
+    }
+  }
+
+  sendSessionEnded(socket, session, reasonCode) {
+    const attachment = socket.deserializeAttachment() || {};
+    if (attachment.protocolVersion === PROTOCOL_V2) {
+      this.send(socket, {
+        type: 'session_ended',
+        protocolVersion: PROTOCOL_V2,
+        reasonCode,
+        cleanupAt: Number.isFinite(session?.cleanupAt) ? session.cleanupAt : Date.now()
+      });
+      return;
+    }
+    this.send(socket, { type: 'session_ended', reason: reasonCode, cleanupAt: session?.cleanupAt });
+  }
+
+  broadcastLegacyPlayers(message) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() || {};
+      if (attachment.role === 'player' && attachment.protocolVersion !== PROTOCOL_V2) {
+        this.send(socket, message);
+      }
+    }
+  }
+
   // excluded: webSocketClose 중인 소켓 — 런타임 버전에 따라 닫히는 소켓이
   // getWebSockets() 에 아직 남아 있을 수 있어 명시적으로 제외한다.
   hasConnectedPlayer(excluded) {
     return this.ctx.getWebSockets()
-      .some((socket) => socket !== excluded && socket.deserializeAttachment()?.role === 'player');
+      .some((socket) => {
+        if (socket === excluded) return false;
+        const attachment = socket.deserializeAttachment() || {};
+        return attachment.role === 'player' && attachment.negotiationState !== 'unnegotiated';
+      });
   }
 
   // 스냅숏용 presence 집계 — 위젯 두 역할의 "지금 실제 연결" 여부.
@@ -519,7 +3621,9 @@ export class SessionRoom {
   connectedWidgetPresence() {
     const presence = { player: false, display: false };
     for (const socket of this.ctx.getWebSockets()) {
-      const role = socket.deserializeAttachment()?.role;
+      const attachment = socket.deserializeAttachment() || {};
+      if (attachment.negotiationState === 'unnegotiated') continue;
+      const role = attachment.role;
       if (role === 'player' || role === 'display') presence[role] = true;
     }
     return presence;
@@ -528,8 +3632,10 @@ export class SessionRoom {
   send(socket, message) {
     try {
       socket.send(JSON.stringify(message));
+      return true;
     } catch {
       // Closed sockets are removed by the runtime.
+      return false;
     }
   }
 }

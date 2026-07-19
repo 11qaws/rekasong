@@ -14,6 +14,14 @@ const websocketUrl = (baseUrl, path) => {
 
 const eventId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+const LEGACY_PREFETCH_MAX_HINTS = 2;
+const LEGACY_PREFETCH_MAX_BLOB_BYTES = 64 * 1024 * 1024;
+
+const contentLengthExceedsPrefetchBudget = (response) => {
+  const contentLength = Number(response.headers.get('content-length'));
+  return Number.isFinite(contentLength) && contentLength > LEGACY_PREFETCH_MAX_BLOB_BYTES;
+};
+
 export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   const [transport, setTransport] = useState({ status: 'idle', song: null, position: 0, volume: 100, sessionId: null });
   const mediaRef = useRef(null);
@@ -24,12 +32,13 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   const mediaReadySessionRef = useRef(null);
 
   // ── 프리버퍼(pre-buffer) 캐시 ──────────────────────────────────────────
-  // 대시보드의 prefetch 힌트(다가오는 곡 videoId, 최대 2개)를 받아 준비된
-  // 오디오를 미리 통째로 받아 둔다: videoId → objectURL. 곡 전환을 즉시 만들기
-  // 위한 순수 최적화로, 실패·미스는 항상 기존 스트리밍 URL 재생으로 무손실
-  // 폴백된다 — 재생 이벤트 경로는 blob이든 스트리밍이든 완전히 동일하다.
-  const prefetchCacheRef = useRef(new Map()); // videoId → objectURL (최대 2곡 — 긴 메들리 blob은 수십 MB라 메모리 방어)
-  const prefetchInFlightRef = useRef(new Set());
+  // 대시보드의 prefetch 힌트는 wire 호환상 최대 2개까지 받지만 실제로는 가장
+  // 가까운 다음 곡 1개만 준비한다. Blob은 Content-Length와 최종 Blob.size 모두
+  // 64 MiB 이하일 때만 캐시한다. 실패·미스는 기존 스트리밍 URL로 폴백되며
+  // 재생 이벤트 경로는 blob이든 스트리밍이든 완전히 동일하다.
+  const prefetchCacheRef = useRef(new Map()); // 재생에 붙은 Blob + 다음 곡 Blob 1개 이하
+  const prefetchInFlightRef = useRef(new Map()); // videoId → { controller }
+  const prefetchDisposedRef = useRef(false);
   // applyCommand(소켓 핸들러)가 props를 직접 캡처하지 않게 하는 거울 ref —
   // 소켓 effect는 기존처럼 [apiBaseUrl, room, token]에만 의존한다(값은 동일).
   const prefetchAuthRef = useRef({ apiBaseUrl, room, token });
@@ -54,9 +63,22 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     }
   };
 
+  // 힌트 교체·세션 종료·언마운트 시 더는 필요하지 않은 다운로드를 즉시 끊는다.
+  // Map의 요청 객체 identity는 abort 뒤 같은 videoId 요청이 다시 시작돼도 이전
+  // promise의 늦은 finally가 새 요청을 지우지 못하게 한다.
+  const abortPrefetchesExcept = (wantedVideoIds = []) => {
+    const wanted = new Set(wantedVideoIds);
+    for (const [videoId, request] of [...prefetchInFlightRef.current.entries()]) {
+      if (wanted.has(videoId)) continue;
+      request.controller.abort();
+      prefetchInFlightRef.current.delete(videoId);
+    }
+  };
+
   // 세션 종료·언마운트용 전체 회수(멱등).
   const clearPrefetchCache = () => {
     prefetchWantedRef.current = [];
+    abortPrefetchesExcept();
     playbackSrcRef.current = { sessionId: null, videoId: null, src: '' };
     prefetchCacheRef.current.forEach((url) => URL.revokeObjectURL(url));
     prefetchCacheRef.current.clear();
@@ -76,32 +98,52 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
   const applyCommand = (command) => {
     if (command.sessionId && transportRef.current.sessionId && command.sessionId !== transportRef.current.sessionId && command.type !== 'load') return;
     if (command.type === 'prefetch') {
-      // 다가오는 곡의 준비된 오디오를 미리 통째로 받는다(최대 2곡).
+      // wire 힌트 최대 2개를 정상 수용하되 메모리에는 가장 가까운 1곡만 준비한다.
       // transport는 일절 건드리지 않는다 — 이 명령은 캐시 힌트일 뿐이다.
-      const wanted = (Array.isArray(command.videoIds) ? command.videoIds : [])
+      const hinted = [...new Set((Array.isArray(command.videoIds) ? command.videoIds : [])
         .filter((id) => typeof id === 'string' && id)
-        .slice(0, 2);
+        .slice(0, LEGACY_PREFETCH_MAX_HINTS))];
+      const wanted = hinted.slice(0, 1);
       prefetchWantedRef.current = wanted;
+      abortPrefetchesExcept(wanted);
       sweepPrefetchCache();
       wanted.forEach((videoId) => {
         if (prefetchCacheRef.current.has(videoId) || prefetchInFlightRef.current.has(videoId)) return;
-        prefetchInFlightRef.current.add(videoId);
+        const request = { controller: new AbortController() };
+        prefetchInFlightRef.current.set(videoId, request);
         const auth = prefetchAuthRef.current;
-        fetch(prepareAudioUrl(auth.apiBaseUrl, videoId, { room: auth.room, token: auth.token }))
+        fetch(prepareAudioUrl(auth.apiBaseUrl, videoId, { room: auth.room, token: auth.token }), {
+          signal: request.controller.signal
+        })
           .then((response) => {
             if (!response.ok) throw new Error(`prefetch ${response.status}`);
+            if (contentLengthExceedsPrefetchBudget(response)) {
+              request.controller.abort();
+              throw new Error('prefetch_source_exceeds_budget');
+            }
             return response.blob();
           })
           .then((blob) => {
-            // 받는 사이 힌트가 바뀌었으면 버린다 — 캐시 2곡 상한 유지.
-            if (!prefetchWantedRef.current.includes(videoId)) return;
-            prefetchCacheRef.current.set(videoId, URL.createObjectURL(blob));
+            if (blob.size > LEGACY_PREFETCH_MAX_BLOB_BYTES) {
+              throw new Error('prefetch_source_exceeds_budget');
+            }
+            // 받는 사이 힌트·세션·컴포넌트 수명이 바뀌었으면 URL을 만들지 않는다.
+            if (request.controller.signal.aborted
+              || prefetchDisposedRef.current
+              || prefetchWantedRef.current[0] !== videoId
+              || prefetchInFlightRef.current.get(videoId) !== request) return;
+            const objectUrl = URL.createObjectURL(blob);
+            prefetchCacheRef.current.set(videoId, objectUrl);
             setPrefetchVersion((version) => version + 1);
           })
           .catch(() => {
             // 실패는 조용히 무시 — 재생은 기존 스트리밍 경로로 무손실 폴백.
           })
-          .finally(() => prefetchInFlightRef.current.delete(videoId));
+          .finally(() => {
+            if (prefetchInFlightRef.current.get(videoId) === request) {
+              prefetchInFlightRef.current.delete(videoId);
+            }
+          });
       });
       return;
     }
@@ -213,8 +255,15 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     // eslint 참고: sweepPrefetchCache는 ref만 읽는 안정적 로직 — sessionId 전환에만 반응한다.
   }, [transport.sessionId]);
 
-  // 언마운트 시 프리버퍼 blob 전부 회수(메모리 누수 방지).
-  useEffect(() => () => clearPrefetchCache(), []);
+  // 언마운트 시 진행 중 fetch를 끊고 프리버퍼 Blob을 전부 회수한다. StrictMode의
+  // effect 재실행에서는 setup 때 disposed를 되돌려 실제 마운트 요청을 허용한다.
+  useEffect(() => {
+    prefetchDisposedRef.current = false;
+    return () => {
+      prefetchDisposedRef.current = true;
+      clearPrefetchCache();
+    };
+  }, []);
 
   // 같은 곡을 다시 load(재시도 run)하면 key/src가 그대로라 요소가 리마운트되지
   // 않고 canplay도 다시 오지 않는다 — 이미 열려 있는 미디어면 즉시 ready 경로를

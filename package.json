@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check:obs:bundle": "node scripts/check-obs-player-bundle.mjs",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "test:obs:staging": "node scripts/obs-staging-smoke.mjs"
   },
   "dependencies": {
     "firebase": "^12.16.0",
@@ -24,6 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "oxlint": "^1.71.0",
+    "playwright-core": "^1.61.1",
     "vite": "^8.1.1"
   }
 }

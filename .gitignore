@@ -27,3 +27,4 @@ dist-ssr
 
 .dev.vars
 workers/rekasong-session/wrangler.staging.jsonc
+.env.staging

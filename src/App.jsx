@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
-import Dashboard from './pages/Dashboard';
-import Widget from './pages/Widget';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Widget = lazy(() => import('./pages/Widget'));
 
 // A component to toggle body classes based on route
 function RouteStyler() {
@@ -22,10 +23,12 @@ function App() {
   return (
     <HashRouter>
       <RouteStyler />
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/widget" element={<Widget />} />
-      </Routes>
+      <Suspense fallback={null}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/widget" element={<Widget />} />
+        </Routes>
+      </Suspense>
     </HashRouter>
   );
 }
