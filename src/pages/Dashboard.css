@@ -1040,6 +1040,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* 페이지 presence는 OBS 송출 성공이 아니므로 완료색 대신 중립적인 정보색으로 표시한다. */
 .obs-player-status.is-on { color: var(--eureka-azure); font-weight: 700; }
 .obs-player-status.is-waiting { color: var(--text-muted); }
+.obs-player-status.is-error { color: var(--accent-red); font-weight: 700; }
 /* 대기 표시등: 회색 점. 연결되면 칩 전체가 정보색 텍스트+체크로 바뀐다. */
 .obs-status-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.45; }
 /* 대시보드↔서버(control) 상태 — 위젯 연결 칩과 혼동되지 않게 무채색 한 줄. */

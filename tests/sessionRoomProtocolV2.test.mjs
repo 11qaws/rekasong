@@ -14,6 +14,7 @@ class MemoryStorage {
     this.alarm = null;
     this.puts = [];
     this.failNextPut = null;
+    this.failNextSetAlarm = null;
     this.pauseNextPut = null;
     this.pauseNextDeleteAlarm = null;
     this.getAlarmCalls = 0;
@@ -41,6 +42,11 @@ class MemoryStorage {
   }
 
   async setAlarm(value) {
+    if (this.failNextSetAlarm) {
+      const error = this.failNextSetAlarm;
+      this.failNextSetAlarm = null;
+      throw error;
+    }
     this.alarm = value;
   }
 
@@ -235,6 +241,28 @@ async function activateOutput(harness, control, playerInstanceId = 'player-a', o
     payload: { outputMode },
   });
   return harness.session.protocolV2.leaseEpoch;
+}
+
+async function deactivateOutput(harness, control, {
+  playerInstanceId = 'player-a',
+  commandId = 'deactivate-player-a',
+  switchId = 'deactivate-switch-player-a',
+} = {}) {
+  const protocol = harness.session.protocolV2;
+  await harness.send(control, {
+    type: 'deactivate_output',
+    commandId,
+    switchId,
+    leaseEpoch: protocol.leaseEpoch,
+    targetPlayerInstanceId: playerInstanceId,
+    controlEpoch: protocol.controlEpoch,
+    payload: {},
+  });
+  return {
+    leaseEpoch: harness.session.protocolV2.leaseEpoch,
+    switchId,
+    deadlineAt: harness.session.protocolV2.routeTransitionDeadlineAt,
+  };
 }
 
 function outputReadyEvent(player, playerInstanceId, leaseEpoch, sequence = 0, overrides = {}) {
@@ -1829,6 +1857,7 @@ test('deactivation failure commits atomically, keeps the lease, blocks activatio
   await assert.rejects(harness.send(player, failureEvent), /deactivation_event_storage_failure/);
   assert.equal(harness.storage.puts.length, putsBeforeFailure);
   assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
+  assert.notEqual(harness.session.protocolV2.routeTransitionDeadlineAt, null);
   assert.deepEqual(harness.session.protocolV2.activeFamily, activeFamily);
   assert.equal(messagesOfType(player, 'event_ack').some((message) => (
     message.eventId === failureEvent.eventId
@@ -1840,6 +1869,8 @@ test('deactivation failure commits atomically, keeps the lease, blocks activatio
   assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
   assert.equal(harness.session.protocolV2.leaseTarget, 'player-a');
   assert.equal(harness.session.protocolV2.switchId, 'deactivation-failure-switch');
+  assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, null);
+  assert.equal(harness.session.protocolV2.routeTransitionIdentity, null);
   assert.deepEqual(harness.session.protocolV2.activeFamily, activeFamily);
   assert.equal(harness.session.transport.status, 'unknown');
   assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'unknown');
@@ -5168,7 +5199,485 @@ test('watchdog alarm queues behind route deactivation and cannot overwrite it wi
   assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
   assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_deactivating');
   assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
-  assert.equal(harness.storage.alarm, null);
+  assert.equal(
+    harness.storage.alarm,
+    harness.session.protocolV2.routeTransitionDeadlineAt,
+    'the consumed watchdog re-arms the still-pending deactivation deadline',
+  );
+});
+
+test('rehydration fails pre-deadline transitional leases closed when exact metadata is missing or invalid', async (t) => {
+  for (const operation of ['activate', 'deactivate']) {
+    await t.test(operation, async () => {
+      const harness = createHarness();
+      const control = harness.socket('control');
+      const player = harness.socket('player');
+      await registerControl(harness, control);
+      await registerPlayer(harness, player);
+      const leaseEpoch = await activateOutput(harness, control);
+      if (operation === 'deactivate') {
+        await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+        await deactivateOutput(harness, control, {
+          commandId: 'migration-deactivate',
+          switchId: 'migration-deactivate-switch',
+        });
+      }
+
+      const stored = structuredClone(harness.storage.values.get('session'));
+      if (operation === 'activate') {
+        delete stored.protocolV2.routeTransitionDeadlineAt;
+        delete stored.protocolV2.routeTransitionIdentity;
+      } else {
+        stored.protocolV2.routeTransitionIdentity = {
+          ...stored.protocolV2.routeTransitionIdentity,
+          switchId: 'corrupt-foreign-switch',
+        };
+      }
+      harness.storage.values.set('session', stored);
+      const rehydrated = new SessionRoom(harness.context, {});
+      const putsBefore = harness.storage.puts.length;
+      const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+      const activateDeliveriesBefore = messagesOfType(player, 'activate_output').length;
+      const deactivateDeliveriesBefore = messagesOfType(player, 'deactivate_output').length;
+
+      const loaded = await rehydrated.getSession();
+      assert.equal(loaded.protocolV2.leaseStatus, 'unknown');
+      assert.equal(
+        loaded.protocolV2.confirmedPlayback.reasonCode,
+        'route_transition_metadata_missing',
+      );
+      assert.equal(loaded.protocolV2.confirmedPlayback.operation, operation);
+      assert.equal(loaded.protocolV2.confirmedPlayback.playerInstanceId, 'player-a');
+      assert.equal(loaded.protocolV2.confirmedPlayback.leaseEpoch, leaseEpoch);
+      assert.equal(loaded.protocolV2.routeTransitionDeadlineAt, null);
+      assert.equal(loaded.protocolV2.routeTransitionIdentity, null);
+      assert.equal(loaded.transport.status, 'unknown');
+      assert.equal(harness.storage.puts.length, putsBefore + 1);
+      assert.equal(harness.storage.values.get('session').protocolV2.leaseStatus, 'unknown');
+      assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+      assert.equal(validateOnAirMessage(messagesOfType(control, 'player_snapshot').at(-1)).ok, true);
+      assert.equal(messagesOfType(player, 'activate_output').length, activateDeliveriesBefore);
+      assert.equal(messagesOfType(player, 'deactivate_output').length, deactivateDeliveriesBefore);
+
+      await rehydrated.getSession();
+      assert.equal(harness.storage.puts.length, putsBefore + 1, 'bootstrap is idempotent');
+      assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+    });
+  }
+});
+
+test('route metadata migration is atomic, shared by concurrent bootstrap callers, and retryable after storage failure', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  await activateOutput(harness, control);
+  const stored = structuredClone(harness.storage.values.get('session'));
+  delete stored.protocolV2.routeTransitionDeadlineAt;
+  delete stored.protocolV2.routeTransitionIdentity;
+  harness.storage.values.set('session', stored);
+
+  const rehydrated = new SessionRoom(harness.context, {});
+  const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+  const putsBefore = harness.storage.puts.length;
+  harness.storage.failNextPut = new Error('route_metadata_migration_storage_failure');
+  await assert.rejects(rehydrated.getSession(), /route_metadata_migration_storage_failure/);
+  assert.equal(rehydrated.sessionState.protocolV2.leaseStatus, 'activating');
+  assert.equal(rehydrated.sessionBootstrapComplete, false);
+  assert.equal(harness.storage.puts.length, putsBefore);
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
+
+  const pausedWrite = pauseNextStoragePut(harness.storage);
+  const first = rehydrated.getSession();
+  const second = rehydrated.getSession();
+  await pausedWrite.entered;
+  assert.equal(rehydrated.sessionState.protocolV2.leaseStatus, 'activating');
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
+
+  pausedWrite.release();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult, secondResult);
+  assert.equal(firstResult.protocolV2.leaseStatus, 'unknown');
+  assert.equal(firstResult.protocolV2.confirmedPlayback.reasonCode, 'route_transition_metadata_missing');
+  assert.equal(harness.storage.puts.length, putsBefore + 1);
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+});
+
+test('rehydration preserves a valid newly persisted route transition without rewriting or broadcasting it', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  await activateOutput(harness, control);
+  const expectedDeadline = harness.session.protocolV2.routeTransitionDeadlineAt;
+  const expectedIdentity = structuredClone(harness.session.protocolV2.routeTransitionIdentity);
+  const putsBefore = harness.storage.puts.length;
+  const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+
+  const rehydrated = new SessionRoom(harness.context, {});
+  const loaded = await rehydrated.getSession();
+  assert.equal(loaded.protocolV2.leaseStatus, 'activating');
+  assert.equal(loaded.protocolV2.routeTransitionDeadlineAt, expectedDeadline);
+  assert.deepEqual(loaded.protocolV2.routeTransitionIdentity, expectedIdentity);
+  assert.equal(harness.storage.puts.length, putsBefore);
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
+});
+
+test('route transitions persist a bounded exact identity, preserve earlier alarms, and clear on exact terminal evidence', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const originalNow = Date.now;
+  const fixedNow = originalNow() + 10_000;
+  try {
+    Date.now = () => fixedNow;
+    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow });
+    const earlierAlarm = fixedNow + 250;
+    harness.storage.alarm = earlierAlarm;
+
+    const leaseEpoch = await activateOutput(harness, control);
+    const activationDeadline = harness.session.protocolV2.routeTransitionDeadlineAt;
+    assert.equal(activationDeadline, fixedNow + 12_000);
+    assert.deepEqual(harness.session.protocolV2.routeTransitionIdentity, {
+      operation: 'activate',
+      leaseEpoch,
+      switchId: 'switch-player-a',
+      targetPlayerInstanceId: 'player-a',
+    });
+    assert.equal(harness.storage.alarm, earlierAlarm, 'an earlier session alarm is never postponed');
+
+    const snapshot = {
+      type: 'player_snapshot',
+      ...harness.room.protocolV2Snapshot(harness.session),
+    };
+    assert.equal(validateOnAirMessage(snapshot).ok, true);
+    assert.equal(Object.hasOwn(snapshot, 'routeTransitionDeadlineAt'), false);
+    assert.equal(Object.hasOwn(snapshot.lease, 'routeTransitionDeadlineAt'), false);
+    assert.equal(Object.hasOwn(snapshot.lease, 'routeTransitionIdentity'), false);
+
+    const maximumMetadataBytes = new TextEncoder().encode(JSON.stringify({
+      routeTransitionDeadlineAt: Number.MAX_SAFE_INTEGER,
+      routeTransitionIdentity: {
+        operation: 'deactivate',
+        leaseEpoch: Number.MAX_SAFE_INTEGER,
+        switchId: 's'.repeat(256),
+        targetPlayerInstanceId: 'p'.repeat(256),
+      },
+    })).byteLength;
+    assert.ok(maximumMetadataBytes < 1024, `transition metadata is ${maximumMetadataBytes} bytes`);
+
+    await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+    assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, null);
+    assert.equal(harness.session.protocolV2.routeTransitionIdentity, null);
+
+    Date.now = () => fixedNow + 100;
+    const deactivation = await deactivateOutput(harness, control, {
+      commandId: 'bounded-deactivate',
+      switchId: 'bounded-deactivate-switch',
+    });
+    assert.equal(deactivation.deadlineAt, fixedNow + 12_100);
+    assert.deepEqual(harness.session.protocolV2.routeTransitionIdentity, {
+      operation: 'deactivate',
+      leaseEpoch,
+      switchId: 'bounded-deactivate-switch',
+      targetPlayerInstanceId: 'player-a',
+    });
+    await harness.send(player, outputReadyEvent(player, 'player-a', leaseEpoch, 1, {
+      type: 'route_event',
+      event: 'output_deactivated',
+      eventId: 'bounded-output-deactivated',
+      switchId: 'bounded-deactivate-switch',
+      postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+    }));
+    assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+    assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, null);
+    assert.equal(harness.session.protocolV2.routeTransitionIdentity, null);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('terminal route failures clear only their exact transition and a stale switch cannot clear recovery', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  const activationDeadline = harness.session.protocolV2.routeTransitionDeadlineAt;
+  assert.notEqual(activationDeadline, null);
+
+  await harness.send(player, {
+    type: 'route_event',
+    event: 'output_activation_failed',
+    eventId: 'exact-activation-failed',
+    sequence: 0,
+    playerInstanceId: 'player-a',
+    connectionId: player.deserializeAttachment().connectionId,
+    leaseEpoch,
+    switchId: 'switch-player-a',
+    monotonicTimeMs: 1,
+    code: 'output_path_not_ready',
+    detail: { phase: 'bind' },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'failed');
+  assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, null);
+  assert.equal(harness.session.protocolV2.routeTransitionIdentity, null);
+
+  const recovery = await deactivateOutput(harness, control, {
+    commandId: 'failure-recovery-deactivate',
+    switchId: 'failure-recovery-switch',
+  });
+  await harness.send(player, outputReadyEvent(player, 'player-a', leaseEpoch, 1, {
+    eventId: 'stale-ready-after-recovery',
+    switchId: 'switch-player-a',
+  }));
+  assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
+  assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, recovery.deadlineAt);
+  assert.deepEqual(harness.session.protocolV2.routeTransitionIdentity, {
+    operation: 'deactivate',
+    leaseEpoch,
+    switchId: 'failure-recovery-switch',
+    targetPlayerInstanceId: 'player-a',
+  });
+  assert.ok(findMessage(player, (message) => (
+    message.type === 'protocol_error' && message.code === 'stale_switch_identity'
+  )));
+});
+
+test('activation and deactivation time out at the exact durable boundary without activating another path', async (t) => {
+  for (const operation of ['activate', 'deactivate']) {
+    await t.test(operation, async () => {
+      const harness = createHarness();
+      const control = harness.socket('control');
+      const player = harness.socket('player');
+      const standby = harness.socket('player');
+      await registerControl(harness, control);
+      await registerPlayer(harness, player);
+      await registerPlayer(harness, standby, {
+        playerInstanceId: 'speaker-standby',
+        clientKind: 'dashboard-speaker',
+        capabilities: { sinkSelection: true, analyser: true },
+      });
+      const originalNow = Date.now;
+      const fixedNow = originalNow() + 20_000;
+      try {
+        Date.now = () => fixedNow;
+        player.serializeAttachment({
+          ...player.deserializeAttachment(),
+          lastSeenAt: fixedNow,
+          runtime: { sourceActive: true },
+        });
+        harness.storage.alarm = null;
+        const leaseEpoch = await activateOutput(harness, control);
+        if (operation === 'deactivate') {
+          await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+          Date.now = () => fixedNow + 100;
+          await deactivateOutput(harness, control, {
+            commandId: 'deadline-deactivate',
+            switchId: 'deadline-deactivate-switch',
+          });
+        }
+
+        const deadlineAt = harness.session.protocolV2.routeTransitionDeadlineAt;
+        const transitionIdentity = structuredClone(harness.session.protocolV2.routeTransitionIdentity);
+        const transitionalStatus = operation === 'activate' ? 'activating' : 'deactivating';
+        const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+        const putsBefore = harness.storage.puts.length;
+
+        Date.now = () => deadlineAt - 1;
+        player.serializeAttachment({
+          ...player.deserializeAttachment(),
+          lastSeenAt: deadlineAt - 1,
+          runtime: { sourceActive: true },
+        });
+        harness.storage.alarm = null;
+        await harness.room.alarm();
+        assert.equal(harness.session.protocolV2.leaseStatus, transitionalStatus);
+        assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, deadlineAt);
+        assert.deepEqual(harness.session.protocolV2.routeTransitionIdentity, transitionIdentity);
+        assert.equal(harness.storage.puts.length, putsBefore);
+        assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
+        assert.equal(harness.storage.alarm, deadlineAt);
+
+        Date.now = () => deadlineAt;
+        player.serializeAttachment({
+          ...player.deserializeAttachment(),
+          lastSeenAt: deadlineAt,
+          runtime: { sourceActive: true },
+        });
+        harness.storage.alarm = null;
+        await harness.room.alarm();
+        assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+        assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'route_transition_timeout');
+        assert.equal(harness.session.protocolV2.confirmedPlayback.operation, operation);
+        assert.equal(harness.session.protocolV2.confirmedPlayback.playerInstanceId, 'player-a');
+        assert.equal(harness.session.protocolV2.confirmedPlayback.leaseEpoch, leaseEpoch);
+        assert.equal(harness.session.protocolV2.confirmedPlayback.switchId, transitionIdentity.switchId);
+        assert.equal(harness.session.protocolV2.leaseTarget, 'player-a');
+        assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, null);
+        assert.equal(harness.session.protocolV2.routeTransitionIdentity, null);
+        assert.equal(harness.session.transport.status, 'unknown');
+        assert.equal(messagesOfType(standby, 'activate_output').length, 0);
+        assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+        assert.equal(validateOnAirMessage(messagesOfType(control, 'player_snapshot').at(-1)).ok, true);
+
+        const recovery = await deactivateOutput(harness, control, {
+          commandId: `timeout-recovery-${operation}`,
+          switchId: `timeout-recovery-switch-${operation}`,
+        });
+        assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
+        assert.ok(recovery.deadlineAt > deadlineAt);
+        assert.equal(messagesOfType(standby, 'activate_output').length, 0);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+  }
+});
+
+test('route deadline alarm and timeout storage failures publish nothing and retry cleanly', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const originalNow = Date.now;
+  const fixedNow = originalNow() + 30_000;
+  try {
+    Date.now = () => fixedNow;
+    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow });
+    harness.storage.alarm = null;
+    const command = {
+      type: 'activate_output',
+      commandId: 'route-alarm-failure-activate',
+      switchId: 'route-alarm-failure-switch',
+      leaseEpoch: harness.session.protocolV2.leaseEpoch,
+      targetPlayerInstanceId: 'player-a',
+      controlEpoch: harness.session.protocolV2.controlEpoch,
+      payload: { outputMode: 'obs' },
+    };
+    const beforeActivation = structuredClone(harness.session);
+    const snapshotsBeforeActivation = messagesOfType(control, 'player_snapshot').length;
+    harness.storage.failNextSetAlarm = new Error('route_deadline_alarm_failure');
+    await assert.rejects(harness.send(control, command), /route_deadline_alarm_failure/);
+    assert.deepEqual(harness.session, beforeActivation);
+    assert.equal(messagesOfType(player, 'activate_output').length, 0);
+    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBeforeActivation);
+    assert.equal(terminalResults(control, command.commandId).length, 0);
+    assert.equal(hasCachedCommand(control, command.commandId), false);
+
+    await harness.send(control, structuredClone(command));
+    assert.equal(harness.session.protocolV2.leaseStatus, 'activating');
+    const deadlineAt = harness.session.protocolV2.routeTransitionDeadlineAt;
+    Date.now = () => deadlineAt;
+    player.serializeAttachment({
+      ...player.deserializeAttachment(),
+      lastSeenAt: deadlineAt,
+      runtime: { sourceActive: true },
+    });
+    harness.storage.alarm = null;
+    const beforeTimeout = structuredClone(harness.session);
+    const snapshotsBeforeTimeout = messagesOfType(control, 'player_snapshot').length;
+    harness.storage.failNextPut = new Error('route_timeout_storage_failure');
+    await assert.rejects(harness.room.alarm(), /route_timeout_storage_failure/);
+    assert.deepEqual(harness.session, beforeTimeout);
+    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBeforeTimeout);
+
+    await harness.room.alarm();
+    assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+    assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'route_transition_timeout');
+    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBeforeTimeout + 1);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  const deactivation = createHarness();
+  const deactivationControl = deactivation.socket('control');
+  const deactivationPlayer = deactivation.socket('player');
+  await registerControl(deactivation, deactivationControl);
+  await registerPlayer(deactivation, deactivationPlayer);
+  const leaseEpoch = await activateOutput(deactivation, deactivationControl);
+  await confirmOutputReady(deactivation, deactivationPlayer, 'player-a', leaseEpoch);
+  deactivation.storage.alarm = null;
+  deactivation.room.activeOutputHeartbeatAlarmKnown = false;
+  const beforeDeactivation = structuredClone(deactivation.session);
+  deactivation.storage.failNextSetAlarm = new Error('deactivation_deadline_alarm_failure');
+  await assert.rejects(
+    deactivateOutput(deactivation, deactivationControl, {
+      commandId: 'deadline-alarm-failed-deactivate',
+      switchId: 'deadline-alarm-failed-deactivate-switch',
+    }),
+    /deactivation_deadline_alarm_failure/,
+  );
+  assert.deepEqual(deactivation.session, beforeDeactivation);
+  assert.equal(messagesOfType(deactivationPlayer, 'deactivate_output').length, 0);
+  await deactivateOutput(deactivation, deactivationControl, {
+    commandId: 'deadline-alarm-failed-deactivate',
+    switchId: 'deadline-alarm-failed-deactivate-switch',
+  });
+  assert.equal(deactivation.session.protocolV2.leaseStatus, 'deactivating');
+});
+
+test('a timeout holding the durable queue wins atomically over a late terminal route event', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const originalNow = Date.now;
+  const fixedNow = originalNow() + 40_000;
+  try {
+    Date.now = () => fixedNow;
+    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow });
+    const leaseEpoch = await activateOutput(harness, control);
+    await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+    const transition = await deactivateOutput(harness, control, {
+      commandId: 'timeout-race-deactivate',
+      switchId: 'timeout-race-switch',
+    });
+    Date.now = () => transition.deadlineAt;
+    player.serializeAttachment({
+      ...player.deserializeAttachment(),
+      lastSeenAt: transition.deadlineAt,
+      runtime: { sourceActive: true },
+    });
+    harness.storage.alarm = null;
+    const pausedWrite = pauseNextStoragePut(harness.storage);
+    const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
+    const timeoutPromise = harness.room.alarm();
+    await pausedWrite.entered;
+
+    const terminalPromise = harness.send(player, outputReadyEvent(player, 'player-a', leaseEpoch, 1, {
+      type: 'route_event',
+      event: 'output_deactivated',
+      eventId: 'late-after-route-timeout',
+      switchId: 'timeout-race-switch',
+      postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+    }));
+    await Promise.resolve();
+    assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
+
+    pausedWrite.release();
+    await Promise.all([timeoutPromise, terminalPromise]);
+    assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+    assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'route_transition_timeout');
+    assert.equal(harness.session.protocolV2.routeTransitionDeadlineAt, null);
+    assert.equal(harness.session.protocolV2.routeTransitionIdentity, null);
+    assert.equal(messagesOfType(control, 'route_event').some((message) => (
+      message.eventId === 'late-after-route-timeout'
+    )), false);
+    assert.ok(findMessage(player, (message) => (
+      message.type === 'protocol_error' && message.code === 'invalid_route_transition'
+    )));
+    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test('healthy heartbeat is relayed and ACKed without storage, while invalid or duplicate input is not ACKed', async () => {

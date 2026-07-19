@@ -3,7 +3,10 @@ import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
 import { useOnAirSession } from '../hooks/useOnAirSession';
-import { useOnAirOutputControl } from '../hooks/useOnAirOutputControl';
+import {
+  ON_AIR_OUTPUT_CONTROL_CODES,
+  useOnAirOutputControl,
+} from '../hooks/useOnAirOutputControl';
 import { createQueueEntry, newId, toLegacySong, toQueueEntry } from '../lib/queueEntry';
 import { collectBlobSrcs, isBlobReferenced, isLocalBlobSong, revokeBlobSrcs } from '../lib/blobLifecycle';
 import { apiUrl } from '../lib/api';
@@ -17,7 +20,10 @@ import {
   deriveOutputControlAuthority,
   isSafeOutputControlTakeover,
 } from '../lib/outputControlAuthority';
-import { getOutputMessage as t } from '../copy/outputMessages';
+import {
+  getOutputMessage as t,
+  outputSwitchFailureMessageKey,
+} from '../copy/outputMessages';
 import {
   YOUTUBE_ID_PATTERN,
   fetchPrepareStatus,
@@ -137,10 +143,21 @@ export default function Dashboard() {
   const outputConnectionState = outputControl.snapshot?.state ?? 'idle';
   const outputControllerReady = outputControlAuthority.writable;
   const outputControlTakeoverPending = outputControl.snapshot?.pendingTakeover?.status === 'pending';
+  const outputControlConfirmedReason = outputControl.snapshot?.confirmedPlayback?.reasonCode
+    ?? outputControl.snapshot?.playerSnapshot?.confirmedPlayback?.reasonCode
+    ?? null;
+  const outputControlRecoveryReason = outputControl.outputSwitchState?.reasonCode
+    === ON_AIR_OUTPUT_CONTROL_CODES.CONNECTION_TIMEOUT
+    ? 'connection_timeout'
+    : outputControl.outputSwitchState?.reasonCode === ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_TIMEOUT
+      || outputControlConfirmedReason === 'route_transition_timeout'
+      ? 'switch_timeout'
+      : null;
   const outputControlConflict = outputControlTakeoverPending
     || outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.OTHER_OWNER;
   const outputControlUnavailable = !outputControlTakeoverPending
-    && outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.UNAVAILABLE;
+    && (outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.UNAVAILABLE
+      || Boolean(outputControlRecoveryReason));
   const outputControlSafeToTakeOver = isSafeOutputControlTakeover(outputControl.snapshot);
 
   // A control-socket rebuild must not tear down a healthy speaker player that
@@ -242,9 +259,25 @@ export default function Dashboard() {
   }, [outputControlSessionKey, preservingDashboardSpeakerDuringReconnect]);
   const actualOutputMode = outputControl.actualOutputMode;
   const outputSwitchStatus = outputControl.outputSwitchState?.status || 'idle';
-  const selectedOutputMode = outputControl.outputSwitchState?.targetMode
-    || outputControl.requestedOutputMode
-    || null;
+  const outputSwitchTargetMode = ['speaker', 'obs'].includes(
+    outputControl.outputSwitchState?.targetMode,
+  )
+    ? outputControl.outputSwitchState.targetMode
+    : null;
+  const outputSwitchInFlight = Boolean(
+    outputSwitchTargetMode
+    && ['deactivating', 'activating'].includes(outputSwitchStatus),
+  );
+  // The compact radio is an output fact, not a record of the last request.
+  // Only a live transition may temporarily show its target. A rejected target
+  // must never remain checked while the authoritative route is inactive or is
+  // still using the previous output.
+  const selectedOutputMode = outputSwitchInFlight
+    ? outputSwitchTargetMode
+    : actualOutputMode;
+  const failedOutputMode = outputSwitchStatus === 'blocked'
+    ? outputSwitchTargetMode
+    : null;
   const activeOutputLease = outputControl.snapshot?.playerSnapshot?.lease;
   const activeOutputCandidates = actualOutputMode
     ? outputControl.snapshot?.playerSnapshot?.eligibleCandidates?.[actualOutputMode]
@@ -267,9 +300,7 @@ export default function Dashboard() {
     : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
       ? 'switching'
       : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
-  const obsPlayerConnected = Boolean(
-    outputControl.snapshot?.playerSnapshot?.eligibleCandidates?.obs?.length
-  );
+  const obsPlayerCandidate = outputControl.outputView?.candidates?.obs ?? null;
   const canEndBroadcastSession = !useOnAirPlayer || Boolean(
     outputControllerReady
     && !currentEntry
@@ -860,11 +891,14 @@ export default function Dashboard() {
   ]);
 
   const handleSelectOutputMode = useCallback((mode) => {
-    const reportFailure = () => showToast(t('onair.output.switch.failed'), 'error');
+    const reportFailure = (error) => showToast(
+      t(outputSwitchFailureMessageKey(error)),
+      'error',
+    );
     try {
       Promise.resolve(selectOnAirOutputMode(mode)).catch(reportFailure);
-    } catch {
-      reportFailure();
+    } catch (error) {
+      reportFailure(error);
     }
   }, [selectOnAirOutputMode]);
 
@@ -1967,7 +2001,7 @@ export default function Dashboard() {
             onAirPlayerUrl={onAir.playerUrl}
             onAirDisplayUrl={onAir.displayUrl}
             onAirStatus={onAirSessionState}
-            onAirPlayerConnected={obsPlayerConnected}
+            onAirPlayerCandidate={obsPlayerCandidate}
             onAirDisplayConnected={onAir.displayConnected}
             onPrepareOnAir={onAir.preparePlayer}
             onPrepareOnAirDisplay={onAir.prepareDisplay}
@@ -1976,14 +2010,18 @@ export default function Dashboard() {
             canEndBroadcastSession={canEndBroadcastSession}
             outputMode={selectedOutputMode}
             actualOutputMode={actualOutputMode}
+            failedOutputMode={failedOutputMode}
             outputView={outputControl.outputView}
             outputControlConflict={outputControlConflict}
             outputControlUnavailable={outputControlUnavailable}
+            outputControlRecoveryReason={outputControlRecoveryReason}
             outputControlSafeToTakeOver={outputControlSafeToTakeOver}
             outputControlTakeover={outputControl.snapshot?.pendingTakeover ?? null}
             outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
-            onSelectOutputMode={outputControllerReady ? handleSelectOutputMode : undefined}
+            onSelectOutputMode={outputControllerReady && !outputControlRecoveryReason
+              ? handleSelectOutputMode
+              : undefined}
             onEmergencyStopOutput={outputControl.emergencyStop}
             onTakeOverOutputControl={outputControl.takeOverControl}
             onRetryOutputControl={retryOutputControlNow}

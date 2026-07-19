@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { getOutputMessage, outputMessageCatalog } from '../src/copy/outputMessages.js';
+import {
+  getOutputMessage,
+  outputMessageCatalog,
+  outputSwitchFailureMessageKey,
+} from '../src/copy/outputMessages.js';
 import {
   ON_AIR_OUTPUT_ACTIONS,
   ON_AIR_OUTPUT_GATE_CODES,
@@ -88,6 +92,155 @@ test('PlaybackPanel keeps compact route controls in the header and diagnostics i
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.actual/);
   assert.match(source.slice(detailsStart), /outputView\?\.messageKey/);
   assert.match(source.slice(detailsStart), /obs\.setup\.recovery\.routeUnknown/);
+});
+
+test('route buttons reflect authoritative output and every blocked route remains recoverable', async () => {
+  const [dashboardSource, panelSource] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    dashboardSource,
+    /const outputSwitchInFlight = Boolean\(\s+outputSwitchTargetMode\s+&& \['deactivating', 'activating'\]\.includes\(outputSwitchStatus\),\s+\);/,
+    'only an authoritative deactivation/activation may preview a target route',
+  );
+  assert.match(
+    dashboardSource,
+    /const selectedOutputMode = outputSwitchInFlight\s+\? outputSwitchTargetMode\s+: actualOutputMode;/,
+    'idle and blocked radios must use the actual route, not the last request',
+  );
+  assert.match(
+    dashboardSource,
+    /const failedOutputMode = outputSwitchStatus === 'blocked'\s+\? outputSwitchTargetMode\s+: null;/,
+    'a rejected target remains diagnostic information without becoming checked',
+  );
+  assert.match(panelSource, /const isOptionDisabled = outputSelectionLocked;/);
+  assert.doesNotMatch(
+    panelSource,
+    /const isOptionDisabled =[^;]*normalizedOutputSwitchState === 'blocked'/,
+    'blocked output choices must never disable the other recovery route',
+  );
+  assert.match(
+    panelSource,
+    /if \(normalizedOutputSwitchState !== 'blocked'[\s\S]*?mode === confirmedOutputMode\) return;\s+onSelectOutputMode\(mode\);/,
+    'reselecting the actual route while blocked must reach the controller and clear the failure',
+  );
+  assert.match(panelSource, /aria-checked=\{isSelected\}/);
+  assert.match(dashboardSource, /failedOutputMode=\{failedOutputMode\}/);
+});
+
+test('safety-locked output clicks explain themselves instead of failing silently', async () => {
+  const source = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
+
+  for (const key of [
+    'onair.output.selector.locked.connecting',
+    'onair.output.selector.locked.otherTab',
+    'onair.output.selector.locked.switching',
+    'onair.output.selector.locked.unavailable',
+  ]) {
+    assert.match(source, new RegExp(key.replaceAll('.', '\\.') ));
+    assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean lock explanation for ${key}`);
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English lock explanation for ${key}`);
+  }
+
+  assert.match(source, /if \(outputSelectionLocked\) \{[\s\S]*?showToast\?\.\([\s\S]*?t\(outputSelectionLockMessageKey\)/);
+  assert.match(source, /title=\{isOptionDisabled \? t\(outputSelectionLockMessageKey\) : undefined\}/);
+  assert.ok(outputMessageCatalog.ko['onair.output.selector.status.blockedTarget']?.includes('{{mode}}'));
+  assert.ok(outputMessageCatalog.en['onair.output.selector.status.blockedTarget']?.includes('{{mode}}'));
+});
+
+test('a durable route-transition timeout uses the localized switch recovery panel', async () => {
+  const [dashboardSource, panelSource] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    dashboardSource,
+    /outputControlConfirmedReason === 'route_transition_timeout'/,
+    'the Worker stability code must map to the same translated recovery UI as the local watchdog',
+  );
+  assert.match(
+    panelSource,
+    /const outputRecoveryNeedsEmergencyStop = outputLeaseNeedsEmergencyStop\s+\|\| outputControlRecoveryReason === 'switch_timeout';/,
+    'a timed-out unknown route must expose emergency stop instead of entering a reconnect-only loop',
+  );
+  assert.match(
+    panelSource,
+    /outputRecoveryNeedsEmergencyStop && !outputControlConflict/,
+    'emergency recovery must remain visible alongside timeout reconnect controls',
+  );
+  assert.ok(outputMessageCatalog.ko['onair.control.recovery.switchTimeout.description']?.trim());
+  assert.ok(outputMessageCatalog.en['onair.control.recovery.switchTimeout.description']?.trim());
+});
+
+test('route refusal, watchdog recovery, and takeover timeout copy is localized and actionable', async () => {
+  const [dashboardSource, panelSource] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
+  ]);
+  const keys = [
+    'onair.output.switch.blocked.activeWork',
+    'onair.output.switch.blocked.candidate',
+    'onair.output.switch.blocked.pending',
+    'onair.output.switch.blocked.unknown',
+    'onair.output.switch.blocked.notReady',
+    'onair.control.takeover.timeout',
+    'obs.setup.recovery.emergencyTimeout',
+    'onair.control.recovery.connectionTimeout.title',
+    'onair.control.recovery.connectionTimeout.description',
+    'onair.control.recovery.switchTimeout.title',
+    'onair.control.recovery.switchTimeout.description',
+    'obs.setup.player.candidate.none',
+    'obs.setup.player.candidate.single',
+    'obs.setup.player.candidate.duplicate',
+    'obs.setup.player.candidate.unknown',
+  ];
+  for (const key of keys) {
+    assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean recovery copy for ${key}`);
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English recovery copy for ${key}`);
+  }
+
+  assert.equal(
+    outputSwitchFailureMessageKey('output_control_active_work'),
+    'onair.output.switch.blocked.activeWork',
+  );
+  assert.equal(
+    outputSwitchFailureMessageKey('output_control_candidate_count'),
+    'onair.output.switch.blocked.candidate',
+  );
+  assert.equal(
+    outputSwitchFailureMessageKey('output_control_state_unknown'),
+    'onair.output.switch.blocked.unknown',
+  );
+  assert.match(dashboardSource, /t\(outputSwitchFailureMessageKey\(error\)\)/);
+  assert.match(panelSource, /onair\.control\.takeover\.timeout/);
+  assert.match(
+    panelSource,
+    /setControlTransferPhase\('failed'\);[\s\S]*?retryOutputControlRef\.current\(\)/,
+    'takeover timeout must rebuild authority state before another CAS attempt',
+  );
+  assert.match(panelSource, /}, 12_000\);/);
+  assert.match(
+    panelSource,
+    /if \(!isEmergencyStoppingOutput\)[\s\S]*?obs\.setup\.recovery\.emergencyTimeout[\s\S]*?retryOutputControlRef\.current\(\)/,
+    'missing emergency-stop evidence must time out into a fresh state check',
+  );
+  assert.match(panelSource, /\.catch\(\(error\) => \{[\s\S]*?obs\.setup\.recovery\.emergencyFailed/);
+  assert.match(
+    dashboardSource,
+    /const obsPlayerCandidate = outputControl\.outputView\?\.candidates\?\.obs \?\? null;/,
+  );
+  assert.doesNotMatch(
+    dashboardSource,
+    /Boolean\([\s\S]{0,120}?eligibleCandidates\?\.obs\?\.length/,
+    'duplicate OBS candidates must not be flattened into connected=true',
+  );
+  assert.match(panelSource, /candidateState=\{onAirPlayerCandidate\?\.state \?\? 'unknown'\}/);
+  assert.match(panelSource, /obs\.setup\.player\.candidate\.duplicate[\s\S]*?count: onAirPlayerCandidate\?\.count/);
+  assert.ok(outputMessageCatalog.ko['obs.setup.player.candidate.duplicate'].includes('{{count}}'));
+  assert.ok(outputMessageCatalog.en['obs.setup.player.candidate.duplicate'].includes('{{count}}'));
 });
 
 test('read-only and reconnecting tabs disable every transport mutation', async () => {

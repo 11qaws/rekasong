@@ -110,8 +110,18 @@ export const outputMessageCatalog = Object.freeze({
     'onair.output.selector.status.connecting': '처음 재생 연결을 준비하는 정상 단계입니다. 잠시 후 출력 버튼이 활성화됩니다.',
     'onair.output.selector.status.otherTab': '다른 탭이 현재 출력 제어를 사용 중입니다. 서버 오류가 아닙니다.',
     'onair.output.selector.status.switching': '출력을 전환하는 중입니다…',
-    'onair.output.selector.status.blocked': '출력 전환이 차단되었습니다. 현재 실제 출력을 유지합니다.',
+    'onair.output.selector.status.blocked': '출력 전환을 완료하지 못했습니다. 두 경로 중 원하는 쪽을 다시 선택해 주세요.',
+    'onair.output.selector.status.blockedTarget': '{{mode}} 전환을 완료하지 못했습니다. 실제 출력은 바뀌지 않았습니다. 원하는 경로를 다시 선택해 주세요.',
+    'onair.output.selector.locked.connecting': '재생 기능을 준비 중입니다. 잠시 뒤 다시 눌러 주세요.',
+    'onair.output.selector.locked.otherTab': '다른 탭에서 출력 제어 중입니다. 톱니바퀴에서 이 탭으로 제어권을 가져올 수 있습니다.',
+    'onair.output.selector.locked.switching': '출력 경로를 전환 중입니다. 전환이 끝나면 다시 선택할 수 있습니다.',
+    'onair.output.selector.locked.unavailable': '출력 제어 연결을 확인할 수 없습니다. 톱니바퀴에서 다시 연결해 주세요.',
     'onair.output.switch.failed': '출력을 바꾸지 못했습니다. 서버 연결과 대상 플레이어를 확인한 뒤 다시 눌러 주세요.',
+    'onair.output.switch.blocked.activeWork': '현재 곡이 재생 중이거나 일시정지되어 있어 출력 경로를 바꾸지 않았습니다. 현재 곡을 종료하거나 건너뛴 뒤 다시 선택해 주세요.',
+    'onair.output.switch.blocked.candidate': '선택한 출력의 플레이어를 정확히 하나로 확인할 수 없어 전환하지 않았습니다. OBS 또는 스피커 연결을 하나만 남긴 뒤 다시 선택해 주세요.',
+    'onair.output.switch.blocked.pending': '이전 출력 전환의 완료 여부를 확인 중입니다. 설정에서 제어 상태를 다시 확인한 뒤 선택해 주세요.',
+    'onair.output.switch.blocked.unknown': '현재 출력 상태를 안전하게 확인할 수 없어 전환하지 않았습니다. 설정에서 출력 제어를 다시 연결해 주세요.',
+    'onair.output.switch.blocked.notReady': '출력 제어 준비가 아직 끝나지 않아 전환하지 않았습니다. 잠시 기다리거나 설정에서 다시 연결해 주세요.',
     'onair.output.playback.routeNotConfirmed': '실제로 활성화된 출력이 아직 확인되지 않았습니다. 스피커 또는 OBS를 선택하고 “실제 활성” 표시를 확인해 주세요.',
     'onair.output.playback.source': '오디오 출력',
     'onair.output.playback.routeLostDuringStart': '재생을 시작하기 전에 실제 출력 확인이 끊겼습니다.',
@@ -127,8 +137,13 @@ export const outputMessageCatalog = Object.freeze({
     'onair.control.takeover.claiming': '제어권 가져오는 중…',
     'onair.control.takeover.retry': '다시 제어권 가져오기',
     'onair.control.takeover.failed': '이 탭으로 제어권을 가져오지 못했습니다. 현재 출력 상태를 확인한 뒤 다시 시도해 주세요.',
+    'onair.control.takeover.timeout': '제어권 응답이 늦어 현재 상태를 다시 확인합니다. 소리는 바꾸지 않았습니다. 연결 확인이 끝나면 다시 눌러 주세요.',
     'onair.control.unavailable.title': '출력 제어 연결을 확인할 수 없음',
     'onair.control.unavailable.description': '현재 탭의 출력 제어 연결이 끊겼습니다. 음악 서버 전체의 장애로 단정할 수 없으며, 다시 연결해 상태를 확인할 수 있습니다.',
+    'onair.control.recovery.connectionTimeout.title': '출력 제어 준비가 예상보다 오래 걸림',
+    'onair.control.recovery.connectionTimeout.description': '서버 응답을 기다리는 상태가 오래 지속되어 자동 조작을 멈췄습니다. 소리는 바꾸지 않았습니다. 다시 연결해 현재 출력 상태를 확인해 주세요.',
+    'onair.control.recovery.switchTimeout.title': '출력 전환 완료를 확인하지 못함',
+    'onair.control.recovery.switchTimeout.description': '전환 요청 뒤 완료 증거가 오지 않아 추가 전환을 안전하게 멈췄습니다. 성공으로 간주하지 않았으며, 다시 연결해 실제 출력 상태를 확인해 주세요.',
     'onair.control.unavailable.action': '출력 제어 다시 연결',
     'onair.control.unavailable.inProgress': '출력 제어 다시 연결 중…',
     'onair.control.unavailable.failed': '출력 제어를 다시 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
@@ -234,6 +249,7 @@ export const outputMessageCatalog = Object.freeze({
     'obs.setup.recovery.emergencyConfirm': '스피커와 OBS를 포함한 현재 세션의 모든 출력에 긴급 정지를 요청할까요? 재생 중인 소리가 있다면 즉시 멈춥니다.',
     'obs.setup.recovery.emergencyInProgress': '모든 출력 정지 확인 중…',
     'obs.setup.recovery.emergencyFailed': '모든 출력을 안전하게 정지하지 못했습니다. 실제 소리가 멈췄는지 확인한 뒤 다시 시도하세요.',
+    'obs.setup.recovery.emergencyTimeout': '긴급 정지 완료 응답이 늦어 실제 출력 상태를 다시 확인합니다. 정지했다고 가정하지 않았습니다. 재연결 후 남은 소리가 없는지 확인해 주세요.',
     'obs.setup.recovery.action': '새 연결 만들기 · 곡 목록 유지',
     'obs.setup.recovery.inProgress': '새 연결을 만드는 중입니다…',
     'obs.setup.recovery.copyBlocked': '새 연결을 만든 뒤 주소를 복사할 수 있습니다.',
@@ -250,6 +266,10 @@ export const outputMessageCatalog = Object.freeze({
     'obs.setup.player.serverRequired': 'On-Air 서버를 연결하면 주소를 준비할 수 있습니다',
     'obs.setup.player.connected': '플레이어 페이지가 서버에 연결됨 — OBS 실행·오디오 송출 여부는 아직 확인되지 않았습니다',
     'obs.setup.player.waiting': 'OBS 플레이어가 아직 열리지 않았습니다',
+    'obs.setup.player.candidate.none': 'OBS 플레이어 없음',
+    'obs.setup.player.candidate.single': 'OBS 플레이어 정상 · 1개 연결됨',
+    'obs.setup.player.candidate.duplicate': 'OBS 플레이어 중복 · {{count}}개 연결됨 — 한 개만 남겨 주세요',
+    'obs.setup.player.candidate.unknown': 'OBS 플레이어 연결 수를 확인할 수 없음',
     'obs.setup.player.prepareFailed': 'On-Air 플레이어를 준비하지 못했습니다.',
     'obs.setup.player.urlCopied': 'OBS On-Air 플레이어 주소를 복사했습니다.',
 
@@ -356,6 +376,10 @@ export const outputMessageCatalog = Object.freeze({
     'obs.setup.server.notStarted': 'Create an address below to start the broadcast connection.',
     'obs.setup.player.connected': 'OBS player is open',
     'obs.setup.player.waiting': 'OBS player is not open yet',
+    'obs.setup.player.candidate.none': 'No OBS player connected',
+    'obs.setup.player.candidate.single': 'OBS player ready · 1 connected',
+    'obs.setup.player.candidate.duplicate': 'Duplicate OBS players · {{count}} connected — leave only one open',
+    'obs.setup.player.candidate.unknown': 'OBS player count could not be confirmed',
     'obs.setup.display.connected': 'Display widget is open',
     'obs.setup.display.waiting': 'Display widget is not open yet',
     'onair.output.selector.badge.selected': 'Selected',
@@ -365,8 +389,18 @@ export const outputMessageCatalog = Object.freeze({
     'onair.output.selector.status.connecting': 'Initial playback setup is in progress. This is normal, and the output controls will become available shortly.',
     'onair.output.selector.status.otherTab': 'Another tab currently owns output control. This is not a server error.',
     'onair.output.selector.status.switching': 'Switching audio output…',
-    'onair.output.selector.status.blocked': 'Output switching is blocked. The current active output will remain in use.',
+    'onair.output.selector.status.blocked': 'The output switch could not be completed. Select either route to try again.',
+    'onair.output.selector.status.blockedTarget': 'Could not switch to {{mode}}. The active output did not change. Select the route you want to try again.',
+    'onair.output.selector.locked.connecting': 'Playback features are still being prepared. Try again in a moment.',
+    'onair.output.selector.locked.otherTab': 'Another tab controls the output. Open settings to move control to this tab.',
+    'onair.output.selector.locked.switching': 'The output route is switching. You can select another route when it finishes.',
+    'onair.output.selector.locked.unavailable': 'The output control connection cannot be confirmed. Open settings and reconnect it.',
     'onair.output.switch.failed': 'Could not switch output. Check the server connection and target player, then try again.',
+    'onair.output.switch.blocked.activeWork': 'The output route was not changed because the current track is playing or paused. End or skip the current track, then select the route again.',
+    'onair.output.switch.blocked.candidate': 'The route was not changed because exactly one target player could not be confirmed. Leave one OBS or speaker player connected, then try again.',
+    'onair.output.switch.blocked.pending': 'The previous output switch is still awaiting completion evidence. Recheck output control in settings before selecting a route.',
+    'onair.output.switch.blocked.unknown': 'The route was not changed because the current output state could not be verified safely. Reconnect output control in settings.',
+    'onair.output.switch.blocked.notReady': 'Output control is not ready yet, so the route was not changed. Wait briefly or reconnect it in settings.',
     'onair.output.playback.routeNotConfirmed': 'No active output is confirmed yet. Select Speaker or OBS and wait for the Active output indicator.',
     'onair.output.playback.source': 'Audio output',
     'onair.output.playback.routeLostDuringStart': 'Active output confirmation was lost before playback could start.',
@@ -382,8 +416,13 @@ export const outputMessageCatalog = Object.freeze({
     'onair.control.takeover.claiming': 'Taking control…',
     'onair.control.takeover.retry': 'Try taking control again',
     'onair.control.takeover.failed': 'Could not move control to this tab. Check the current output state, then try again.',
+    'onair.control.takeover.timeout': 'The control transfer response took too long, so the current state is being checked again. Audio was not changed. Try again after reconnection finishes.',
     'onair.control.unavailable.title': 'Output control connection is unavailable',
     'onair.control.unavailable.description': 'This tab lost its output control connection. This does not necessarily mean the music server is down; reconnect to check the current state.',
+    'onair.control.recovery.connectionTimeout.title': 'Output control setup is taking longer than expected',
+    'onair.control.recovery.connectionTimeout.description': 'Automatic actions were stopped because the server response wait lasted too long. Audio was not changed. Reconnect to check the current output state.',
+    'onair.control.recovery.switchTimeout.title': 'Output switch completion was not confirmed',
+    'onair.control.recovery.switchTimeout.description': 'No completion evidence arrived after the switch request, so further switching was stopped safely. Success was not assumed; reconnect to verify the actual output.',
     'onair.control.unavailable.action': 'Reconnect output control',
     'onair.control.unavailable.inProgress': 'Reconnecting output control…',
     'onair.control.unavailable.failed': 'Could not reconnect output control. Try again shortly.',
@@ -393,6 +432,7 @@ export const outputMessageCatalog = Object.freeze({
     'obs.setup.recovery.emergencyConfirm': 'Request an emergency stop for every output in this session, including speakers and OBS? Any playing audio will stop immediately.',
     'obs.setup.recovery.emergencyInProgress': 'Confirming all outputs are stopped…',
     'obs.setup.recovery.emergencyFailed': 'Could not prove that every output stopped safely. Check for remaining audio, then try again.',
+    'obs.setup.recovery.emergencyTimeout': 'The emergency-stop completion response took too long, so the actual output state is being checked again. Stop was not assumed. After reconnection, check for any remaining audio.',
     'onair.output.action.emergencyStop.label': 'Emergency stop all outputs',
     'obs.setup.recovery.action': 'Create new connection · Keep song list',
     'obs.setup.recovery.inProgress': 'Creating a new connection…',
@@ -413,6 +453,30 @@ function normalizeLocale(locale) {
 function currentDocumentLocale() {
   if (typeof document === 'undefined') return DEFAULT_LOCALE;
   return document.documentElement.lang || DEFAULT_LOCALE;
+}
+
+export function outputSwitchFailureMessageKey(errorOrCode) {
+  const code = typeof errorOrCode === 'string' ? errorOrCode : errorOrCode?.code;
+  if (['output_control_active_work', 'control_coordinator_active_work_present'].includes(code)) {
+    return 'onair.output.switch.blocked.activeWork';
+  }
+  if (['output_control_candidate_count', 'control_coordinator_output_candidate_count'].includes(code)) {
+    return 'onair.output.switch.blocked.candidate';
+  }
+  if (['output_control_switch_pending', 'control_coordinator_output_switch_pending',
+    'output_control_switch_timeout'].includes(code)) {
+    return 'onair.output.switch.blocked.pending';
+  }
+  if (['output_control_state_unknown', 'output_control_lease_not_switchable',
+    'control_coordinator_outcome_unknown'].includes(code)) {
+    return 'onair.output.switch.blocked.unknown';
+  }
+  if (['output_control_not_ready', 'output_control_not_writable',
+    'output_control_connection_timeout', 'control_coordinator_not_ready',
+    'control_coordinator_not_writable'].includes(code)) {
+    return 'onair.output.switch.blocked.notReady';
+  }
+  return 'onair.output.switch.failed';
 }
 
 export function getOutputMessage(key, values = {}, locale = currentDocumentLocale()) {

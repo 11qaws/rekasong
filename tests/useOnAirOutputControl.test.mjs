@@ -254,9 +254,36 @@ function createHarness(initialSnapshot = coordinatorSnapshot(), overrides = {}) 
       coordinators.push(coordinator);
       return coordinator;
     },
+    ...(overrides.controllerOptions ?? {}),
   });
   controller.connect();
   return { controller, coordinators, transportOptions };
+}
+
+function createTimerHarness() {
+  let nextId = 1;
+  const pending = new Map();
+  return {
+    setTimeoutFn(callback, delayMs) {
+      const id = nextId++;
+      pending.set(id, { callback, delayMs });
+      return id;
+    },
+    clearTimeoutFn(id) {
+      pending.delete(id);
+    },
+    runNext() {
+      const entry = pending.entries().next().value;
+      assert.ok(entry, 'expected a pending watchdog');
+      const [id, timer] = entry;
+      pending.delete(id);
+      timer.callback();
+      return timer.delayMs;
+    },
+    get size() {
+      return pending.size;
+    },
+  };
 }
 
 function assertControlError(callback, code) {
@@ -410,6 +437,59 @@ test('switches routes only after authoritative inactive and never resumes playba
   assert.equal(controller.getState().actualOutputMode, 'obs');
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
   assert.equal(coordinator.calls.some(([name]) => ['load', 'play'].includes(name)), false);
+});
+
+test('activation and deactivation watchdogs fail closed without assuming a route change', async (t) => {
+  const fixtures = [
+    {
+      name: 'activation evidence never arrives',
+      snapshot: coordinatorSnapshot(playerSnapshot()),
+      target: 'obs',
+      expectedCall: ['activateOutput', 'obs'],
+      expectedPhase: ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
+    },
+    {
+      name: 'deactivation evidence never arrives',
+      snapshot: coordinatorSnapshot(readyRoute('speaker')),
+      target: 'obs',
+      expectedCall: ['deactivateOutput'],
+      expectedPhase: ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING,
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, () => {
+      const timers = createTimerHarness();
+      const { controller, coordinators } = createHarness(fixture.snapshot, {
+        controllerOptions: {
+          setTimeoutFn: timers.setTimeoutFn,
+          clearTimeoutFn: timers.clearTimeoutFn,
+          switchTimeoutMs: 25,
+        },
+      });
+
+      controller.selectOutputMode(fixture.target);
+      assert.equal(controller.getState().outputSwitchState.status, fixture.expectedPhase);
+      assert.equal(timers.size, 1);
+      assert.equal(timers.runNext(), 25);
+
+      assert.deepEqual(controller.getState().outputSwitchState, {
+        status: ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED,
+        targetMode: fixture.target,
+        reasonCode: ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_TIMEOUT,
+      });
+      assert.deepEqual(coordinators[0].calls, [fixture.expectedCall]);
+      assert.equal(
+        coordinators[0].calls.some(([name]) => ['load', 'play'].includes(name)),
+        false,
+      );
+
+      controller.retryConnection();
+      assert.equal(coordinators.length, 2, 'manual recovery obtains fresh authority evidence');
+      assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+      controller.dispose();
+    });
+  }
 });
 
 test('reselecting the actual active route clears a blocked alternate intent during playback', () => {
@@ -1110,4 +1190,63 @@ test('explicit retry disposes the old coordinator before creating a fresh owner'
   );
   assert.equal(coordinators[1].calls.some(([name]) => ['activateOutput', 'load', 'play'].includes(name)), false);
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+});
+
+test('starting and owner-released connections become manually recoverable after a bounded wait', async (t) => {
+  const ownerReleasedProtocol = playerSnapshot({
+    controlLease: {
+      controlEpoch: 4,
+      writableControlInstanceId: null,
+      writableConnected: false,
+    },
+  });
+  const fixtures = [
+    {
+      name: 'connection negotiation never settles',
+      snapshot: coordinatorSnapshot(playerSnapshot(), {
+        state: 'negotiating',
+        ready: false,
+        writable: false,
+        unknown: true,
+        authorityUnknown: true,
+      }),
+    },
+    {
+      name: 'released owner never renegotiates',
+      snapshot: coordinatorSnapshot(ownerReleasedProtocol, {
+        writable: false,
+      }),
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, () => {
+      const timers = createTimerHarness();
+      const { controller, coordinators } = createHarness(fixture.snapshot, {
+        snapshotFactory: () => fixture.snapshot,
+        controllerOptions: {
+          setTimeoutFn: timers.setTimeoutFn,
+          clearTimeoutFn: timers.clearTimeoutFn,
+          connectionTimeoutMs: 40,
+        },
+      });
+
+      assert.equal(timers.size, 1);
+      assert.equal(timers.runNext(), 40);
+      assert.deepEqual(controller.getState().outputSwitchState, {
+        status: ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED,
+        targetMode: null,
+        reasonCode: ON_AIR_OUTPUT_CONTROL_CODES.CONNECTION_TIMEOUT,
+      });
+      assert.deepEqual(coordinators[0].calls, [], 'watchdog never routes or starts audio');
+      coordinators[0].emit(fixture.snapshot);
+      assert.equal(timers.size, 0, 'a blocked connection never spins another watchdog');
+
+      controller.retryConnection();
+      assert.equal(coordinators[0].disposed, true);
+      assert.equal(coordinators.length, 2);
+      assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+      controller.dispose();
+    });
+  }
 });

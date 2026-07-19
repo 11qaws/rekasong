@@ -7,6 +7,12 @@ const PREPARE_LEASE_MS = 120 * 1000;
 const PROTOCOL_V2 = 2;
 const PLAYER_HEARTBEAT_WARNING_MS = 500;
 const PLAYER_HEARTBEAT_STALE_MS = 2 * 1000;
+// The dashboard gives a route switch 12 seconds before surfacing a local
+// timeout. Keep the same bounded window authoritative in the Durable Object so
+// a missing terminal player event cannot leave the shared lease transitional
+// forever, even after every browser that initiated the switch has gone away.
+const V2_ROUTE_TRANSITION_TIMEOUT_MS = 12 * 1000;
+const V2_ROUTE_TRANSITION_OPERATIONS = ['activate', 'deactivate'];
 const V2_PLAYER_KINDS = ['dashboard-speaker', 'obs-browser-source', 'generic-browser'];
 const V2_OUTPUT_MODES = ['speaker', 'obs'];
 const V2_RUN_COMMANDS = ['load', 'play', 'pause', 'seek', 'volume', 'stop'];
@@ -359,6 +365,11 @@ export class SessionRoom {
     // and the durable alarm. The first heartbeat after a recreation verifies
     // that an alarm exists; later healthy heartbeats can stay storage-free.
     this.activeOutputHeartbeatAlarmKnown = false;
+    // All events in a freshly created/rehydrated object share this bootstrap.
+    // It is also the deployment migration gate for route transitions written
+    // before durable transition identities existed.
+    this.sessionBootstrapPromise = null;
+    this.sessionBootstrapComplete = false;
   }
 
   async fetch(request) {
@@ -396,6 +407,8 @@ export class SessionRoom {
         leaseStatus: 'inactive',
         selectedOutputMode: null,
         switchId: null,
+        routeTransitionDeadlineAt: null,
+        routeTransitionIdentity: null,
         activeFamily: null,
         activeCheckId: null,
         activeCheckProgress: null,
@@ -424,8 +437,21 @@ export class SessionRoom {
   }
 
   async getSession() {
-    if (!this.sessionState) this.sessionState = await this.ctx.storage.get('session');
-    return this.sessionState;
+    if (this.sessionBootstrapComplete) return this.sessionState;
+    if (!this.sessionBootstrapPromise) {
+      this.sessionBootstrapPromise = (async () => {
+        if (!this.sessionState) this.sessionState = await this.ctx.storage.get('session');
+        const issue = this.invalidRouteTransitionMetadataIssue(this.sessionState);
+        if (issue) await this.persistInvalidRouteTransitionUnknown(this.sessionState, issue);
+        this.sessionBootstrapComplete = true;
+        return this.sessionState;
+      })();
+    }
+    try {
+      return await this.sessionBootstrapPromise;
+    } finally {
+      this.sessionBootstrapPromise = null;
+    }
   }
 
   async sessionStatus(request) {
@@ -606,6 +632,56 @@ export class SessionRoom {
     if (message.type === 'event') await this.handlePlayerEvent(session, message);
   }
 
+  invalidRouteTransitionMetadataIssue(session) {
+    if (!session || session.status !== 'active') return null;
+    const prior = session.protocolV2;
+    if (!prior || typeof prior !== 'object' || Array.isArray(prior)) return null;
+    const leaseStatus = protocolId(prior.leaseStatus);
+    if (!['activating', 'deactivating'].includes(leaseStatus)) return null;
+
+    const operation = leaseStatus === 'activating' ? 'activate' : 'deactivate';
+    const leaseEpoch = finiteEpoch(prior.leaseEpoch);
+    const switchId = protocolId(prior.switchId);
+    const targetPlayerInstanceId = protocolId(prior.leaseTarget);
+    const deadlineAt = finiteEpoch(prior.routeTransitionDeadlineAt);
+    const identity = prior.routeTransitionIdentity;
+    const validIdentity = Boolean(
+      identity && typeof identity === 'object' && !Array.isArray(identity)
+      && identity.operation === operation
+      && finiteEpoch(identity.leaseEpoch) === leaseEpoch
+      && protocolId(identity.switchId) === switchId
+      && protocolId(identity.targetPlayerInstanceId) === targetPlayerInstanceId
+      && leaseEpoch !== null
+      && switchId
+      && targetPlayerInstanceId
+      && deadlineAt !== null
+    );
+    if (validIdentity) return null;
+    return { operation, leaseEpoch, switchId, targetPlayerInstanceId };
+  }
+
+  async persistInvalidRouteTransitionUnknown(session, issue) {
+    const candidate = structuredClone(session);
+    const protocol = this.ensureProtocolV2(candidate);
+    protocol.leaseStatus = 'unknown';
+    protocol.confirmedPlayback = {
+      status: 'unknown',
+      reasonCode: 'route_transition_metadata_missing',
+      operation: issue.operation,
+      ...(issue.targetPlayerInstanceId
+        ? { playerInstanceId: issue.targetPlayerInstanceId }
+        : {}),
+      ...(issue.leaseEpoch !== null ? { leaseEpoch: issue.leaseEpoch } : {}),
+      ...(issue.switchId ? { switchId: issue.switchId } : {})
+    };
+    this.clearRouteTransition(protocol);
+    candidate.transport = { ...(candidate.transport || {}), status: 'unknown' };
+    await this.ctx.storage.put('session', candidate);
+    this.adoptPersistedSession(session, candidate);
+    this.publishActiveOutputUnknown(session);
+    return session;
+  }
+
   ensureProtocolV2(session) {
     const prior = session.protocolV2 || {};
     const transport = session.transport || {};
@@ -634,6 +710,25 @@ export class SessionRoom {
       : null;
     const priorMarkerCount = finiteEpoch(priorCheckProgress?.markerCount);
     const checkStarted = priorCheckProgress?.started === true;
+    const priorRouteTransitionIdentity = prior.routeTransitionIdentity
+      && typeof prior.routeTransitionIdentity === 'object'
+      && !Array.isArray(prior.routeTransitionIdentity)
+      ? prior.routeTransitionIdentity
+      : null;
+    const routeTransitionDeadlineAt = finiteEpoch(prior.routeTransitionDeadlineAt);
+    const routeTransitionIdentity = priorRouteTransitionIdentity
+      && V2_ROUTE_TRANSITION_OPERATIONS.includes(priorRouteTransitionIdentity.operation)
+      && finiteEpoch(priorRouteTransitionIdentity.leaseEpoch) !== null
+      && protocolId(priorRouteTransitionIdentity.switchId)
+      && protocolId(priorRouteTransitionIdentity.targetPlayerInstanceId)
+      && routeTransitionDeadlineAt !== null
+      ? {
+          operation: priorRouteTransitionIdentity.operation,
+          leaseEpoch: finiteEpoch(priorRouteTransitionIdentity.leaseEpoch),
+          switchId: protocolId(priorRouteTransitionIdentity.switchId),
+          targetPlayerInstanceId: protocolId(priorRouteTransitionIdentity.targetPlayerInstanceId)
+        }
+      : null;
     session.protocolV2 = {
       controlEpoch: finiteEpoch(prior.controlEpoch) ?? 0,
       writableControlInstanceId: protocolId(prior.writableControlInstanceId),
@@ -643,6 +738,8 @@ export class SessionRoom {
       leaseStatus: protocolId(prior.leaseStatus) || 'inactive',
       selectedOutputMode: V2_OUTPUT_MODES.includes(prior.selectedOutputMode) ? prior.selectedOutputMode : null,
       switchId: protocolId(prior.switchId),
+      routeTransitionDeadlineAt: routeTransitionIdentity ? routeTransitionDeadlineAt : null,
+      routeTransitionIdentity,
       activeFamily: prior.activeFamily && typeof prior.activeFamily === 'object'
         ? { entryId: protocolId(prior.activeFamily.entryId), runId: protocolId(prior.activeFamily.runId) }
         : null,
@@ -839,8 +936,70 @@ export class SessionRoom {
     return freshestSeenAt + PLAYER_HEARTBEAT_STALE_MS;
   }
 
+  routeTransitionIdentityMatches(left, right) {
+    return Boolean(
+      left && right
+      && left.operation === right.operation
+      && left.leaseEpoch === right.leaseEpoch
+      && left.switchId === right.switchId
+      && left.targetPlayerInstanceId === right.targetPlayerInstanceId
+    );
+  }
+
+  currentRouteTransitionForProtocol(protocol) {
+    const identity = protocol.routeTransitionIdentity;
+    const deadlineAt = finiteEpoch(protocol.routeTransitionDeadlineAt);
+    if (!identity || deadlineAt === null) return null;
+    const expectedStatus = identity.operation === 'activate' ? 'activating' : 'deactivating';
+    if (protocol.leaseStatus !== expectedStatus
+      || protocol.leaseEpoch !== identity.leaseEpoch
+      || protocol.switchId !== identity.switchId
+      || protocol.leaseTarget !== identity.targetPlayerInstanceId) {
+      return null;
+    }
+    return { deadlineAt, identity: { ...identity } };
+  }
+
+  currentRouteTransition(session) {
+    return this.currentRouteTransitionForProtocol(this.ensureProtocolV2(session));
+  }
+
+  beginRouteTransition(protocol, operation, now = Date.now()) {
+    const identity = {
+      operation,
+      leaseEpoch: protocol.leaseEpoch,
+      switchId: protocol.switchId,
+      targetPlayerInstanceId: protocol.leaseTarget
+    };
+    protocol.routeTransitionDeadlineAt = now + V2_ROUTE_TRANSITION_TIMEOUT_MS;
+    protocol.routeTransitionIdentity = identity;
+    return { deadlineAt: protocol.routeTransitionDeadlineAt, identity: { ...identity } };
+  }
+
+  clearRouteTransition(protocol, expectedIdentity = null) {
+    if (expectedIdentity
+      && !this.routeTransitionIdentityMatches(protocol.routeTransitionIdentity, expectedIdentity)) {
+      return false;
+    }
+    protocol.routeTransitionDeadlineAt = null;
+    protocol.routeTransitionIdentity = null;
+    return true;
+  }
+
+  routeTransitionDeadline(session) {
+    return this.currentRouteTransition(session)?.deadlineAt ?? null;
+  }
+
+  outputSafetyAlarmDeadline(session, options = {}) {
+    const deadlines = [
+      this.activeOutputHeartbeatDeadline(session, options),
+      this.routeTransitionDeadline(session)
+    ].filter((deadline) => deadline !== null);
+    return deadlines.length > 0 ? Math.min(...deadlines) : null;
+  }
+
   async ensureActiveOutputHeartbeatAlarm(session, options = {}) {
-    const deadline = this.activeOutputHeartbeatDeadline(session, options);
+    const deadline = this.outputSafetyAlarmDeadline(session, options);
     if (deadline === null) {
       this.activeOutputHeartbeatAlarmKnown = false;
       return null;
@@ -851,14 +1010,14 @@ export class SessionRoom {
       this.activeOutputHeartbeatAlarmKnown = true;
       return deadline;
     }
-    // An earlier initial-grace, reconnect-grace, cleanup, or watchdog alarm
-    // must never be postponed by liveness maintenance.
+    // An earlier initial-grace, reconnect-grace, cleanup, heartbeat, or route
+    // transition alarm must never be postponed by safety maintenance.
     this.activeOutputHeartbeatAlarmKnown = true;
     return currentAlarm;
   }
 
   async reconcileConnectedPlayerAlarm(session, options = {}) {
-    if (this.activeOutputHeartbeatDeadline(session, options) !== null) {
+    if (this.outputSafetyAlarmDeadline(session, options) !== null) {
       return this.ensureActiveOutputHeartbeatAlarm(session, options);
     }
     await this.ctx.storage.deleteAlarm();
@@ -1021,6 +1180,7 @@ export class SessionRoom {
 
       const candidate = structuredClone(session);
       const candidateProtocol = this.ensureProtocolV2(candidate);
+      const currentTransition = this.currentRouteTransitionForProtocol(candidateProtocol);
       candidateProtocol.leaseStatus = 'unknown';
       candidateProtocol.confirmedPlayback = {
         status: 'unknown',
@@ -1028,7 +1188,50 @@ export class SessionRoom {
         playerInstanceId: issue.targetPlayerInstanceId,
         leaseEpoch: candidateProtocol.leaseEpoch
       };
+      if (currentTransition) {
+        this.clearRouteTransition(candidateProtocol, currentTransition.identity);
+      }
       candidate.transport = { ...(candidate.transport || {}), status: 'unknown' };
+      await this.ctx.storage.put('session', candidate);
+      this.adoptPersistedSession(session, candidate);
+      return true;
+    } finally {
+      if (release) release();
+    }
+  }
+
+  async persistRouteTransitionTimeout(session, expiredTransition, { mutationLockHeld = false } = {}) {
+    const release = mutationLockHeld
+      ? null
+      : await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      const current = this.currentRouteTransition(session);
+      if (!current
+        || current.deadlineAt !== expiredTransition?.deadlineAt
+        || !this.routeTransitionIdentityMatches(current.identity, expiredTransition?.identity)
+        || Date.now() < current.deadlineAt) {
+        return false;
+      }
+
+      const candidate = structuredClone(session);
+      const candidateProtocol = this.ensureProtocolV2(candidate);
+      const candidateTransition = this.currentRouteTransitionForProtocol(candidateProtocol);
+      if (!candidateTransition
+        || candidateTransition.deadlineAt !== current.deadlineAt
+        || !this.routeTransitionIdentityMatches(candidateTransition.identity, current.identity)) {
+        return false;
+      }
+      candidateProtocol.leaseStatus = 'unknown';
+      candidateProtocol.confirmedPlayback = {
+        status: 'unknown',
+        reasonCode: 'route_transition_timeout',
+        operation: current.identity.operation,
+        playerInstanceId: current.identity.targetPlayerInstanceId,
+        leaseEpoch: current.identity.leaseEpoch,
+        switchId: current.identity.switchId
+      };
+      candidate.transport = { ...(candidate.transport || {}), status: 'unknown' };
+      this.clearRouteTransition(candidateProtocol, current.identity);
       await this.ctx.storage.put('session', candidate);
       this.adoptPersistedSession(session, candidate);
       return true;
@@ -2238,6 +2441,7 @@ export class SessionRoom {
       candidateProtocol.emergencyAcknowledgedTargets = [];
       candidateProtocol.pendingEmergencyLegacyCount = 0;
       candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_activating' };
+      this.beginRouteTransition(candidateProtocol, 'activate');
       // Arm before committing the active lease. If alarm storage fails, the
       // route remains inactive and the command can be retried cleanly.
       await this.ensureActiveOutputHeartbeatAlarm(candidate, {
@@ -2258,8 +2462,10 @@ export class SessionRoom {
       if (!delivered) {
         const failedCandidate = structuredClone(session);
         const failedProtocol = this.ensureProtocolV2(failedCandidate);
+        const failedTransition = this.currentRouteTransitionForProtocol(failedProtocol);
         failedProtocol.leaseStatus = 'unknown';
         failedProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'target_disconnected' };
+        if (failedTransition) this.clearRouteTransition(failedProtocol, failedTransition.identity);
         await this.ctx.storage.put('session', failedCandidate);
         this.adoptPersistedSession(session, failedCandidate);
         this.broadcastProtocolV2Snapshot(session);
@@ -2297,6 +2503,11 @@ export class SessionRoom {
     candidateProtocol.switchId = switchId;
     candidateProtocol.leaseStatus = 'deactivating';
     candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_deactivating' };
+    this.beginRouteTransition(candidateProtocol, 'deactivate');
+    // A recovery deactivation can begin from an unknown route that no longer
+    // has a heartbeat alarm. Arm its durable terminal deadline before exposing
+    // the deactivating state.
+    await this.ensureActiveOutputHeartbeatAlarm(candidate);
     await this.ctx.storage.put('session', candidate);
     this.adoptPersistedSession(session, candidate);
     protocol = this.ensureProtocolV2(session);
@@ -2309,8 +2520,10 @@ export class SessionRoom {
     if (!delivered) {
       const failedCandidate = structuredClone(session);
       const failedProtocol = this.ensureProtocolV2(failedCandidate);
+      const failedTransition = this.currentRouteTransitionForProtocol(failedProtocol);
       failedProtocol.leaseStatus = 'unknown';
       failedProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'target_disconnected' };
+      if (failedTransition) this.clearRouteTransition(failedProtocol, failedTransition.identity);
       await this.ctx.storage.put('session', failedCandidate);
       this.adoptPersistedSession(session, failedCandidate);
       this.broadcastProtocolV2Snapshot(session);
@@ -3182,6 +3395,7 @@ export class SessionRoom {
         return null;
       }
       const protocol = currentProtocol;
+      const terminalTransition = this.currentRouteTransitionForProtocol(protocol);
       let playerState;
       if (eventType === 'output_ready') {
         if (protocol.leaseStatus !== 'activating') {
@@ -3190,6 +3404,9 @@ export class SessionRoom {
             actual: protocol.leaseStatus
           });
           return null;
+        }
+        if (terminalTransition?.identity.operation === 'activate') {
+          this.clearRouteTransition(protocol, terminalTransition.identity);
         }
         protocol.leaseStatus = 'ready';
         protocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_ready_no_playback' };
@@ -3201,6 +3418,9 @@ export class SessionRoom {
             actual: protocol.leaseStatus
           });
           return null;
+        }
+        if (terminalTransition?.identity.operation === 'activate') {
+          this.clearRouteTransition(protocol, terminalTransition.identity);
         }
         protocol.leaseStatus = 'failed';
         protocol.confirmedPlayback = { status: 'unknown', reasonCode: 'output_activation_failed' };
@@ -3214,6 +3434,9 @@ export class SessionRoom {
           return null;
         }
         const detail = boundedFailureDetail(message.detail);
+        if (terminalTransition?.identity.operation === 'deactivate') {
+          this.clearRouteTransition(protocol, terminalTransition.identity);
+        }
         protocol.leaseStatus = 'unknown';
         protocol.confirmedPlayback = {
           status: 'unknown',
@@ -3230,6 +3453,9 @@ export class SessionRoom {
             actual: protocol.leaseStatus
           });
           return null;
+        }
+        if (terminalTransition?.identity.operation === 'deactivate') {
+          this.clearRouteTransition(protocol, terminalTransition.identity);
         }
         playerState = 'standby';
         protocol.leaseTarget = null;
@@ -3460,6 +3686,9 @@ export class SessionRoom {
       if (allV2TargetsAcknowledged
         && protocol.pendingEmergencyLegacyCount === 0
         && requiredTargetAcknowledged) {
+        // The exact, durable strong-stop acknowledgement is terminal evidence
+        // for any route transition that the emergency command preempted.
+        this.clearRouteTransition(protocol);
         protocol.leaseStatus = 'inactive';
         protocol.pendingEmergencyCommandId = null;
         protocol.pendingEmergencyControlInstanceId = null;
@@ -3698,6 +3927,10 @@ export class SessionRoom {
         const sameInstanceConnected = this.livePlayerRecords(socket)
           .some(({ attachment }) => attachment.playerInstanceId === closingAttachment.playerInstanceId);
         if (protocol.leaseTarget === closingAttachment.playerInstanceId && !sameInstanceConnected) {
+          const interruptedTransition = this.currentRouteTransitionForProtocol(protocol);
+          if (interruptedTransition) {
+            this.clearRouteTransition(protocol, interruptedTransition.identity);
+          }
           protocol.leaseStatus = 'unknown';
           protocol.confirmedPlayback = {
             status: 'unknown',
@@ -3762,6 +3995,14 @@ export class SessionRoom {
         await this.endSessionWhileDurableQueueHeld(session, 'player_disconnected');
         return;
       }
+      const routeTransition = this.currentRouteTransition(session);
+      if (routeTransition && Date.now() >= routeTransition.deadlineAt) {
+        const transitioned = await this.persistRouteTransitionTimeout(session, routeTransition, {
+          mutationLockHeld: true
+        });
+        if (transitioned) this.publishActiveOutputUnknown(session);
+        return;
+      }
       const protocol = this.ensureProtocolV2(session);
       const issue = this.activeOutputLivenessIssue(session, protocol.leaseTarget);
       if (issue) {
@@ -3797,6 +4038,7 @@ export class SessionRoom {
     candidate.endedAt = Date.now();
     candidate.cleanupAt = candidate.endedAt + ASSET_DELETE_DELAY_MS;
     candidate.transport = { ...candidate.transport, status: 'stopped', position: 0 };
+    this.clearRouteTransition(this.ensureProtocolV2(candidate));
     await this.ctx.storage.put('session', candidate);
     this.adoptPersistedSession(session, candidate);
     for (const socket of this.ctx.getWebSockets()) this.sendSessionEnded(socket, session, reason);

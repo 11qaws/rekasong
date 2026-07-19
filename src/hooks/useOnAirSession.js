@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const STORAGE_KEY = 'rekasong-on-air-session-v1';
+export const ON_AIR_SESSION_STORAGE_KEY = 'rekasong-on-air-session-v1';
+export const ON_AIR_SESSION_CREATION_LOCK = 'rekasong-on-air-session-create-v1';
+const ON_AIR_SESSION_LOCK_WAIT_MS = 1500;
 const SESSION_BASE_URL = String(import.meta.env?.VITE_ON_AIR_BASE_URL || '').trim().replace(/\/$/, '');
 const IDLE_TRANSPORT = Object.freeze({ status: 'idle', song: null, position: 0, volume: 100 });
 const EMPTY_WIDGET_PRESENCE = Object.freeze({ player: false, display: false });
@@ -21,23 +23,157 @@ export const resolveLegacyControlEnabled = (options) => options?.enabled !== fal
 export const resolveLegacyControlObserveOnly = (options) => options?.observeOnly === true
   || options?.readOnly === true;
 
-const readStoredSession = () => {
+const browserStorage = () => {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    return value?.room && value?.controlToken && value?.playerToken ? value : null;
+    return globalThis.localStorage || null;
   } catch {
     return null;
   }
 };
 
-const persistSession = (session) => {
+const nonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+const normalizeWorkerOrigin = (value) => String(value || '').trim().replace(/\/$/, '');
+
+export function parseOnAirSessionRecord(value, {
+  fallbackWorkerOrigin = SESSION_BASE_URL,
+  stampCreatedAt = false,
+  now = Date.now
+} = {}) {
+  let candidate = value;
+  if (typeof value === 'string') {
+    try {
+      candidate = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)
+    || !nonEmptyString(candidate.room)
+    || !nonEmptyString(candidate.controlToken)
+    || !nonEmptyString(candidate.playerToken)) return null;
+
+  const createdAt = Number.isFinite(candidate.createdAt) && candidate.createdAt > 0
+    ? candidate.createdAt
+    : (stampCreatedAt ? now() : 0);
+  const record = {
+    room: candidate.room,
+    controlToken: candidate.controlToken,
+    playerToken: candidate.playerToken,
+    workerOrigin: normalizeWorkerOrigin(candidate.workerOrigin) || normalizeWorkerOrigin(fallbackWorkerOrigin),
+    schemaVersion: ON_AIR_SESSION_SCHEMA_VERSION,
+    createdAt
+  };
+  if (nonEmptyString(candidate.displayToken)) record.displayToken = candidate.displayToken;
+  return record;
+}
+
+export const isSameOnAirSessionIdentity = (left, right) => {
+  if (left === null || left === undefined || right === null || right === undefined) {
+    return (left === null || left === undefined) && (right === null || right === undefined);
+  }
+  const a = parseOnAirSessionRecord(left);
+  const b = parseOnAirSessionRecord(right);
+  if (!a || !b) return false;
+  return a.room === b.room
+    && a.controlToken === b.controlToken
+    && a.playerToken === b.playerToken
+    && a.workerOrigin === b.workerOrigin;
+};
+
+export const isSameOnAirSessionRecord = (left, right) => {
+  if (left === null || left === undefined || right === null || right === undefined) {
+    return (left === null || left === undefined) && (right === null || right === undefined);
+  }
+  const a = parseOnAirSessionRecord(left);
+  const b = parseOnAirSessionRecord(right);
+  if (!a || !b) return false;
+  return isSameOnAirSessionIdentity(a, b)
+    && (a.displayToken || '') === (b.displayToken || '')
+    && a.createdAt === b.createdAt;
+};
+
+export function resolveOnAirSessionAdoption(current, candidate) {
+  const previous = parseOnAirSessionRecord(current);
+  const next = parseOnAirSessionRecord(candidate);
+  return {
+    session: next,
+    changed: !isSameOnAirSessionRecord(previous, next),
+    identityChanged: !isSameOnAirSessionIdentity(previous, next)
+  };
+}
+
+export const readStoredOnAirSession = (storage = browserStorage()) => {
   try {
-    if (session) localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-    else localStorage.removeItem(STORAGE_KEY);
+    return storage ? parseOnAirSessionRecord(storage.getItem(ON_AIR_SESSION_STORAGE_KEY)) : null;
   } catch {
-    // The player can still run for this page even when storage is unavailable.
+    return null;
   }
 };
+
+const persistSession = (session, storage = browserStorage()) => {
+  try {
+    if (!storage) return false;
+    if (session) storage.setItem(ON_AIR_SESSION_STORAGE_KEY, JSON.stringify(session));
+    else storage.removeItem(ON_AIR_SESSION_STORAGE_KEY);
+    return true;
+  } catch {
+    // The player can still run for this page even when storage is unavailable.
+    return false;
+  }
+};
+
+export function clearStoredOnAirSession(expectedSession, storage = browserStorage()) {
+  const expected = parseOnAirSessionRecord(expectedSession);
+  if (!expected || !storage) return false;
+  try {
+    const raw = storage.getItem(ON_AIR_SESSION_STORAGE_KEY);
+    if (raw === null) return true;
+    const canonical = parseOnAirSessionRecord(raw);
+    if (!isSameOnAirSessionIdentity(canonical, expected)) return false;
+    storage.removeItem(ON_AIR_SESSION_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function withOnAirSessionCreationLock(task, {
+  lockManager = globalThis.navigator?.locks,
+  schedule = globalThis.setTimeout,
+  cancel = globalThis.clearTimeout,
+  waitTimeoutMs = ON_AIR_SESSION_LOCK_WAIT_MS
+} = {}) {
+  if (typeof task !== 'function') throw new TypeError('On-Air session creation task is required');
+  if (typeof lockManager?.request !== 'function') return task();
+
+  let taskStarted = false;
+  const controller = new AbortController();
+  const timeout = typeof schedule === 'function' && Number.isFinite(waitTimeoutMs) && waitTimeoutMs >= 0
+    ? schedule(() => controller.abort(), waitTimeoutMs)
+    : null;
+  const clearWaitTimeout = () => {
+    if (timeout !== null && typeof cancel === 'function') cancel(timeout);
+  };
+  try {
+    return await lockManager.request(
+      ON_AIR_SESSION_CREATION_LOCK,
+      { mode: 'exclusive', signal: controller.signal },
+      () => {
+        taskStarted = true;
+        clearWaitTimeout();
+        return task();
+      }
+    );
+  } catch (error) {
+    // Security-policy/implementation failures must not make session creation
+    // impossible. Once the task itself started, however, never retry it: a POST
+    // may already have succeeded and a second attempt would create another lease.
+    if (taskStarted) throw error;
+    return task();
+  } finally {
+    clearWaitTimeout();
+  }
+}
 
 const commandId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -46,8 +182,6 @@ const toWebSocketUrl = (baseUrl, path) => {
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
 };
-
-const normalizeWorkerOrigin = (value) => String(value || '').trim().replace(/\/$/, '');
 
 export function buildOnAirPlayerUrl({ origin, pathname, baseUrl, session } = {}) {
   const workerOrigin = normalizeWorkerOrigin(baseUrl);
@@ -64,17 +198,13 @@ export function buildOnAirDisplayUrl({ origin, pathname, baseUrl, session } = {}
 }
 
 const storedSessionRecord = (session, { forceCurrentOrigin = false } = {}) => {
-  if (!session?.room || !session?.controlToken || !session?.playerToken) return null;
-  return {
-    ...session,
-    workerOrigin: forceCurrentOrigin
-      ? SESSION_BASE_URL
-      : normalizeWorkerOrigin(session.workerOrigin) || SESSION_BASE_URL,
-    schemaVersion: ON_AIR_SESSION_SCHEMA_VERSION,
-    createdAt: Number.isFinite(session.createdAt) && session.createdAt > 0
-      ? session.createdAt
-      : Date.now()
-  };
+  return parseOnAirSessionRecord(
+    forceCurrentOrigin ? { ...session, workerOrigin: SESSION_BASE_URL } : session,
+    {
+      fallbackWorkerOrigin: SESSION_BASE_URL,
+      stampCreatedAt: true
+    }
+  );
 };
 
 const createDisabledError = () => {
@@ -267,7 +397,7 @@ export function createLegacyControlSocketManager({
           lease.ended = true;
           clearReconnect();
           pendingLease = null;
-          onSessionEnded();
+          onSessionEnded(lease.session, payload);
           publishConnectionState('ended');
           closeSocket(socket);
         }
@@ -424,7 +554,7 @@ export function createLegacyControlSocketManager({
 export function useOnAirSession(onEvent, options) {
   const enabled = resolveLegacyControlEnabled(options);
   const observeOnly = resolveLegacyControlObserveOnly(options);
-  const [session, setSession] = useState(readStoredSession);
+  const [session, setSession] = useState(readStoredOnAirSession);
   const [connectionState, setConnectionState] = useState(
     SESSION_BASE_URL ? (enabled ? 'connecting' : 'disabled') : 'unconfigured'
   );
@@ -444,32 +574,78 @@ export function useOnAirSession(onEvent, options) {
   const sessionRef = useRef(session);
   const createInFlightRef = useRef(null);
 
-  const clearSession = useCallback(() => {
-    persistSession(null);
-    sessionRef.current = null;
-    setSession(null);
-    setTransport({ ...IDLE_TRANSPORT });
-    setWidgetPresence({ ...EMPTY_WIDGET_PRESENCE });
+  const adoptSession = useCallback((candidate) => {
+    const adoption = resolveOnAirSessionAdoption(sessionRef.current, candidate);
+    if (!adoption.changed) return sessionRef.current;
+    sessionRef.current = adoption.session;
+    setSession(adoption.session);
+    if (adoption.identityChanged) {
+      setTransport({ ...IDLE_TRANSPORT });
+      setWidgetPresence({ ...EMPTY_WIDGET_PRESENCE });
+    }
+    return adoption.session;
   }, []);
 
-  const createSession = useCallback(async () => {
-    if (!SESSION_BASE_URL) throw new Error('On-Air 출력 서버가 아직 연결되지 않았습니다.');
-    const response = await fetch(`${SESSION_BASE_URL}/v1/sessions`, { method: 'POST' });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || '방송 세션을 만들지 못했습니다.');
-    const createdSession = storedSessionRecord(data, { forceCurrentOrigin: true });
-    if (!createdSession) throw new Error('방송 세션 응답이 올바르지 않습니다.');
-    persistSession(createdSession);
-    sessionRef.current = createdSession;
-    setSession(createdSession);
-    return createdSession;
-  }, []);
+  const clearSession = useCallback((expectedSession = sessionRef.current) => (
+    withOnAirSessionCreationLock(async () => {
+      const expected = parseOnAirSessionRecord(expectedSession);
+      if (expected && !isSameOnAirSessionIdentity(sessionRef.current, expected)) return false;
+
+      const storage = browserStorage();
+      const canonical = readStoredOnAirSession(storage);
+      if (expected && canonical && !isSameOnAirSessionIdentity(canonical, expected)) {
+        adoptSession(canonical);
+        return false;
+      }
+      if (!expected && canonical) {
+        adoptSession(canonical);
+        return false;
+      }
+      if (expected && storage && !clearStoredOnAirSession(expected, storage)) {
+        const latest = readStoredOnAirSession(storage);
+        if (latest) adoptSession(latest);
+        return false;
+      }
+      if (!expected) persistSession(null, storage);
+      adoptSession(null);
+      return true;
+    })
+  ), [adoptSession]);
+
+  const createSession = useCallback(async ({ reuseStored = false } = {}) => (
+    withOnAirSessionCreationLock(async () => {
+      if (reuseStored) {
+        const canonical = readStoredOnAirSession();
+        if (canonical) return adoptSession(canonical);
+        if (sessionRef.current) return sessionRef.current;
+      }
+
+      if (!SESSION_BASE_URL) throw new Error('On-Air 출력 서버가 아직 연결되지 않았습니다.');
+      const response = await fetch(`${SESSION_BASE_URL}/v1/sessions`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '방송 세션을 만들지 못했습니다.');
+      const createdSession = storedSessionRecord(data, { forceCurrentOrigin: true });
+      if (!createdSession) throw new Error('방송 세션 응답이 올바르지 않습니다.');
+
+      // If Web Locks are unavailable, another tab can create the canonical
+      // session while this request is in flight. Adopt it rather than replace it
+      // with a second valid-but-divergent lease.
+      if (reuseStored) {
+        const canonical = readStoredOnAirSession();
+        if (canonical) return adoptSession(canonical);
+        if (sessionRef.current) return sessionRef.current;
+      }
+      persistSession(createdSession);
+      return adoptSession(createdSession);
+    })
+  ), [adoptSession]);
 
   const ensureSession = useCallback(async () => {
     // state 대신 ref 를 읽는다 — 렌더 클로저의 낡은 session 으로 중복 생성하지 않게.
     if (sessionRef.current) return sessionRef.current;
     if (!createInFlightRef.current) {
-      createInFlightRef.current = createSession().finally(() => { createInFlightRef.current = null; });
+      createInFlightRef.current = createSession({ reuseStored: true })
+        .finally(() => { createInFlightRef.current = null; });
     }
     return createInFlightRef.current;
   }, [createSession]);
@@ -496,13 +672,31 @@ export function useOnAirSession(onEvent, options) {
       onConnectionState: (state) => managerCallbacksRef.current?.setConnectionState(state),
       onTransport: (value) => managerCallbacksRef.current?.setTransport(value),
       onPresence: (value) => managerCallbacksRef.current?.setWidgetPresence(value),
-      onSessionEnded: () => managerCallbacksRef.current?.clearSession(),
+      onSessionEnded: (endedSession) => managerCallbacksRef.current?.clearSession(endedSession),
       // Invalid credentials remain visible until the user explicitly replaces
       // them. This avoids silently orphaning an active OBS/session route.
       onSessionInvalid: () => {},
       onEvent: (payload) => managerCallbacksRef.current?.emitEvent(payload)
     });
   }
+
+  useEffect(() => {
+    const target = globalThis.window;
+    const storage = browserStorage();
+    const adoptCanonicalSession = () => adoptSession(readStoredOnAirSession(storage));
+    const handleStorage = (event) => {
+      if (event.key !== ON_AIR_SESSION_STORAGE_KEY && event.key !== null) return;
+      if (event.storageArea && storage && event.storageArea !== storage) return;
+      // event.newValue can already be stale when multiple tabs write rapidly.
+      // The storage area itself is the single canonical value.
+      adoptCanonicalSession();
+    };
+
+    target?.addEventListener?.('storage', handleStorage);
+    // Close the mount gap between the useState initializer and listener setup.
+    adoptCanonicalSession();
+    return () => target?.removeEventListener?.('storage', handleStorage);
+  }, [adoptSession]);
 
   const sendCommand = useCallback((command) => {
     if (!enabledRef.current || observeOnlyRef.current) throw createDisabledError();
@@ -537,9 +731,15 @@ export function useOnAirSession(onEvent, options) {
     });
   }, [ensureSession]);
 
-  useEffect(() => {
-    return managerRef.current.activate({ enabled, observeOnly, session });
-  }, [enabled, observeOnly, session]);
+  const managerRoom = session?.room || '';
+  const managerControlToken = session?.controlToken || '';
+  const managerPlayerToken = session?.playerToken || '';
+  const managerWorkerOrigin = session?.workerOrigin || '';
+  useEffect(() => managerRef.current.activate({
+    enabled,
+    observeOnly,
+    session: sessionRef.current
+  }), [enabled, observeOnly, managerRoom, managerControlToken, managerPlayerToken, managerWorkerOrigin]);
 
   const playerUrl = buildOnAirPlayerUrl({
     origin: window.location.origin,
@@ -565,24 +765,38 @@ export function useOnAirSession(onEvent, options) {
     });
   }, [ensureSession]);
 
-  const issueDisplayToken = useCallback(async (activeSession) => {
-    const response = await fetch(`${SESSION_BASE_URL}/v1/sessions/${encodeURIComponent(activeSession.room)}/display-token`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${activeSession.controlToken}` }
-    });
-    const data = await response.json();
-    if (!response.ok || !data.displayToken) throw new Error(data.error || '화면 정보 위젯 토큰을 만들지 못했습니다.');
+  const issueDisplayToken = useCallback(async (activeSession) => (
+    withOnAirSessionCreationLock(async () => {
+      const canonical = readStoredOnAirSession();
+      if (canonical && !isSameOnAirSessionIdentity(canonical, activeSession)) {
+        return adoptSession(canonical);
+      }
+      if (canonical?.displayToken) return adoptSession(canonical);
+      if (!isSameOnAirSessionIdentity(sessionRef.current, activeSession)) return sessionRef.current;
 
-    const upgradedSession = { ...activeSession, displayToken: data.displayToken };
-    persistSession(upgradedSession);
-    sessionRef.current = upgradedSession;
-    setSession(upgradedSession);
-    return upgradedSession;
-  }, []);
+      const response = await fetch(`${SESSION_BASE_URL}/v1/sessions/${encodeURIComponent(activeSession.room)}/display-token`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${activeSession.controlToken}` }
+      });
+      const data = await response.json();
+      if (!response.ok || !data.displayToken) throw new Error(data.error || '화면 정보 위젯 토큰을 만들지 못했습니다.');
+
+      const latest = readStoredOnAirSession();
+      if (latest && !isSameOnAirSessionIdentity(latest, activeSession)) return adoptSession(latest);
+      if (latest?.displayToken) return adoptSession(latest);
+      if (!isSameOnAirSessionIdentity(sessionRef.current, activeSession)) return sessionRef.current;
+
+      const upgradedSession = storedSessionRecord({ ...activeSession, displayToken: data.displayToken });
+      persistSession(upgradedSession);
+      return adoptSession(upgradedSession);
+    })
+  ), [adoptSession]);
 
   const prepareDisplay = useCallback(async () => {
     let activeSession = await ensureSession();
-    if (!activeSession.displayToken) activeSession = await issueDisplayToken(activeSession);
+    for (let attempt = 0; attempt < 2 && activeSession && !activeSession.displayToken; attempt += 1) {
+      activeSession = await issueDisplayToken(activeSession);
+    }
     return buildOnAirDisplayUrl({
       origin: window.location.origin,
       pathname: window.location.pathname,
@@ -597,16 +811,13 @@ export function useOnAirSession(onEvent, options) {
       throw new TypeError('Invalid On-Air session replacement');
     }
     persistSession(nextSession);
-    sessionRef.current = nextSession;
-    setSession(nextSession);
-    setTransport({ ...IDLE_TRANSPORT });
-    setWidgetPresence({ ...EMPTY_WIDGET_PRESENCE });
-    return nextSession;
-  }, []);
+    return adoptSession(nextSession);
+  }, [adoptSession]);
 
   const createFreshSession = useCallback(async () => {
     if (!createInFlightRef.current) {
-      createInFlightRef.current = createSession().finally(() => { createInFlightRef.current = null; });
+      createInFlightRef.current = createSession({ reuseStored: false })
+        .finally(() => { createInFlightRef.current = null; });
     }
     return createInFlightRef.current;
   }, [createSession]);

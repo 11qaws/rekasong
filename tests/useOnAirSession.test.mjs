@@ -4,13 +4,22 @@ import test from 'node:test';
 
 import {
   LEGACY_CONTROL_DISABLED_ERROR_CODE,
+  ON_AIR_SESSION_CREATION_LOCK,
+  ON_AIR_SESSION_STORAGE_KEY,
   ON_AIR_SESSION_VALIDATION_STATES,
   buildOnAirDisplayUrl,
   buildOnAirPlayerUrl,
+  clearStoredOnAirSession,
   createLegacyControlSocketManager,
+  isSameOnAirSessionIdentity,
+  isSameOnAirSessionRecord,
+  parseOnAirSessionRecord,
+  readStoredOnAirSession,
+  resolveOnAirSessionAdoption,
   resolveLegacyControlEnabled,
   resolveLegacyControlObserveOnly,
-  validateOnAirSession
+  validateOnAirSession,
+  withOnAirSessionCreationLock
 } from '../src/hooks/useOnAirSession.js';
 
 const SESSION = Object.freeze({
@@ -20,6 +29,26 @@ const SESSION = Object.freeze({
 });
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+class MemoryStorage {
+  constructor(initial = {}) {
+    this.values = new Map(Object.entries(initial));
+    this.removed = [];
+  }
+
+  getItem(key) {
+    return this.values.has(key) ? this.values.get(key) : null;
+  }
+
+  setItem(key, value) {
+    this.values.set(key, String(value));
+  }
+
+  removeItem(key) {
+    this.removed.push(key);
+    this.values.delete(key);
+  }
+}
 
 class FakeSocket {
   constructor(url, harness) {
@@ -71,6 +100,7 @@ const createHarness = ({
   let presence = null;
   let sessionEndedCount = 0;
   let sessionInvalidCount = 0;
+  const sessionEndedReports = [];
   const validationCalls = [];
 
   const manager = createLegacyControlSocketManager({
@@ -112,7 +142,10 @@ const createHarness = ({
       presence = typeof value === 'function' ? value(presence) : value;
       presences.push(presence);
     },
-    onSessionEnded: () => { sessionEndedCount += 1; },
+    onSessionEnded: (...args) => {
+      sessionEndedCount += 1;
+      sessionEndedReports.push(args);
+    },
     onSessionInvalid: () => { sessionInvalidCount += 1; },
     onEvent: (event) => events.push(event),
     commandIdFactory: () => 'generated-command-id',
@@ -131,6 +164,7 @@ const createHarness = ({
     get transport() { return transport; },
     get presence() { return presence; },
     get sessionEndedCount() { return sessionEndedCount; },
+    get sessionEndedReports() { return sessionEndedReports; },
     get sessionInvalidCount() { return sessionInvalidCount; },
     get validationCalls() { return validationCalls; },
     get maxLiveSockets() { return maxLiveSockets; }
@@ -153,6 +187,174 @@ test('legacy observe-only mode accepts both explicit option names and never enab
   assert.equal(resolveLegacyControlObserveOnly({ readOnly: true }), true);
   assert.equal(resolveLegacyControlObserveOnly({ observeOnly: false, readOnly: false }), false);
   assert.equal(resolveLegacyControlObserveOnly({ observeOnly: 1 }), false);
+});
+
+test('session records are parsed into one normalized credential identity', () => {
+  const parsed = parseOnAirSessionRecord(JSON.stringify({
+    ...SESSION,
+    displayToken: 'display-a',
+    workerOrigin: 'https://worker.example/',
+    schemaVersion: 1,
+    createdAt: 123,
+    ignoredSecretShape: 'not-persisted'
+  }));
+
+  assert.deepEqual(parsed, {
+    ...SESSION,
+    displayToken: 'display-a',
+    workerOrigin: 'https://worker.example',
+    schemaVersion: 2,
+    createdAt: 123
+  });
+  assert.equal(parseOnAirSessionRecord('{broken'), null);
+  assert.equal(parseOnAirSessionRecord({ ...SESSION, controlToken: '' }), null);
+  assert.equal(parseOnAirSessionRecord({ ...SESSION, playerToken: null }), null);
+});
+
+test('identity equality distinguishes leases while record equality permits same-lease enrichment', () => {
+  const base = { ...SESSION, workerOrigin: 'https://worker.example/', createdAt: 10 };
+  const enriched = { ...base, displayToken: 'display-a' };
+
+  assert.equal(isSameOnAirSessionIdentity(base, enriched), true);
+  assert.equal(isSameOnAirSessionRecord(base, enriched), false);
+  assert.equal(isSameOnAirSessionIdentity(base, { ...base, controlToken: 'control-b' }), false);
+  assert.equal(isSameOnAirSessionIdentity(base, { ...base, playerToken: 'player-b' }), false);
+  assert.equal(isSameOnAirSessionIdentity(base, { ...base, workerOrigin: 'https://other.example' }), false);
+  assert.equal(isSameOnAirSessionIdentity(null, null), true);
+  assert.equal(isSameOnAirSessionIdentity(null, base), false);
+  assert.equal(isSameOnAirSessionIdentity(null, { ...base, controlToken: '' }), false);
+});
+
+test('adoption resets observed truth only when the canonical lease identity changes', () => {
+  const base = { ...SESSION, createdAt: 10 };
+  const enrichment = resolveOnAirSessionAdoption(base, { ...base, displayToken: 'display-a' });
+  const replacement = resolveOnAirSessionAdoption(base, {
+    ...base,
+    room: 'room-b',
+    controlToken: 'control-b',
+    playerToken: 'player-b'
+  });
+
+  assert.equal(enrichment.changed, true);
+  assert.equal(enrichment.identityChanged, false);
+  assert.equal(enrichment.session.displayToken, 'display-a');
+  assert.equal(replacement.changed, true);
+  assert.equal(replacement.identityChanged, true);
+  assert.equal(resolveOnAirSessionAdoption(base, { ...base }).changed, false);
+});
+
+test('identity-guarded storage clear cannot erase a newer canonical session', () => {
+  const stale = { ...SESSION, createdAt: 10 };
+  const newer = {
+    ...SESSION,
+    room: 'room-new',
+    controlToken: 'control-new',
+    playerToken: 'player-new',
+    createdAt: 20
+  };
+  const storage = new MemoryStorage({
+    [ON_AIR_SESSION_STORAGE_KEY]: JSON.stringify(newer)
+  });
+
+  assert.equal(clearStoredOnAirSession(stale, storage), false);
+  assert.deepEqual(readStoredOnAirSession(storage), {
+    ...newer,
+    workerOrigin: '',
+    schemaVersion: 2
+  });
+  assert.deepEqual(storage.removed, []);
+
+  assert.equal(clearStoredOnAirSession(newer, storage), true);
+  assert.equal(readStoredOnAirSession(storage), null);
+  assert.deepEqual(storage.removed, [ON_AIR_SESSION_STORAGE_KEY]);
+});
+
+test('creation lock serializes simultaneous empty-tab creation into one canonical lease', async () => {
+  let tail = Promise.resolve();
+  const calls = [];
+  const lockManager = {
+    request: (name, options, callback) => {
+      calls.push({
+        name,
+        mode: options.mode,
+        hasAbortSignal: typeof options.signal?.addEventListener === 'function'
+      });
+      const result = tail.then(callback);
+      tail = result.catch(() => {});
+      return result;
+    }
+  };
+  let canonical = null;
+  let postCount = 0;
+  const createIfEmpty = () => withOnAirSessionCreationLock(async () => {
+    if (canonical) return canonical;
+    postCount += 1;
+    await settle();
+    canonical = { ...SESSION };
+    return canonical;
+  }, { lockManager });
+
+  const [first, second] = await Promise.all([createIfEmpty(), createIfEmpty()]);
+  assert.deepEqual(first, SESSION);
+  assert.deepEqual(second, SESSION);
+  assert.equal(postCount, 1);
+  assert.deepEqual(calls, [
+    { name: ON_AIR_SESSION_CREATION_LOCK, mode: 'exclusive', hasAbortSignal: true },
+    { name: ON_AIR_SESSION_CREATION_LOCK, mode: 'exclusive', hasAbortSignal: true }
+  ]);
+});
+
+test('creation lock failure falls back once, but a started POST failure is never retried', async () => {
+  let fallbackCalls = 0;
+  const unavailableManager = { request: async () => { throw new Error('locks unavailable'); } };
+  assert.equal(await withOnAirSessionCreationLock(async () => {
+    fallbackCalls += 1;
+    return 'fallback';
+  }, { lockManager: unavailableManager }), 'fallback');
+  assert.equal(fallbackCalls, 1);
+
+  const postError = new Error('POST outcome unknown');
+  let startedCalls = 0;
+  const workingManager = { request: (_name, _options, callback) => callback() };
+  await assert.rejects(
+    withOnAirSessionCreationLock(async () => {
+      startedCalls += 1;
+      throw postError;
+    }, { lockManager: workingManager }),
+    (error) => error === postError
+  );
+  assert.equal(startedCalls, 1);
+});
+
+test('creation lock wait is bounded and safely falls back when a holder is stuck', async () => {
+  let fireTimeout;
+  let cancelCalls = 0;
+  let taskCalls = 0;
+  const stuckManager = {
+    request: (_name, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+    })
+  };
+  const resultPromise = withOnAirSessionCreationLock(async () => {
+    taskCalls += 1;
+    return 'recovered';
+  }, {
+    lockManager: stuckManager,
+    schedule: (callback) => {
+      fireTimeout = callback;
+      return 7;
+    },
+    cancel: (timer) => {
+      assert.equal(timer, 7);
+      cancelCalls += 1;
+    },
+    waitTimeoutMs: 25
+  });
+
+  fireTimeout();
+  assert.equal(await resultPromise, 'recovered');
+  assert.equal(taskCalls, 1);
+  assert.equal(cancelCalls, 1);
 });
 
 test('disabled boundary creates no socket, exposes no optimistic truth, and rejects commands', () => {
@@ -289,6 +491,8 @@ test('a server-ended session stays ended when the hook reactivates with no sessi
   socket.receive({ type: 'session_ended' });
 
   assert.equal(harness.sessionEndedCount, 1);
+  assert.deepEqual(harness.sessionEndedReports[0][0], SESSION);
+  assert.equal(harness.sessionEndedReports[0][1].type, 'session_ended');
   assert.equal(harness.connectionStates.at(-1), 'ended');
   harness.manager.activate({ enabled: true, session: null });
   assert.equal(harness.connectionStates.at(-1), 'ended');
@@ -419,6 +623,34 @@ test('rapid session replacement waits for close and connects only the newest lea
   assert.equal(url.pathname, '/v1/sessions/room-c/ws');
   assert.equal(url.searchParams.get('token'), 'control-c');
   assert.equal(harness.maxLiveSockets, 1);
+});
+
+test('a superseded socket cannot end its replacement and ended reports name the exact lease', async () => {
+  const harness = createHarness();
+  harness.manager.activate({ enabled: true, session: SESSION });
+  await settle();
+  const staleSocket = harness.sockets[0];
+  staleSocket.open();
+
+  const replacement = {
+    ...SESSION,
+    room: 'room-replacement',
+    controlToken: 'control-replacement',
+    playerToken: 'player-replacement'
+  };
+  harness.manager.activate({ enabled: true, session: replacement });
+  staleSocket.receive({ type: 'session_ended' });
+  assert.equal(harness.sessionEndedCount, 0, 'a retired lease cannot clear the replacement');
+
+  staleSocket.finishClose(1000);
+  await settle();
+  const replacementSocket = harness.sockets[1];
+  replacementSocket.open();
+  replacementSocket.receive({ type: 'session_ended' });
+
+  assert.equal(harness.sessionEndedCount, 1);
+  assert.deepEqual(harness.sessionEndedReports[0][0], replacement);
+  assert.equal(harness.sessionEndedReports[0][1].type, 'session_ended');
 });
 
 test('session validator sends an authenticated read-only request and classifies exact statuses', async () => {
@@ -577,4 +809,25 @@ test('late validation from a superseded lease cannot open a stale session socket
   resolveFirst({ status: 'active' });
   await settle();
   assert.equal(harness.sockets.length, 1, 'superseded validation cannot create a second socket');
+});
+
+test('hook statically reconciles canonical storage and binds terminal clears to the ended lease', async () => {
+  const source = await readFile(new URL('../src/hooks/useOnAirSession.js', import.meta.url), 'utf8');
+
+  assert.match(source, /addEventListener\?\.\('storage', handleStorage\)/);
+  assert.match(
+    source,
+    /const adoptCanonicalSession = \(\) => adoptSession\(readStoredOnAirSession\(storage\)\)/,
+    'storage events must re-read the canonical value instead of trusting a stale event payload'
+  );
+  assert.match(
+    source,
+    /onSessionEnded: \(endedSession\) => managerCallbacksRef\.current\?\.clearSession\(endedSession\)/,
+    'terminal socket events must clear only their own lease identity'
+  );
+  assert.match(
+    source,
+    /if \(adoption\.identityChanged\) \{\s*setTransport\(\{ \.\.\.IDLE_TRANSPORT \}\);\s*setWidgetPresence\(\{ \.\.\.EMPTY_WIDGET_PRESENCE \}\);/,
+    'a cross-tab lease replacement must discard transport and widget truth from the prior lease'
+  );
 });

@@ -5,11 +5,28 @@ import { derivePlaybackOutputStatus } from '../lib/playbackOutputStatus';
 
 // 위젯 연결 칩 — 서버가 중계하는 **일반 브라우저 페이지 presence**에만 근거한다.
 // 이 값만으로 OBS CEF, 오디오 믹서, 녹화/송출 경로를 확인했다고 말하면 안 된다.
-function WidgetStatusChip({ connected, connectedLabel, waitingLabel }) {
+function WidgetStatusChip({
+  connected,
+  connectedLabel,
+  waitingLabel,
+  candidateState = null,
+  duplicateLabel = '',
+  unknownLabel = '',
+}) {
+  const candidateAware = ['none', 'single', 'duplicate', 'unknown'].includes(candidateState);
+  const isHealthy = candidateAware ? candidateState === 'single' : Boolean(connected);
+  const isDuplicate = candidateAware && candidateState === 'duplicate';
+  const label = isHealthy
+    ? connectedLabel
+    : isDuplicate
+      ? duplicateLabel
+      : candidateState === 'unknown'
+        ? unknownLabel
+        : waitingLabel;
   return (
-    <span className={`obs-player-status ${connected ? 'is-on' : 'is-waiting'}`} role="status">
-      {connected ? <Check size={13} /> : <span className="obs-status-dot" aria-hidden="true" />}
-      {connected ? connectedLabel : waitingLabel}
+    <span className={`obs-player-status ${isHealthy ? 'is-on' : isDuplicate ? 'is-error' : 'is-waiting'}`} role="status">
+      {isHealthy ? <Check size={13} /> : <span className="obs-status-dot" aria-hidden="true" />}
+      {label}
     </span>
   );
 }
@@ -35,7 +52,7 @@ export default function PlaybackPanel({
   onAirPlayerUrl,
   onAirDisplayUrl,
   onAirStatus,
-  onAirPlayerConnected,
+  onAirPlayerCandidate,
   onAirDisplayConnected,
   onEndBroadcastSession,
   canEndBroadcastSession = false,
@@ -44,9 +61,11 @@ export default function PlaybackPanel({
   onPrepareOnAirDisplay,
   outputMode,
   actualOutputMode,
+  failedOutputMode = null,
   outputView = null,
   outputControlConflict = false,
   outputControlUnavailable = false,
+  outputControlRecoveryReason = null,
   outputControlSafeToTakeOver = false,
   outputControlTakeover = null,
   outputRouteStable = false,
@@ -92,6 +111,10 @@ export default function PlaybackPanel({
   const outputOptionRefs = useRef({ speaker: null, obs: null });
   const previousOnAirPlayerUrlRef = useRef(onAirPlayerUrl);
   const previousOnAirDisplayUrlRef = useRef(onAirDisplayUrl);
+  const showToastRef = useRef(showToast);
+  const retryOutputControlRef = useRef(onRetryOutputControl);
+  showToastRef.current = showToast;
+  retryOutputControlRef.current = onRetryOutputControl;
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
@@ -104,14 +127,38 @@ export default function PlaybackPanel({
   const confirmedOutputMode = actualOutputMode === 'speaker' || actualOutputMode === 'obs'
     ? actualOutputMode
     : null;
+  const failedSelectionMode = failedOutputMode === 'speaker' || failedOutputMode === 'obs'
+    ? failedOutputMode
+    : null;
   const outputRouteStateUnknown = outputView?.statusCode === 'state_unknown';
   const outputLeaseNeedsEmergencyStop = outputRouteStateUnknown
     && ['unknown', 'failed'].includes(outputView?.lease?.status);
+  const outputRecoveryNeedsEmergencyStop = outputLeaseNeedsEmergencyStop
+    || outputControlRecoveryReason === 'switch_timeout';
   const normalizedOutputSwitchState = ['idle', 'connecting', 'conflict', 'switching', 'blocked'].includes(outputSwitchState)
     ? outputSwitchState
     : 'blocked';
   const outputSelectionLocked = ['connecting', 'conflict', 'switching'].includes(normalizedOutputSwitchState)
     || typeof onSelectOutputMode !== 'function';
+  const outputRecoveryTitleMessageKey = outputControlRecoveryReason === 'connection_timeout'
+    ? 'onair.control.recovery.connectionTimeout.title'
+    : outputControlRecoveryReason === 'switch_timeout'
+      ? 'onair.control.recovery.switchTimeout.title'
+      : 'onair.control.unavailable.title';
+  const outputRecoveryDescriptionMessageKey = outputControlRecoveryReason === 'connection_timeout'
+    ? 'onair.control.recovery.connectionTimeout.description'
+    : outputControlRecoveryReason === 'switch_timeout'
+      ? 'onair.control.recovery.switchTimeout.description'
+      : 'onair.control.unavailable.description';
+  const outputSelectionLockMessageKey = outputControlRecoveryReason
+    ? outputRecoveryDescriptionMessageKey
+    : normalizedOutputSwitchState === 'connecting'
+    ? 'onair.output.selector.locked.connecting'
+    : normalizedOutputSwitchState === 'conflict'
+      ? 'onair.output.selector.locked.otherTab'
+      : normalizedOutputSwitchState === 'switching'
+        ? 'onair.output.selector.locked.switching'
+        : 'onair.output.selector.locked.unavailable';
   const directWidgetUrl = room && publicKeyB64
     ? `${window.location.origin}${window.location.pathname}#/widget?room=${encodeURIComponent(room)}&key=${encodeURIComponent(publicKeyB64)}`
     : '';
@@ -151,15 +198,21 @@ export default function PlaybackPanel({
     || normalizedOutputSwitchState === 'blocked';
 
   const selectOutputMode = (mode) => {
-    const retriesUnconfirmedSelection = mode === selectedOutputMode
-      && mode !== confirmedOutputMode;
-    const restoresConfirmedOutput = normalizedOutputSwitchState === 'blocked'
-      && mode === confirmedOutputMode;
-    if (outputSelectionLocked
-      || (normalizedOutputSwitchState === 'blocked'
-        && !retriesUnconfirmedSelection
-        && !restoresConfirmedOutput)
-      || (mode === selectedOutputMode && mode === confirmedOutputMode)) return;
+    if (outputSelectionLocked) {
+      showToast?.(
+        t(outputSelectionLockMessageKey),
+        ['connecting', 'conflict', 'switching'].includes(normalizedOutputSwitchState)
+          ? 'info'
+          : 'error',
+      );
+      return;
+    }
+    // In a blocked state every route remains actionable: the failed target is
+    // a retry, another target is a new attempt, and the actual route clears the
+    // stale failure through the controller's authoritative already-active path.
+    if (normalizedOutputSwitchState !== 'blocked'
+      && mode === selectedOutputMode
+      && mode === confirmedOutputMode) return;
     onSelectOutputMode(mode);
   };
 
@@ -203,6 +256,26 @@ export default function PlaybackPanel({
   useEffect(() => {
     if (!outputRouteStateUnknown) setIsEmergencyStoppingOutput(false);
   }, [outputRouteStateUnknown]);
+
+  useEffect(() => {
+    if (!isEmergencyStoppingOutput) return undefined;
+    const timer = window.setTimeout(() => {
+      setIsEmergencyStoppingOutput(false);
+      showToastRef.current?.(t('obs.setup.recovery.emergencyTimeout'), 'error');
+      // Dispatch acceptance is not stop proof. If the ACK/snapshot never
+      // arrives, rebuild the read side only; do not infer stopped or route audio.
+      if (typeof retryOutputControlRef.current === 'function') {
+        try {
+          Promise.resolve(retryOutputControlRef.current()).catch(() => {
+            showToastRef.current?.(t('onair.control.unavailable.failed'), 'error');
+          });
+        } catch {
+          showToastRef.current?.(t('onair.control.unavailable.failed'), 'error');
+        }
+      }
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [isEmergencyStoppingOutput]);
 
   const requestControlTakeover = useCallback(() => {
     if (typeof onTakeOverOutputControl !== 'function') {
@@ -249,6 +322,19 @@ export default function PlaybackPanel({
     }
     const timer = window.setTimeout(() => {
       setControlTransferPhase('failed');
+      showToastRef.current?.(t('onair.control.takeover.timeout'), 'info');
+      // A timed-out takeover command has an unknown local outcome. Rebuild the
+      // coordinator to obtain fresh authority evidence before the button can
+      // issue another CAS takeover; never retry the pending command in place.
+      if (typeof retryOutputControlRef.current === 'function') {
+        try {
+          Promise.resolve(retryOutputControlRef.current()).catch(() => {
+            showToastRef.current?.(t('onair.control.unavailable.failed'), 'error');
+          });
+        } catch {
+          showToastRef.current?.(t('onair.control.unavailable.failed'), 'error');
+        }
+      }
     }, 12_000);
     return () => window.clearTimeout(timer);
   }, [controlTransferPhase]);
@@ -390,7 +476,7 @@ export default function PlaybackPanel({
     if (!window.confirm(t('obs.setup.recovery.emergencyConfirm'))) return;
     setIsEmergencyStoppingOutput(true);
     try {
-      Promise.resolve(onEmergencyStopOutput()).catch(() => {
+      Promise.resolve(onEmergencyStopOutput()).catch((error) => {
         setIsEmergencyStoppingOutput(false);
         showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
       });
@@ -402,6 +488,10 @@ export default function PlaybackPanel({
 
   const transferControlToThisTab = () => {
     if (controlTransferPhase === 'stopping' || controlTransferPhase === 'claiming') return;
+    if (controlTransferPhase === 'failed' && outputControlTakeover?.status === 'pending') {
+      retryOutputControl();
+      return;
+    }
     if (outputControlSafeToTakeOver) {
       requestControlTakeover();
       return;
@@ -472,14 +562,7 @@ export default function PlaybackPanel({
             >
               {['speaker', 'obs'].map((mode) => {
                 const isSelected = selectedOutputMode === mode;
-                const isActual = confirmedOutputMode === mode;
-                const canRetryBlockedSelection = normalizedOutputSwitchState === 'blocked'
-                  && isSelected
-                  && !isActual;
-                const isOptionDisabled = outputSelectionLocked
-                  || (normalizedOutputSwitchState === 'blocked'
-                    && !canRetryBlockedSelection
-                    && !isActual);
+                const isOptionDisabled = outputSelectionLocked;
                 return (
                   <button
                     key={mode}
@@ -489,6 +572,7 @@ export default function PlaybackPanel({
                     aria-checked={isSelected}
                     aria-disabled={isOptionDisabled}
                     aria-describedby="output-route-live-status"
+                    title={isOptionDisabled ? t(outputSelectionLockMessageKey) : undefined}
                     tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
                     className={`output-route-button${isSelected ? ' is-selected' : ''}`}
                     onClick={() => selectOutputMode(mode)}
@@ -638,7 +722,14 @@ export default function PlaybackPanel({
                   <strong>{t('onair.output.selector.status.otherTab')}</strong>
                 )}
                 {normalizedOutputSwitchState === 'blocked' && (
-                  <strong>{t('onair.output.selector.status.blocked')}</strong>
+                  <strong>{t(
+                    failedSelectionMode
+                      ? 'onair.output.selector.status.blockedTarget'
+                      : 'onair.output.selector.status.blocked',
+                    failedSelectionMode
+                      ? { mode: outputModeLabel(failedSelectionMode) }
+                      : {},
+                  )}</strong>
                 )}
               </div>
               {outputView?.messageKey && (
@@ -702,8 +793,8 @@ export default function PlaybackPanel({
             {outputControlUnavailable && !isOnAirInvalid && (
               <div className="obs-control-transfer" role="status">
                 <div>
-                  <strong>{t('onair.control.unavailable.title')}</strong>
-                  <p>{t('onair.control.unavailable.description')}</p>
+                  <strong>{t(outputRecoveryTitleMessageKey)}</strong>
+                  <p>{t(outputRecoveryDescriptionMessageKey)}</p>
                 </div>
                 <button
                   type="button"
@@ -719,7 +810,7 @@ export default function PlaybackPanel({
               </div>
             )}
 
-            {outputLeaseNeedsEmergencyStop && !outputControlConflict && !outputControlUnavailable && (
+            {outputRecoveryNeedsEmergencyStop && !outputControlConflict && (
               <div className="obs-recovery-alert" role="alert">
                 <p>{t('obs.setup.recovery.routeUnknown')}</p>
                 <button
@@ -770,9 +861,13 @@ export default function PlaybackPanel({
                     // 이 presence는 일반 player 페이지 연결만 뜻한다. OBS CEF 또는
                     // 최종 방송 오디오가 확인됐다는 의미로 사용하지 않는다.
                     <WidgetStatusChip
-                      connected={Boolean(onAirPlayerConnected)}
-                      connectedLabel={t('obs.setup.player.connected')}
-                      waitingLabel={t('obs.setup.player.waiting')}
+                      candidateState={onAirPlayerCandidate?.state ?? 'unknown'}
+                      connectedLabel={t('obs.setup.player.candidate.single')}
+                      waitingLabel={t('obs.setup.player.candidate.none')}
+                      duplicateLabel={t('obs.setup.player.candidate.duplicate', {
+                        count: onAirPlayerCandidate?.count ?? 0,
+                      })}
+                      unknownLabel={t('obs.setup.player.candidate.unknown')}
                     />
                   )}
                 </div>

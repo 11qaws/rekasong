@@ -15,6 +15,9 @@ const OUTPUT_MODE_SET = new Set(Object.values(ON_AIR_OUTPUT_MODES));
 const ACTIVE_LEASE_STATES = new Set(['ready', 'audible']);
 const UNKNOWN_LEASE_STATES = new Set(['unknown', 'failed', 'emergency_stopping']);
 
+export const ON_AIR_OUTPUT_CONNECTION_TIMEOUT_MS = 10_000;
+export const ON_AIR_OUTPUT_SWITCH_TIMEOUT_MS = 12_000;
+
 export const ON_AIR_OUTPUT_CONTROL_CODES = Object.freeze({
   INVALID_CONFIGURATION: 'output_control_invalid_configuration',
   INVALID_ARGUMENT: 'output_control_invalid_argument',
@@ -33,6 +36,8 @@ export const ON_AIR_OUTPUT_CONTROL_CODES = Object.freeze({
   RUN_IDENTITY_MISMATCH: 'output_control_run_identity_mismatch',
   UNOWNED_ACTIVE_RUN: 'output_control_unowned_active_run',
   PLAYBACK_TRANSITION_PENDING: 'output_control_playback_transition_pending',
+  CONNECTION_TIMEOUT: 'output_control_connection_timeout',
+  SWITCH_TIMEOUT: 'output_control_switch_timeout',
 });
 
 export const ON_AIR_OUTPUT_SWITCH_STATUSES = Object.freeze({
@@ -99,6 +104,13 @@ function playbackTransitionState(
 
 function controlError(code, detail) {
   return new OnAirOutputControlError(code, detail);
+}
+
+function scheduleWatchdog(callback, delayMs) {
+  const timer = globalThis.setTimeout(callback, delayMs);
+  // Node's test runner should not be kept alive by a production watchdog.
+  timer?.unref?.();
+  return timer;
 }
 
 function normalizeBaseUrl(baseUrl) {
@@ -224,6 +236,12 @@ export class OnAirOutputController {
   #subscribers = new Set();
   #connected = false;
   #disposed = false;
+  #setTimeoutFn;
+  #clearTimeoutFn;
+  #connectionTimeoutMs;
+  #switchTimeoutMs;
+  #connectionWatchdogTimer = null;
+  #switchWatchdogTimer = null;
 
   constructor({
     session,
@@ -231,6 +249,10 @@ export class OnAirOutputController {
     buildId = BUILD_ID,
     webSocketFactory = (url) => new WebSocket(url),
     coordinatorFactory = (options) => new OnAirControlCoordinator(options),
+    setTimeoutFn = scheduleWatchdog,
+    clearTimeoutFn = (timer) => globalThis.clearTimeout(timer),
+    connectionTimeoutMs = ON_AIR_OUTPUT_CONNECTION_TIMEOUT_MS,
+    switchTimeoutMs = ON_AIR_OUTPUT_SWITCH_TIMEOUT_MS,
   } = {}) {
     this.#session = validateSession(session);
     this.#baseUrl = normalizeBaseUrl(baseUrl);
@@ -240,9 +262,18 @@ export class OnAirOutputController {
     if (typeof webSocketFactory !== 'function' || typeof coordinatorFactory !== 'function') {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, { field: 'factory' });
     }
+    if (typeof setTimeoutFn !== 'function' || typeof clearTimeoutFn !== 'function'
+      || !Number.isFinite(connectionTimeoutMs) || connectionTimeoutMs <= 0
+      || !Number.isFinite(switchTimeoutMs) || switchTimeoutMs <= 0) {
+      throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, { field: 'watchdog' });
+    }
     this.#buildId = buildId;
     this.#webSocketFactory = webSocketFactory;
     this.#coordinatorFactory = coordinatorFactory;
+    this.#setTimeoutFn = setTimeoutFn;
+    this.#clearTimeoutFn = clearTimeoutFn;
+    this.#connectionTimeoutMs = connectionTimeoutMs;
+    this.#switchTimeoutMs = switchTimeoutMs;
     // One browser page is one control participant. Keep its identity stable
     // when the socket/coordinator is rebuilt so a reconnect cannot look like a
     // surprise second tab to the Worker.
@@ -254,13 +285,23 @@ export class OnAirOutputController {
     this.#assertUsable();
     if (this.#connected) return this.#coordinator.snapshot();
     this.#connected = true;
-    return this.#coordinator.connect();
+    try {
+      const result = this.#coordinator.connect();
+      this.#reconcileConnectionWatchdog();
+      return result;
+    } catch (error) {
+      this.#connected = false;
+      this.#clearConnectionWatchdog();
+      throw error;
+    }
   }
 
   dispose() {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#connected = false;
+    this.#clearConnectionWatchdog();
+    this.#clearSwitchWatchdog();
     this.#switchIntent = null;
     this.#pendingLoadAfterStop = null;
     this.#pendingPlayAfterLoad = null;
@@ -287,6 +328,8 @@ export class OnAirOutputController {
 
   retryConnection() {
     this.#assertUsable();
+    this.#clearConnectionWatchdog();
+    this.#clearSwitchWatchdog();
     this.#switchIntent = null;
     if (this.#hasActivePlaybackTransition()) {
       this.#failPlaybackTransition(ON_AIR_PLAYBACK_TRANSITION_REASONS.CONNECTION_LOST);
@@ -309,6 +352,7 @@ export class OnAirOutputController {
     this.#assertUsable();
     const result = this.#coordinator.emergencyStop();
     this.#switchIntent = null;
+    this.#clearSwitchWatchdog();
     this.#switchState = outputSwitchState();
     this.#publish();
     return result;
@@ -318,6 +362,7 @@ export class OnAirOutputController {
     this.#assertUsable();
     const result = this.#coordinator.takeOverControl();
     this.#switchIntent = null;
+    this.#clearSwitchWatchdog();
     this.#switchState = outputSwitchState();
     this.#publish();
     return result;
@@ -338,6 +383,7 @@ export class OnAirOutputController {
       const leaseMode = modeForClientKind(lease.clientKind);
       if (ACTIVE_LEASE_STATES.has(lease.status) && leaseMode === mode) {
         this.#switchIntent = null;
+        this.#clearSwitchWatchdog();
         this.#switchState = outputSwitchState();
         this.#publish();
         return Object.freeze({ status: 'already_active', mode });
@@ -356,6 +402,7 @@ export class OnAirOutputController {
 
       this.#switchIntent = { targetMode: mode, phase: ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING };
       this.#switchState = outputSwitchState(ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING, mode);
+      this.#armSwitchWatchdog(mode, ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING);
       this.#publish();
       try {
         return this.#coordinator.deactivateOutput();
@@ -453,6 +500,7 @@ export class OnAirOutputController {
     this.#coordinatorUnsubscribe = coordinator.subscribe((snapshot) => {
       if (this.#disposed || coordinator !== this.#coordinator) return;
       this.#snapshot = snapshot;
+      this.#reconcileConnectionWatchdog();
       this.#reconcileSwitchIntent();
       this.#reconcilePlaybackTransition();
       this.#reconcilePendingPlay();
@@ -463,6 +511,71 @@ export class OnAirOutputController {
 
   #assertUsable() {
     if (this.#disposed) throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.DISPOSED, {});
+  }
+
+  #connectionNeedsWatchdog() {
+    const snapshot = this.#snapshot;
+    if (!snapshot || ['disconnected', 'superseded', 'closed'].includes(snapshot.state)) return false;
+    if (snapshot.ready !== true) return true;
+    if (snapshot.authorityUnknown || snapshot.unknownLock) return false;
+    if (snapshot.writable === true) return false;
+
+    // A connected foreign owner is a settled, explainable conflict. An
+    // ownerless read-only lease is not: it is the released-owner race that must
+    // be bounded and re-negotiated instead of looking like endless startup.
+    const self = snapshot.welcome?.controlInstanceId ?? null;
+    const controlLease = snapshot.playerSnapshot?.controlLease;
+    const owner = controlLease?.writableControlInstanceId ?? null;
+    const foreignOwnerConnected = Boolean(
+      owner && owner !== self && controlLease?.writableConnected === true,
+    );
+    if (foreignOwnerConnected) return false;
+    return owner === null && controlLease?.writableConnected === false;
+  }
+
+  #reconcileConnectionWatchdog() {
+    if (!this.#connected || this.#disposed) return;
+    if (!this.#connectionNeedsWatchdog()) {
+      this.#clearConnectionWatchdog();
+      if (this.#switchState.reasonCode === ON_AIR_OUTPUT_CONTROL_CODES.CONNECTION_TIMEOUT
+        && !this.#switchIntent) {
+        this.#switchState = outputSwitchState();
+      }
+      return;
+    }
+    if (this.#switchState.reasonCode === ON_AIR_OUTPUT_CONTROL_CODES.CONNECTION_TIMEOUT) return;
+    if (this.#connectionWatchdogTimer !== null) return;
+    this.#connectionWatchdogTimer = this.#setTimeoutFn(() => {
+      this.#connectionWatchdogTimer = null;
+      if (!this.#connected || this.#disposed || !this.#connectionNeedsWatchdog()) return;
+      this.#setBlocked(ON_AIR_OUTPUT_CONTROL_CODES.CONNECTION_TIMEOUT, null);
+    }, this.#connectionTimeoutMs);
+  }
+
+  #clearConnectionWatchdog() {
+    if (this.#connectionWatchdogTimer === null) return;
+    this.#clearTimeoutFn(this.#connectionWatchdogTimer);
+    this.#connectionWatchdogTimer = null;
+  }
+
+  #armSwitchWatchdog(targetMode, phase) {
+    this.#clearSwitchWatchdog();
+    this.#switchWatchdogTimer = this.#setTimeoutFn(() => {
+      this.#switchWatchdogTimer = null;
+      const intent = this.#switchIntent;
+      if (this.#disposed || !intent
+        || intent.targetMode !== targetMode || intent.phase !== phase) return;
+      // Missing terminal evidence is never interpreted as success. Keep the
+      // target diagnostic only, block further routing, and require a fresh
+      // authoritative connection (or emergency stop when the route is unknown).
+      this.#failSwitch(ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_TIMEOUT);
+    }, this.#switchTimeoutMs);
+  }
+
+  #clearSwitchWatchdog() {
+    if (this.#switchWatchdogTimer === null) return;
+    this.#clearTimeoutFn(this.#switchWatchdogTimer);
+    this.#switchWatchdogTimer = null;
   }
 
   #assertControlReady() {
@@ -837,6 +950,7 @@ export class OnAirOutputController {
   #activate(mode) {
     this.#switchIntent = { targetMode: mode, phase: ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING };
     this.#switchState = outputSwitchState(ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING, mode);
+    this.#armSwitchWatchdog(mode, ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING);
     this.#publish();
     try {
       return this.#coordinator.activateOutput(mode);
@@ -868,6 +982,10 @@ export class OnAirOutputController {
             ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
             intent.targetMode,
           );
+          this.#armSwitchWatchdog(
+            intent.targetMode,
+            ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
+          );
           try {
             this.#coordinator.activateOutput(intent.targetMode);
           } catch (error) {
@@ -882,6 +1000,7 @@ export class OnAirOutputController {
       const leaseMode = modeForClientKind(lease.clientKind);
       if (ACTIVE_LEASE_STATES.has(lease.status) && leaseMode === intent.targetMode) {
         this.#switchIntent = null;
+        this.#clearSwitchWatchdog();
         this.#switchState = outputSwitchState();
       } else if ((lease.status === 'inactive' && !this.#snapshot.pendingSwitch)
         || UNKNOWN_LEASE_STATES.has(lease.status)) {
@@ -899,6 +1018,7 @@ export class OnAirOutputController {
 
   #setBlocked(code, targetMode = null) {
     this.#switchIntent = null;
+    this.#clearSwitchWatchdog();
     this.#switchState = outputSwitchState(ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED, targetMode, code);
     this.#publish();
   }
