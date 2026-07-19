@@ -86,6 +86,8 @@ test('PlaybackPanel keeps compact route controls in the header and diagnostics i
   assert.ok(modalStart >= 0 && detailsStart > modalStart, 'route diagnostics must render inside the settings dialog');
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.selected/);
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.actual/);
+  assert.match(source.slice(detailsStart), /outputView\?\.messageKey/);
+  assert.match(source.slice(detailsStart), /obs\.setup\.recovery\.routeUnknown/);
 });
 
 test('compact output header and settings diagnostics have Korean and English copy', () => {
@@ -102,6 +104,10 @@ test('compact output header and settings diagnostics have Korean and English cop
     'onair.output.details.description',
     'obs.setup.openLabel',
     'obs.setup.openLabelAttention',
+    'obs.setup.recovery.routeUnknown',
+    'obs.setup.recovery.emergencyConfirm',
+    'obs.setup.recovery.emergencyInProgress',
+    'obs.setup.recovery.emergencyFailed',
   ];
 
   for (const key of keys) {

@@ -1659,9 +1659,11 @@ export default function Dashboard() {
             canEndBroadcastSession={canEndBroadcastSession}
             outputMode={selectedOutputMode}
             actualOutputMode={actualOutputMode}
+            outputView={outputControl.outputView}
             outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
             onSelectOutputMode={outputControllerReady ? handleSelectOutputMode : undefined}
+            onEmergencyStopOutput={outputControl.emergencyStop}
           />
         </ErrorBoundary>
         </div>

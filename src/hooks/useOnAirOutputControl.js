@@ -297,6 +297,15 @@ export class OnAirOutputController {
     return this.connect();
   }
 
+  emergencyStop() {
+    this.#assertUsable();
+    const result = this.#coordinator.emergencyStop();
+    this.#switchIntent = null;
+    this.#switchState = outputSwitchState();
+    this.#publish();
+    return result;
+  }
+
   selectOutputMode(mode) {
     this.#assertUsable();
     if (!OUTPUT_MODE_SET.has(mode)) {
@@ -405,7 +414,7 @@ export class OnAirOutputController {
       webSocketFactory: this.#webSocketFactory,
       coordinatorFactory: this.#coordinatorFactory,
     });
-    for (const method of ['connect', 'dispose', 'subscribe', 'snapshot', 'activateOutput', 'deactivateOutput']) {
+    for (const method of ['connect', 'dispose', 'subscribe', 'snapshot', 'activateOutput', 'deactivateOutput', 'emergencyStop']) {
       if (typeof coordinator?.[method] !== 'function') {
         throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, {
           field: `coordinator.${method}`,
@@ -1028,11 +1037,16 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
     () => requireController().retryConnection(),
     [requireController],
   );
+  const emergencyStop = useCallback(
+    () => requireController().emergencyStop(),
+    [requireController],
+  );
 
   return {
     ...state,
     selectOutputMode,
     sendCommand,
     retryConnection,
+    emergencyStop,
   };
 }

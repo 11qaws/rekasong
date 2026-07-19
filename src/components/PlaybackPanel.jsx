@@ -44,9 +44,11 @@ export default function PlaybackPanel({
   onPrepareOnAirDisplay,
   outputMode,
   actualOutputMode,
+  outputView = null,
   outputRouteStable = false,
   outputSwitchState = 'idle',
-  onSelectOutputMode
+  onSelectOutputMode,
+  onEmergencyStopOutput
 }) {
   const [previousVolume, setPreviousVolume] = useState(100);
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
@@ -63,6 +65,7 @@ export default function PlaybackPanel({
   const [isPreparingDisplay, setIsPreparingDisplay] = useState(false);
   const [preparedDisplayUrl, setPreparedDisplayUrl] = useState('');
   const [isRecoveringOnAir, setIsRecoveringOnAir] = useState(false);
+  const [isEmergencyStoppingOutput, setIsEmergencyStoppingOutput] = useState(false);
   const obsSetupTriggerRef = useRef(null);
   const obsDialogRef = useRef(null);
   const obsDialogTitleRef = useRef(null);
@@ -81,6 +84,9 @@ export default function PlaybackPanel({
   const confirmedOutputMode = actualOutputMode === 'speaker' || actualOutputMode === 'obs'
     ? actualOutputMode
     : null;
+  const outputRouteStateUnknown = outputView?.statusCode === 'state_unknown';
+  const outputLeaseNeedsEmergencyStop = outputRouteStateUnknown
+    && ['unknown', 'failed'].includes(outputView?.lease?.status);
   const normalizedOutputSwitchState = ['idle', 'connecting', 'switching', 'blocked'].includes(outputSwitchState)
     ? outputSwitchState
     : 'blocked';
@@ -113,10 +119,13 @@ export default function PlaybackPanel({
   const activeOutputStatus = derivePlaybackOutputStatus({
     confirmedOutputMode,
     outputSwitchState: normalizedOutputSwitchState,
-    isSessionInvalid: isOnAirInvalid,
+    isSessionInvalid: isOnAirInvalid || outputRouteStateUnknown,
     isRouteStable: outputRouteStable,
     isPlaying: isOutputActivelyPlaying,
   });
+  const outputNeedsAttention = isOnAirInvalid
+    || outputRouteStateUnknown
+    || normalizedOutputSwitchState === 'blocked';
 
   const selectOutputMode = (mode) => {
     const retriesUnconfirmedSelection = mode === selectedOutputMode
@@ -167,6 +176,10 @@ export default function PlaybackPanel({
     setPreparedPlayerUrl('');
     setPreparedDisplayUrl('');
   }, [isOnAirInvalid]);
+
+  useEffect(() => {
+    if (!outputRouteStateUnknown) setIsEmergencyStoppingOutput(false);
+  }, [outputRouteStateUnknown]);
 
   // 대화상자를 열면 제목으로 초점을 옮기고, Tab 초점을 내부에 가둔다.
   // 배경 클릭으로는 닫지 않는다. 이후 오디오 점검이 들어와도 실수로 대화상자만
@@ -300,6 +313,21 @@ export default function PlaybackPanel({
     }
   };
 
+  const emergencyStopOutput = () => {
+    if (isEmergencyStoppingOutput || typeof onEmergencyStopOutput !== 'function') return;
+    if (!window.confirm(t('obs.setup.recovery.emergencyConfirm'))) return;
+    setIsEmergencyStoppingOutput(true);
+    try {
+      Promise.resolve(onEmergencyStopOutput()).catch((error) => {
+        setIsEmergencyStoppingOutput(false);
+        showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
+      });
+    } catch (error) {
+      setIsEmergencyStoppingOutput(false);
+      showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
+    }
+  };
+
   const toggleMute = () => {
     if (isMuted) onVolumeChange(previousVolume || 50);
     else {
@@ -370,11 +398,11 @@ export default function PlaybackPanel({
               ref={obsSetupTriggerRef}
               type="button"
               onClick={() => setIsObsSetupOpen(true)}
-              className={`btn-icon output-settings-button${isOnAirInvalid || normalizedOutputSwitchState === 'blocked' ? ' has-attention' : ''}`}
-              title={t(isOnAirInvalid || normalizedOutputSwitchState === 'blocked'
+              className={`btn-icon output-settings-button${outputNeedsAttention ? ' has-attention' : ''}`}
+              title={t(outputNeedsAttention
                 ? 'obs.setup.openLabelAttention'
                 : 'obs.setup.openLabel')}
-              aria-label={t(isOnAirInvalid || normalizedOutputSwitchState === 'blocked'
+              aria-label={t(outputNeedsAttention
                 ? 'obs.setup.openLabelAttention'
                 : 'obs.setup.openLabel')}
               aria-haspopup="dialog"
@@ -382,7 +410,7 @@ export default function PlaybackPanel({
               aria-controls="obs-setup-dialog"
             >
               <Settings size={16} />
-              {(isOnAirInvalid || normalizedOutputSwitchState === 'blocked') && (
+              {outputNeedsAttention && (
                 <span className="output-settings-alert-dot" aria-hidden="true" />
               )}
             </button>
@@ -502,6 +530,9 @@ export default function PlaybackPanel({
                   <strong>{t('onair.output.selector.status.blocked')}</strong>
                 )}
               </div>
+              {outputView?.messageKey && (
+                <p className="output-route-authoritative-detail">{t(outputView.messageKey)}</p>
+              )}
             </section>
 
             {!isDirectMode && !isOnAirInvalid && (
@@ -525,6 +556,23 @@ export default function PlaybackPanel({
                   {isRecoveringOnAir
                     ? t('obs.setup.recovery.inProgress')
                     : t('obs.setup.recovery.action')}
+                </button>
+              </div>
+            )}
+
+            {outputLeaseNeedsEmergencyStop && (
+              <div className="obs-recovery-alert" role="alert">
+                <p>{t('obs.setup.recovery.routeUnknown')}</p>
+                <button
+                  type="button"
+                  className="btn-secondary obs-recovery-action"
+                  onClick={emergencyStopOutput}
+                  disabled={isEmergencyStoppingOutput || typeof onEmergencyStopOutput !== 'function'}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  {isEmergencyStoppingOutput
+                    ? t('obs.setup.recovery.emergencyInProgress')
+                    : t('onair.output.action.emergencyStop.label')}
                 </button>
               </div>
             )}

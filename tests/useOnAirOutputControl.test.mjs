@@ -199,6 +199,11 @@ class FakeCoordinator {
     return { status: 'created', operation: 'deactivate' };
   }
 
+  emergencyStop() {
+    this.calls.push(['emergencyStop']);
+    return { status: 'created', operation: 'emergencyStop' };
+  }
+
   load(value) {
     this.loadCalls += 1;
     this.calls.push(['load', value]);
@@ -462,6 +467,35 @@ test('blocks zero or duplicate candidates, active work, and unknown authority', 
       assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED);
     });
   }
+});
+
+test('manual emergency stop remains available when a disconnected route is unknown', () => {
+  const unknownProtocol = readyRoute('speaker', {
+    lease: { status: 'unknown' },
+    confirmedPlayback: { status: 'unknown', reasonCode: 'target_disconnected' },
+  });
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(unknownProtocol, {
+    routeUnknown: true,
+  }));
+  const coordinator = coordinators[0];
+
+  assertControlError(
+    () => controller.selectOutputMode('speaker'),
+    ON_AIR_OUTPUT_CONTROL_CODES.STATE_UNKNOWN,
+  );
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED);
+
+  assert.deepEqual(controller.emergencyStop(), { status: 'created', operation: 'emergencyStop' });
+  assert.deepEqual(coordinator.calls, [['emergencyStop']]);
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+
+  coordinator.emit(coordinatorSnapshot(playerSnapshot({
+    selectedOutputMode: 'speaker',
+    lease: { epoch: 5, status: 'inactive' },
+    confirmedPlayback: { status: 'unknown', reasonCode: 'output_inactive' },
+  })));
+  controller.selectOutputMode('speaker');
+  assert.deepEqual(coordinator.calls, [['emergencyStop'], ['activateOutput', 'speaker']]);
 });
 
 test('maps the complete legacy command surface to coordinator APIs', () => {
