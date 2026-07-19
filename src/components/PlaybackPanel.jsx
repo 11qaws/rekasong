@@ -60,6 +60,7 @@ export default function PlaybackPanel({
   onPrepareOnAir,
   onPrepareOnAirDisplay,
   outputMode,
+  pendingOutputMode = null,
   actualOutputMode,
   failedOutputMode = null,
   outputView = null,
@@ -71,6 +72,7 @@ export default function PlaybackPanel({
   outputRouteStable = false,
   outputSwitchState = 'idle',
   outputSwitchReasonCode = null,
+  allowOutputSelectionWhileConnecting = false,
   obsAudioCheck = null,
   onSelectOutputMode,
   onStartObsAudioCheck,
@@ -134,6 +136,9 @@ export default function PlaybackPanel({
   const failedSelectionMode = failedOutputMode === 'speaker' || failedOutputMode === 'obs'
     ? failedOutputMode
     : null;
+  const pendingSelectionMode = pendingOutputMode === 'speaker' || pendingOutputMode === 'obs'
+    ? pendingOutputMode
+    : null;
   const outputRouteStateUnknown = outputView?.statusCode === 'state_unknown';
   const outputLeaseNeedsEmergencyStop = outputRouteStateUnknown
     && ['unknown', 'failed'].includes(outputView?.lease?.status);
@@ -142,7 +147,8 @@ export default function PlaybackPanel({
   const normalizedOutputSwitchState = ['idle', 'connecting', 'conflict', 'switching', 'blocked'].includes(outputSwitchState)
     ? outputSwitchState
     : 'blocked';
-  const outputSelectionLocked = ['connecting', 'conflict', 'switching'].includes(normalizedOutputSwitchState)
+  const outputSelectionLocked = ['conflict', 'switching'].includes(normalizedOutputSwitchState)
+    || (normalizedOutputSwitchState === 'connecting' && !allowOutputSelectionWhileConnecting)
     || typeof onSelectOutputMode !== 'function';
   const outputRecoveryTitleMessageKey = outputControlRecoveryReason === 'connection_timeout'
     ? 'onair.control.recovery.connectionTimeout.title'
@@ -189,9 +195,11 @@ export default function PlaybackPanel({
     : mode === 'obs'
       ? t('onair.output.selector.mode.obs')
       : t('onair.output.selector.mode.unknown');
-  const transitionTargetMode = normalizedOutputSwitchState === 'switching'
-    ? selectedOutputMode
-    : null;
+  const transitionTargetMode = normalizedOutputSwitchState === 'connecting'
+    ? pendingSelectionMode
+    : normalizedOutputSwitchState === 'switching'
+      ? selectedOutputMode
+      : null;
   const targetCandidateState = failedSelectionMode
     ? outputView?.targets?.[failedSelectionMode]?.candidate?.state ?? null
     : transitionTargetMode
@@ -599,6 +607,8 @@ export default function PlaybackPanel({
             >
               {['speaker', 'obs'].map((mode) => {
                 const isSelected = selectedOutputMode === mode;
+                const isPending = normalizedOutputSwitchState === 'connecting'
+                  && pendingSelectionMode === mode;
                 const isOptionDisabled = outputSelectionLocked;
                 return (
                   <button
@@ -607,11 +617,12 @@ export default function PlaybackPanel({
                     type="button"
                     role="radio"
                     aria-checked={isSelected}
+                    aria-busy={isPending || undefined}
                     aria-disabled={isOptionDisabled}
                     aria-describedby="output-route-live-status"
                     title={isOptionDisabled ? t(outputSelectionLockMessageKey) : undefined}
                     tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
-                    className={`output-route-button${isSelected ? ' is-selected' : ''}`}
+                    className={`output-route-button${isSelected ? ' is-selected' : ''}${isPending ? ' is-pending' : ''}`}
                     onClick={() => selectOutputMode(mode)}
                     onKeyDown={(event) => handleOutputOptionKeyDown(event, mode)}
                   >

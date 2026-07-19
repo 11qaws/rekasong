@@ -108,6 +108,10 @@ export default function Dashboard() {
   }, []);
 
   const [state, setSharedState, syncLoadNotice] = useSyncState();
+  const [queuedOutputIntent, setQueuedOutputIntent] = useState(null);
+  const [outputControllerEverReady, setOutputControllerEverReady] = useState(false);
+  const outputIntentSequenceRef = useRef(0);
+  const claimedOutputIntentRef = useRef(null);
   const currentEntry = state?.currentEntry || null;
   const active = state?.active || null;
   const history = useMemo(() => Array.isArray(state?.history) ? state.history : [], [state?.history]);
@@ -167,6 +171,18 @@ export default function Dashboard() {
     && (outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.UNAVAILABLE
       || Boolean(outputControlRecoveryReason));
   const outputControlSafeToTakeOver = isSafeOutputControlTakeover(outputControl.snapshot);
+  const outputBootstrapSelectionAvailable = Boolean(
+    !outputControllerEverReady
+    && !outputControllerReady
+    && !outputControlConflict
+    && !outputControlUnavailable
+    && !outputControlRecoveryReason
+    && !['invalid', 'ended'].includes(onAirSessionState),
+  );
+
+  useEffect(() => {
+    if (outputControllerReady) setOutputControllerEverReady(true);
+  }, [outputControllerReady]);
 
   // A control-socket rebuild must not tear down a healthy speaker player that
   // this page already owned. A page that has never held authority still cannot
@@ -905,7 +921,7 @@ export default function Dashboard() {
     useOnAirPlayer,
   ]);
 
-  const handleSelectOutputMode = useCallback((mode) => {
+  const dispatchOutputModeSelection = useCallback((mode) => {
     const reportFailure = (error) => showToast(
       t(outputSwitchFailureMessageKey(error)),
       'error',
@@ -916,6 +932,50 @@ export default function Dashboard() {
       reportFailure(error);
     }
   }, [selectOnAirOutputMode]);
+
+  const handleSelectOutputMode = useCallback((mode) => {
+    if (!['speaker', 'obs'].includes(mode)) return;
+    outputIntentSequenceRef.current += 1;
+    // Accept the user's route choice during the first session/control
+    // bootstrap. It stays a visibly pending intent, never an aria-checked
+    // output fact, until this exact session has writable authority.
+    setQueuedOutputIntent({
+      id: outputIntentSequenceRef.current,
+      mode,
+      sessionKey: outputControlSessionKey,
+    });
+  }, [outputControlSessionKey]);
+
+  useEffect(() => {
+    if (!queuedOutputIntent) return;
+    if (outputControlConflict
+      || outputControlUnavailable
+      || outputControlRecoveryReason
+      || ['invalid', 'ended'].includes(onAirSessionState)) {
+      setQueuedOutputIntent(null);
+      return;
+    }
+    if (queuedOutputIntent.sessionKey !== null
+      && queuedOutputIntent.sessionKey !== outputControlSessionKey) {
+      setQueuedOutputIntent(null);
+      return;
+    }
+    if (!outputControllerReady) return;
+    if (claimedOutputIntentRef.current === queuedOutputIntent.id) return;
+
+    claimedOutputIntentRef.current = queuedOutputIntent.id;
+    setQueuedOutputIntent(null);
+    dispatchOutputModeSelection(queuedOutputIntent.mode);
+  }, [
+    dispatchOutputModeSelection,
+    onAirSessionState,
+    outputControlConflict,
+    outputControllerReady,
+    outputControlRecoveryReason,
+    outputControlUnavailable,
+    outputControlSessionKey,
+    queuedOutputIntent,
+  ]);
 
   // D-04: 새로고침으로 재생 불가가 된 로컬(blob) 곡을 조용히 지우지 않고 안내.
   const localDropNoticeShownRef = useRef(false);
@@ -2024,6 +2084,7 @@ export default function Dashboard() {
             onEndBroadcastSession={handleEndBroadcastSession}
             canEndBroadcastSession={canEndBroadcastSession}
             outputMode={selectedOutputMode}
+            pendingOutputMode={queuedOutputIntent?.mode ?? null}
             actualOutputMode={actualOutputMode}
             failedOutputMode={failedOutputMode}
             outputView={outputControl.outputView}
@@ -2036,7 +2097,11 @@ export default function Dashboard() {
             outputSwitchState={outputSwitchUiState}
             outputSwitchReasonCode={outputControl.outputSwitchState?.reasonCode ?? null}
             obsAudioCheck={obsAudioCheck}
-            onSelectOutputMode={outputControllerReady && !outputControlRecoveryReason
+            allowOutputSelectionWhileConnecting={outputBootstrapSelectionAvailable}
+            onSelectOutputMode={!outputControlRecoveryReason
+              && !outputControlConflict
+              && !outputControlUnavailable
+              && (outputControllerReady || outputBootstrapSelectionAvailable)
               ? handleSelectOutputMode
               : undefined}
             onStartObsAudioCheck={outputControl.startTest}

@@ -991,6 +991,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .output-route-button { display: inline-flex; min-width: 0; min-height: 32px; align-items: center; justify-content: center; gap: 0.3rem; padding: 0.35rem 0.5rem; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: 0.72rem; font-weight: 750; white-space: nowrap; cursor: pointer; transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease; }
 .output-route-button:hover:not([aria-disabled='true']), .output-route-button:focus-visible { border-color: var(--glass-border); color: var(--text-main); background: var(--bg-mid); }
 .output-route-button.is-selected { border-color: rgba(16, 185, 129, 0.42); color: var(--chr-vest); background: rgba(16, 255, 203, 0.075); }
+.output-route-button.is-pending { border-color: rgba(56, 189, 248, 0.5); color: #7dd3fc; background: rgba(56, 189, 248, 0.09); }
 .output-route-button[aria-disabled='true'] { cursor: not-allowed; opacity: 0.58; }
 .output-settings-button { position: relative; flex: 0 0 auto; width: 34px; height: 34px; padding: 0; }
 .output-settings-button.has-attention { color: var(--accent-red); background: rgba(220, 38, 38, 0.07); }

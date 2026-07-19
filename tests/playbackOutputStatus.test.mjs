@@ -33,6 +33,20 @@ test('stable routes identify the selected output path even while no song is play
 test('speaker startup and candidate failures use compact target-specific labels', () => {
   assert.deepEqual(
     derivePlaybackOutputStatus({
+      outputSwitchState: 'connecting',
+      targetMode: 'speaker',
+    }),
+    { key: 'onair.output.header.connecting.speaker', tone: 'pending', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'connecting',
+      targetMode: 'obs',
+    }),
+    { key: 'onair.output.header.connecting.obs', tone: 'pending', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
       outputSwitchState: 'switching',
       targetMode: 'speaker',
       targetCandidateState: 'none',

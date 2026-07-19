@@ -84,7 +84,7 @@ npm run test:obs:v2:idle-soak
 ### 4.1 연결·프로토콜
 
 - [자동] control/player/display presence 전이와 새로고침 snapshot 복원.
-- [자동] player 미연결 시 송출 차단. 단, 같은 Dashboard가 미리 공유한 exact `playerInstanceId`의 lazy speaker player 첫 등록만 최대 12초 기다리고, 그 ID가 유일 후보일 때 원래 사용자 클릭을 정확히 한 번 실행한다. 이전 탭의 단독 speaker는 자동 활성화하지 않는다.
+- [자동] player 미연결 시 송출 차단. 단, 페이지 생애 최초 제어 준비 중의 명시적 출력 선택은 세션 신원에 묶어 한 건만 예약하고, 쓰기 제어권 확인 뒤 정확히 한 번 실행한다. 재연결·unknown·다른 탭 제어에서는 예약하지 않는다. 같은 Dashboard가 미리 공유한 exact `playerInstanceId`의 lazy speaker player 첫 등록만 최대 12초 기다리고, 그 ID가 유일 후보일 때 원래 사용자 클릭을 실행한다. 이전 탭의 단독 speaker는 자동 활성화하지 않는다.
 - [자동] 일반 브라우저도 player presence를 만들 수 있음을 회귀 테스트해, UI가 이를 OBS 증거로 표현하지 않게 한다.
 - [자동] 동일 room의 중복 player 연결 탐지 또는 단일 player lease.
 - [자동] room/session 격리와 다른 세션 이벤트 차단.
@@ -169,7 +169,7 @@ npm run test:obs:v2:idle-soak
 3. 완료: 공통 PlaybackEngine과 player adapter가 연결 손실·emergency에 physical stop/detach하고 자동 resume를 금지한다.
 4. 완료: 전체 Blob source resolver, bounded v2 prefetch 수신 경계와 control coordinator를 구현했다. OBS v2 player와 Dashboard speaker가 같은 PlaybackEngine/adapter 경로를 사용한다.
 5. 부분 완료/P0: v2 route split, heavy graph/font 제외, raw/gzip budget, 4Hz heartbeat 무렌더, active/prefetch 64MiB cap은 완료했다. 실제 OBS CEF 60분 soak와 Dashboard history/local Blob 상한은 남아 있다.
-6. 완료: idle-only 출력 selector와 selected/authoritative truth strip을 연결했다. 첫 speaker 클릭과 lazy 후보 등록 race를 수정했고, control/player가 공유한 exact player ID로 현재 탭 소유권까지 검증한다. 정상·4.5초 인위 지연 모두 `스피커 연결 중 → 스피커 송출 중`으로 자동 수렴했다. OBS 후보 없음·중복은 각각 명시적 문구로 fail-closed하며 버튼은 다시 조작할 수 있다.
+6. 완료: idle-only 출력 selector와 selected/authoritative truth strip을 연결했다. 최초 session/control bootstrap 중에도 버튼 선택을 접수하되 실제 확인 전에는 활성 체크하지 않고, 재연결에는 자동 예약을 허용하지 않는다. 첫 speaker 클릭과 lazy 후보 등록 race를 수정했고, control/player가 공유한 exact player ID로 현재 탭 소유권까지 검증한다. 정상·session POST 4.5초 지연·speaker chunk 4.5초 지연 모두 `스피커 연결 중 → 스피커 송출 중`으로 수렴했다. OBS 후보 없음·중복은 각각 명시적 문구로 fail-closed하며 버튼은 다시 조작할 수 있다.
 7. 부분 완료/P0: 같은 graph의 결정적 생성 pulse, reliable marker, 설정 안 시작·중지·진행·안전 정지 UI와 `OBS 출력 중 로컬 무음은 정상` 안내를 구현했다. 앱 재생 증거(G2)와 OBS mixer 직접 확인(G3)을 분리해 표시하며, OBS meter 사용자 확인 기록과 녹화 artifact 판정은 남아 있다.
 8. 완료: authoritative/test sequence gap, 강한 종료 증거, outcome unknown 뒤 수동 reconciliation contract를 구현했다. 정상 run 자동 resume는 제공하지 않는다.
 9. P1: 실제 OBS 녹화 파형 분석 도구와 10분 싱크 fixture를 추가한다.

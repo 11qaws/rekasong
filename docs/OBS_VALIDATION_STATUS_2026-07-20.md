@@ -39,7 +39,7 @@
 
 | 검증 | 결과 |
 |---|---|
-| 전체 테스트 | 최종 542/542 통과 |
+| 전체 테스트 | 최종 544/544 통과 |
 | Worker·출력 제어 집중 테스트 | 374건 통과 |
 | v2 adapter/protocol/hibernation 집중 테스트 | 105건 통과 |
 | lint | exit 0, 기존 warning 6개, 신규 warning 0 |
@@ -116,12 +116,14 @@
 
 완전히 빈 headless Chrome profile로 로컬 production build와 production Worker를 연결해 확인했다.
 
-- 초기 상태: `송출 경로 없음`
+- 최초 제어 준비 중 상태: `재생 준비 중`; 준비가 끝나고 경로를 고르지 않은 상태: `송출 경로 없음`
 - speaker/OBS 버튼 모두 활성
 - 설정 버튼에 불필요한 `확인 필요` 경고 없음
-- page error 0, production Worker session/status HTTP 200. 정적 로컬 preview에는 선택적 개발 동기화용 `/api/sync`가 없어 404가 나지만 출력 제어 Worker 경로와는 무관함
-- 버튼이 처음 보이는 즉시 speaker를 선택하면 2,929ms 안에 `스피커 연결 중` → `스피커 송출 중`
+- page error·console error·HTTP 4xx/5xx 0, production Worker session/status HTTP 200. Vite dev와 preview 모두 로컬 `/api/sync` POST/GET을 제공함
+- 버튼이 처음 보이는 즉시 speaker를 선택하면 2,977ms 안에 `스피커 연결 중` → `스피커 송출 중`
 - speaker player chunk를 인위적으로 4.5초 지연해도 7,152ms 안에 같은 순서로 수렴하고 blocked/attention을 거치지 않음
+- session POST 자체를 4.5초 지연해도 두 버튼은 처음부터 활성이고, 429ms 안에 `스피커 연결 중`·`aria-busy=true`를 표시한 뒤 7,892ms에 실제 활성 체크와 `스피커 송출 중`으로 확정됨
+- 준비 중 speaker→OBS로 선택을 바꾸면 마지막 OBS 선택만 실행되고 `OBS 플레이어 없음`으로 끝나며 speaker 자동 활성화는 0건
 - Dashboard가 미리 만든 exact `playerInstanceId`를 control과 speaker player가 공유해, 이전 탭의 단독 speaker가 먼저 도착해도 자동 활성화하지 않음
 - OBS source 없이 OBS 선택 시 `OBS 플레이어 없음`으로 정확한 원인을 표시
 - 실패 뒤 speaker 선택은 계속 유지되고 OBS 선택은 남지 않음
@@ -144,7 +146,7 @@
 | 항목 | 결과 |
 |---|---|
 | production build | 약 1.0–1.5초 |
-| OBS route 실제 closure | 379,454B raw / 114,459B gzip |
+| OBS route 실제 closure | 379,454B raw / 114,460B gzip / 100,010B brotli |
 | 예산 | 460.8KB raw / 133.1KB gzip |
 | gzip 여유 | 약 14% |
 | OBS DOM | 16 nodes, `<audio>` 1, image/iframe/svg 0 |

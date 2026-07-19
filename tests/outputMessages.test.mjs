@@ -199,7 +199,7 @@ test('route buttons reflect authoritative output and every blocked route remains
   assert.match(
     dashboardSource,
     /const selectedOutputMode = outputSwitchInFlight\s+\? outputSwitchTargetMode\s+: actualOutputMode;/,
-    'idle and blocked radios must use the actual route, not the last request',
+    'idle and blocked radios must use the actual route, not a queued bootstrap request',
   );
   assert.match(
     dashboardSource,
@@ -219,6 +219,34 @@ test('route buttons reflect authoritative output and every blocked route remains
   );
   assert.match(panelSource, /aria-checked=\{isSelected\}/);
   assert.match(dashboardSource, /failedOutputMode=\{failedOutputMode\}/);
+});
+
+test('initial output choice stays clickable and is queued until writable authority arrives', async () => {
+  const [dashboardSource, panelSource] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(
+    panelSource,
+    /const outputSelectionLocked = \['conflict', 'switching'\]\.includes\(normalizedOutputSwitchState\)\s+\|\| \(normalizedOutputSwitchState === 'connecting' && !allowOutputSelectionWhileConnecting\)/,
+    'only explicitly identified first bootstrap may bypass the normal connecting lock',
+  );
+  assert.match(dashboardSource, /const \[queuedOutputIntent, setQueuedOutputIntent\] = useState\(null\);/);
+  assert.match(dashboardSource, /const \[outputControllerEverReady, setOutputControllerEverReady\] = useState\(false\);/);
+  assert.match(dashboardSource, /!outputControllerEverReady\s+&& !outputControllerReady/);
+  assert.match(
+    dashboardSource,
+    /if \(!outputControllerReady\) return;[\s\S]*?claimedOutputIntentRef\.current = queuedOutputIntent\.id;[\s\S]*?setQueuedOutputIntent\(null\);[\s\S]*?dispatchOutputModeSelection\(queuedOutputIntent\.mode\);/,
+    'the latest bootstrap choice must wait for writable authority and then dispatch once',
+  );
+  assert.match(
+    dashboardSource,
+    /allowOutputSelectionWhileConnecting=\{outputBootstrapSelectionAvailable\}[\s\S]*?onSelectOutputMode=\{!outputControlRecoveryReason\s+&& !outputControlConflict\s+&& !outputControlUnavailable\s+&& \(outputControllerReady \|\| outputBootstrapSelectionAvailable\)/,
+    'the handler must be available during healthy bootstrap while remaining unavailable for unsafe authority states',
+  );
+  assert.match(panelSource, /aria-checked=\{isSelected\}[\s\S]*?aria-busy=\{isPending \|\| undefined\}/);
+  assert.match(dashboardSource, /pendingOutputMode=\{queuedOutputIntent\?\.mode \?\? null\}/);
 });
 
 test('safety-locked output clicks explain themselves instead of failing silently', async () => {
@@ -359,6 +387,7 @@ test('compact output header and settings diagnostics have Korean and English cop
     'onair.output.header.active.connecting',
     'onair.output.header.active.switching',
     'onair.output.header.connecting.speaker',
+    'onair.output.header.connecting.obs',
     'onair.output.header.blocked.speaker.none',
     'onair.output.header.blocked.speaker.duplicate',
     'onair.output.header.blocked.speaker.foreign',

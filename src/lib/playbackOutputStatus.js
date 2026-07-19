@@ -18,6 +18,12 @@ export function derivePlaybackOutputStatus({
     return { key: 'onair.output.header.active.attention', tone: 'attention', mode: null };
   }
   if (switchState === 'connecting') {
+    if (normalizedTargetMode === 'speaker') {
+      return { key: 'onair.output.header.connecting.speaker', tone: 'pending', mode: null };
+    }
+    if (normalizedTargetMode === 'obs') {
+      return { key: 'onair.output.header.connecting.obs', tone: 'pending', mode: null };
+    }
     return { key: 'onair.output.header.active.connecting', tone: 'pending', mode: null };
   }
   if (switchState === 'conflict') {
