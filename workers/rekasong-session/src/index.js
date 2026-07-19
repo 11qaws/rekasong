@@ -322,7 +322,7 @@ export default {
       return json({ room, controlToken, playerToken, displayToken });
     }
 
-    const routeMatch = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]+)\/(ws|assets|media|display-token)(?:\/([^/]+))?$/i);
+    const routeMatch = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]+)\/(ws|assets|media|display-token|status)(?:\/([^/]+))?$/i);
     if (!routeMatch) return json({ error: 'Not found' }, 404);
 
     const [, room, route] = routeMatch;
@@ -361,6 +361,7 @@ export class SessionRoom {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/init') return this.initialize(request);
     if (request.method === 'POST' && url.pathname === '/verify-media-token') return this.verifyMediaToken(request);
+    if (request.method === 'GET' && url.pathname.endsWith('/status')) return this.sessionStatus(request);
     if (url.pathname.endsWith('/ws')) return this.openSocket(request);
     if ((url.pathname === '/display-token' || url.pathname.endsWith('/display-token')) && request.method === 'POST') return this.issueDisplayToken(request);
     if (url.pathname.endsWith('/assets') && request.method === 'POST') return this.uploadAsset(request);
@@ -419,6 +420,17 @@ export class SessionRoom {
   async getSession() {
     if (!this.sessionState) this.sessionState = await this.ctx.storage.get('session');
     return this.sessionState;
+  }
+
+  async sessionStatus(request) {
+    const session = await this.getSession();
+    const token = parseBearer(request);
+    if (!session || !(await this.authenticate(session, token, 'control'))) {
+      return json({ error: 'Unauthorized' }, 401);
+    }
+    if (session.status === 'ended') return json({ status: 'ended' }, 410);
+    if (session.status !== 'active') return json({ error: 'Unauthorized' }, 401);
+    return json({ status: 'active' });
   }
 
   async issueDisplayToken(request) {

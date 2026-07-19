@@ -1,11 +1,18 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { lazy, Suspense, useCallback, useState, useRef, useEffect, useMemo } from 'react';
 import { useSyncState } from '../hooks/useSyncState';
 import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
 import { useOnAirSession } from '../hooks/useOnAirSession';
+import { useOnAirOutputControl } from '../hooks/useOnAirOutputControl';
 import { createQueueEntry, newId, toLegacySong, toQueueEntry } from '../lib/queueEntry';
 import { collectBlobSrcs, isBlobReferenced, isLocalBlobSong, revokeBlobSrcs } from '../lib/blobLifecycle';
 import { apiUrl } from '../lib/api';
+import {
+  isConfirmedDiscardSnapshot,
+  isConfirmedDiscardStop,
+} from '../lib/dashboardPlaybackSafety';
+import { onAirSessionRecoveryGate } from '../lib/onAirSessionRecoveryGate';
+import { getOutputMessage as t } from '../copy/outputMessages';
 import {
   YOUTUBE_ID_PATTERN,
   fetchPrepareStatus,
@@ -21,6 +28,8 @@ import QueuePanel from '../components/QueuePanel';
 import SongComposer from '../components/SongComposer';
 import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
+
+const DashboardSpeakerPlayerV2 = lazy(() => import('../components/DashboardSpeakerPlayerV2'));
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
 
@@ -93,11 +102,65 @@ export default function Dashboard() {
   // 설계라 원격 발행 payload에 절대 싣지 않는다(N-08).
 
   const onAirEventHandlerRef = useRef(null);
-  const onAir = useOnAirSession((payload) => onAirEventHandlerRef.current?.(payload));
+  const onAir = useOnAirSession(
+    (payload) => onAirEventHandlerRef.current?.(payload),
+    { observeOnly: true }
+  );
   const useOnAirPlayer = onAir.configured;
-  const onAirDisplayToken = onAir.session?.displayToken;
-  const onAirConnectionState = onAir.connectionState;
-  const sendOnAirCommand = onAir.sendCommand;
+  const onAirSession = onAir.session;
+  const onAirSessionState = onAir.connectionState;
+  const onAirDisplayToken = onAirSession?.displayToken;
+  const createFreshOnAirSession = onAir.createFreshSession;
+  const ensureOnAirSession = onAir.ensureSession;
+  const outputControl = useOnAirOutputControl({
+    session: onAirSession,
+    baseUrl: onAir.baseUrl,
+    // Protocol v2 owns its control lease. A transient legacy observer reconnect
+    // must not dispose that owner in the middle of a run.
+    enabled: onAir.configured
+      && Boolean(onAirSession)
+      && !['invalid', 'ended'].includes(onAirSessionState)
+  });
+  const sendOnAirCommand = outputControl.sendCommand;
+  const selectOnAirOutputMode = outputControl.selectOutputMode;
+  const playbackTransitionState = outputControl.playbackTransitionState;
+  const outputControllerReady = Boolean(outputControl.snapshot?.ready && outputControl.snapshot?.writable);
+  const actualOutputMode = outputControl.actualOutputMode;
+  const outputSwitchStatus = outputControl.outputSwitchState?.status || 'idle';
+  const selectedOutputMode = outputControl.outputSwitchState?.targetMode
+    || outputControl.requestedOutputMode
+    || null;
+  const activeOutputLease = outputControl.snapshot?.playerSnapshot?.lease;
+  const activeOutputCandidates = actualOutputMode
+    ? outputControl.snapshot?.playerSnapshot?.eligibleCandidates?.[actualOutputMode]
+    : null;
+  const outputRouteStable = Boolean(
+    outputControllerReady
+    && actualOutputMode
+    && outputControl.requestedOutputMode === actualOutputMode
+    && outputSwitchStatus === 'idle'
+    && Array.isArray(activeOutputCandidates)
+    && activeOutputCandidates.length === 1
+    && activeOutputCandidates[0] === activeOutputLease?.leaseTarget
+  );
+  const outputSwitchUiState = !outputControllerReady
+    ? 'connecting'
+    : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
+      ? 'switching'
+      : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
+  const obsPlayerConnected = Boolean(
+    outputControl.snapshot?.playerSnapshot?.eligibleCandidates?.obs?.length
+  );
+  const canEndBroadcastSession = !useOnAirPlayer || Boolean(
+    outputControllerReady
+    && !currentEntry
+    && outputControl.snapshot?.activeRun === null
+    && outputControl.snapshot?.playerSnapshot?.activeFamily === null
+    && outputControl.snapshot?.playerSnapshot?.activeCheckId === null
+    && outputControl.snapshot?.pendingSwitch === null
+    && outputControl.snapshot?.pendingTest === null
+    && ['inactive', 'ready'].includes(activeOutputLease?.status)
+  );
 
   // Audio Controls
   const [isPlaying, setIsPlaying] = useState(false);
@@ -118,6 +181,10 @@ export default function Dashboard() {
   const videoRef = useRef(null);
   const handleSkipRef = useRef(null);
   const togglePlaybackRef = useRef(null);
+  const handleMediaFailureRef = useRef(null);
+  const finalizeDiscardRef = useRef(null);
+  const commitActivePhaseRef = useRef(null);
+  const explicitSessionEndRequestedRef = useRef(false);
   const reportedMediaIssueRef = useRef(null);
   const reportedDelayRef = useRef(null);
   // §4-4: 버린 곡의 entryId — 늦은 On-Air transport 스냅숏이 되살리지 못하게 한다.
@@ -207,7 +274,12 @@ export default function Dashboard() {
     if (['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase)) return;
     if (useOnAirPlayer) {
       try {
-        onAir.sendCommand({ type: 'seek', sessionId: currentEntry?.entryId, position: time });
+        sendOnAirCommand({
+          type: 'seek',
+          sessionId: currentEntry?.entryId,
+          runId: activeRef.current?.runId,
+          position: time
+        });
         setCurrentTime(time);
       } catch (error) {
         showToast(error.message, 'error');
@@ -316,8 +388,35 @@ export default function Dashboard() {
 
   // 준비 실패 곡의 명시적 '다시 시도' — force:true로 백오프·영구 실패(unavailable)를
   // 넘어 즉시 재큐잉한다. 사용자가 의도한 1회 행동에만 열리는 문이다.
-  const handleRetryPrepare = (videoId) => {
+  const recoverOnAirConnection = useCallback(async () => {
+    // Retire only runtime ownership before rotating proven-invalid credentials.
+    // The interrupted song is recoverable at the queue front; history and the
+    // rest of the setlist remain untouched even if session creation fails.
+    explicitSessionEndRequestedRef.current = false;
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setSharedState((previous) => {
+      const interrupted = previous.currentEntry;
+      const queue = previous.queue || [];
+      const nextQueue = interrupted && !queue.some((item) => item.entryId === interrupted.entryId)
+        ? [interrupted, ...queue]
+        : queue;
+      return { ...previous, currentEntry: null, active: null, queue: nextQueue };
+    });
+    return createFreshOnAirSession();
+  }, [createFreshOnAirSession, setSharedState]);
+
+  const handleRetryPrepare = async (videoId) => {
     if (!videoId) return;
+    if (onAirSessionState === 'invalid') {
+      try {
+        await recoverOnAirConnection();
+      } catch (error) {
+        showToast(error?.message || t('obs.setup.recovery.failed'), 'error');
+        return;
+      }
+    }
     prepareRequestedRef.current.delete(videoId);
     setPrepareStates((previous) => {
       const next = { ...previous };
@@ -351,7 +450,7 @@ export default function Dashboard() {
   const lastPrefetchSentRef = useRef('');
   useEffect(() => {
     if (!useOnAirPlayer) return;
-    if (!onAir.playerConnected) {
+    if (!outputControllerReady) {
       // 위젯이 새로 붙으면(OBS 재시작 포함) 캐시가 비어 있으므로,
       // 재연결 시 같은 목록이라도 다시 보내도록 기억을 지운다.
       lastPrefetchSentRef.current = '';
@@ -365,7 +464,7 @@ export default function Dashboard() {
     } catch {
       // 소켓 미연결 등 — 프리페치는 최적화일 뿐이라 다음 상태 변화에서 다시 시도한다.
     }
-  }, [useOnAirPlayer, onAir.playerConnected, prefetchTargetIds, sendOnAirCommand]);
+  }, [useOnAirPlayer, outputControllerReady, prefetchTargetIds, sendOnAirCommand]);
 
   // Stage 4 (INV-8, D-31): 창 닫힘 시 참조 중인 blob을 revoke해 메모리 누수를
   // 막는다. 상태는 localStorage에 남으므로 다음 로드에서 Stage 1의 로컬 곡
@@ -402,6 +501,55 @@ export default function Dashboard() {
     setToasts(prev => [...prev, { id, message, type, action }]);
     setTimeout(() => dismissToast(id), action ? 5000 : 3000);
   };
+
+  // A fresh dashboard is also a speaker player, so it needs a session even
+  // before the user opens OBS setup or stages a song. Rotate one proven-stale
+  // credential set automatically; the queue and history live outside it.
+  const sessionBootstrapAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!useOnAirPlayer) return;
+
+    const recoverableInvalidSession = onAirSessionState === 'invalid' && onAirSession?.room;
+    const recoverableEndedSession = onAirSessionState === 'ended'
+      && !explicitSessionEndRequestedRef.current;
+    if (recoverableInvalidSession || recoverableEndedSession) {
+      // One automatic rotation per page lifetime prevents the replacement
+      // session from being rotated again during the invalid→connecting render gap.
+      if (!onAirSessionRecoveryGate.claim()) return;
+      recoverOnAirConnection()
+        .then(() => showToast(t('onair.connection.recovery.created'), 'success'))
+        .catch((error) => showToast(
+          error?.message || t('onair.connection.recovery.failed'),
+          'error'
+        ));
+      return;
+    }
+
+    if (!onAirSession && onAirSessionState === 'connecting'
+      && !sessionBootstrapAttemptedRef.current) {
+      sessionBootstrapAttemptedRef.current = true;
+      ensureOnAirSession()
+        .catch((error) => showToast(
+          error?.message || t('onair.connection.bootstrap.failed'),
+          'error'
+        ));
+    }
+  }, [
+    ensureOnAirSession,
+    onAirSession,
+    onAirSessionState,
+    recoverOnAirConnection,
+    useOnAirPlayer,
+  ]);
+
+  const handleSelectOutputMode = useCallback((mode) => {
+    const reportFailure = () => showToast(t('onair.output.switch.failed'), 'error');
+    try {
+      Promise.resolve(selectOnAirOutputMode(mode)).catch(reportFailure);
+    } catch {
+      reportFailure();
+    }
+  }, [selectOnAirOutputMode]);
 
   // D-04: 새로고침으로 재생 불가가 된 로컬(blob) 곡을 조용히 지우지 않고 안내.
   const localDropNoticeShownRef = useRef(false);
@@ -446,13 +594,13 @@ export default function Dashboard() {
   }, [widgetProjection, room, signingKeys]);
 
   useEffect(() => {
-    if (!useOnAirPlayer || !onAirDisplayToken || onAirConnectionState !== 'connected') return;
+    if (!useOnAirPlayer || !onAirDisplayToken || !outputControllerReady) return;
     try {
       sendOnAirCommand({ type: 'display_state', display: toDisplayState({ currentSong, history: legacyHistory }) });
     } catch {
       // The player/session reconnect path will publish the latest display state.
     }
-  }, [currentSong, legacyHistory, onAirDisplayToken, onAirConnectionState, sendOnAirCommand, useOnAirPlayer]);
+  }, [currentSong, legacyHistory, onAirDisplayToken, outputControllerReady, sendOnAirCommand, useOnAirPlayer]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -649,8 +797,8 @@ export default function Dashboard() {
     // 진실성 게이트(모든 재생 시작 경로 공통 — 대기열 바로 재생·재시도·자동 다음
     // 곡 포함): player 위젯이 실제로 연결돼 있지 않으면 run 을 만들지 않는다.
     // 모든 호출자가 catch→토스트로 처리한다.
-    if (useOnAirPlayer && !onAir.playerConnected) {
-      throw new Error('OBS On-Air 플레이어가 연결되지 않았습니다. OBS에 플레이어 소스를 추가하세요.');
+    if (useOnAirPlayer && !outputRouteStable) {
+      throw new Error(t('onair.output.playback.routeNotConfirmed'));
     }
     const runId = newId();
     setCurrentTime(0);
@@ -658,9 +806,11 @@ export default function Dashboard() {
     if (useOnAirPlayer) {
       // OnAirPlayer가 song.src(videoId)로 준비된 오디오 URL을 스스로 구성하므로
       // (자기 player 토큰 사용) load 명령의 프로토콜은 변경 없다.
-      onAir.sendCommand({
+      sendOnAirCommand({
         type: 'load',
         sessionId: entry.entryId, // On-Air 프로토콜의 sessionId = entryId 매핑
+        entryId: entry.entryId,
+        runId,
         song: toLegacySong(entry),
         position: 0,
         volume
@@ -670,9 +820,13 @@ export default function Dashboard() {
   };
 
   // 재생 출력 정지(다음 곡 없음). On-Air 명령 실패는 호출자가 처리한다.
-  const stopPlaybackOutput = ({ stoppingEntryId } = {}) => {
+  const stopPlaybackOutput = ({ stoppingEntryId, stoppingRunId } = {}) => {
     if (useOnAirPlayer) {
-      onAir.sendCommand({ type: 'stop', sessionId: stoppingEntryId || currentEntry?.entryId });
+      sendOnAirCommand({
+        type: 'stop',
+        sessionId: stoppingEntryId || currentEntry?.entryId,
+        runId: stoppingRunId || activeRef.current?.runId
+      });
     }
     setIsPlaying(false);
     setCurrentTime(0);
@@ -689,6 +843,7 @@ export default function Dashboard() {
       return { ...previous, active: { ...act, phase, ...extra } };
     });
   };
+  commitActivePhaseRef.current = commitActivePhase;
 
   // finishing/discarding/failed는 의도가 확정된 상태라 일반 playing/paused
   // 확인이 이를 되돌리지 못한다(§4-3 finishing 중 조작 제한, §4-4 discard 우선).
@@ -738,7 +893,7 @@ export default function Dashboard() {
     }
     if (!promoted) {
       try {
-        stopPlaybackOutput({ stoppingEntryId: marker.entryId });
+        stopPlaybackOutput({ stoppingEntryId: marker.entryId, stoppingRunId: marker.runId });
       } catch {
         // 이미 끝난 곡이다 — 정지 명령 실패가 완료 처리를 막지 않는다.
         setIsPlaying(false);
@@ -916,7 +1071,10 @@ export default function Dashboard() {
       // Keep player I/O outside React's state updater. A failed WebSocket
       // command must not leave the UI looking as if it skipped successfully.
       if (nextEntry) nextActive = beginPlaybackRun(nextEntry);
-      else stopPlaybackOutput({ stoppingEntryId: current.entryId });
+      else stopPlaybackOutput({
+        stoppingEntryId: current.entryId,
+        stoppingRunId: activeRef.current?.runId
+      });
     } catch (error) {
       showToast(error.message || '다음 곡으로 넘기지 못했습니다.', 'error');
       return false;
@@ -1034,6 +1192,23 @@ export default function Dashboard() {
 
   // 현재 곡 쓰레기통(§4-4): discarding → discarded. 이력에 남기지 않고
   // 자동 다음 곡을 시작하지 않는다(INV-3). 늦은 ended는 runId 불일치로 폐기된다.
+  const finalizeConfirmedDiscard = (marker) => {
+    const current = stateRef.current?.currentEntry;
+    if (!current || !isCurrentRun(marker) || current.entryId !== marker.entryId) return;
+    // 늦은 transport 스냅숏이 버린 곡을 currentEntry로 되살리지 못하게 기억한다.
+    lastDiscardedEntryIdRef.current = current.entryId;
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setSharedState((previous) => {
+      if (previous.currentEntry?.entryId !== marker.entryId
+        || previous.active?.runId !== marker.runId) return previous;
+      return { ...previous, currentEntry: null, active: null };
+    });
+    showToast(t('playback.discard.confirmed'), 'info');
+  };
+  finalizeDiscardRef.current = finalizeConfirmedDiscard;
+
   const handleDiscardCurrent = () => {
     const current = stateRef.current?.currentEntry;
     if (!current) return;
@@ -1041,14 +1216,24 @@ export default function Dashboard() {
     if (act && act.entryId === current.entryId && act.phase === 'discarding') return;
 
     if (useOnAirPlayer) {
-      // On-Air 프로토콜에는 아직 discard 확인 이벤트가 없다(Stage 7) — stop 송신이
-      // 성공하면 확정한다. 송신 실패 시 상태를 바꾸지 않는다.
+      // Keep the song visible until the exact v2 strong-stop event proves that
+      // audio is paused, detached, autoplay-cancelled, and non-audible.
       try {
-        onAir.sendCommand({ type: 'stop', sessionId: current.entryId });
-      } catch (error) {
-        showToast(error.message || '현재 곡을 정지하지 못했습니다.', 'error');
+        sendOnAirCommand({
+          type: 'stop',
+          sessionId: current.entryId,
+          runId: act?.runId
+        });
+      } catch {
+        showToast(t('playback.discard.stopRequestFailed'), 'error');
         return;
       }
+      commitActivePhase(
+        { entryId: current.entryId, runId: act?.runId },
+        'discarding',
+        { discardRequested: true }
+      );
+      return;
     } else {
       // 직접 재생(로컬·프록시 오디오): 같은 페이지의 요소라 정지를 동기로 확정할
       // 수 있다. 언마운트만으로는 재생이 즉시 멎지 않을 수 있어 명시 정지.
@@ -1059,18 +1244,34 @@ export default function Dashboard() {
         // 파괴된 미디어 요소 참조 — 언마운트가 마저 정리한다.
       }
     }
-
-    // 늦은 transport 스냅숏이 버린 곡을 currentEntry로 되살리지 못하게 기억한다.
-    lastDiscardedEntryIdRef.current = current.entryId;
-    setIsPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-    setSharedState((previous) => {
-      if (previous.currentEntry?.entryId !== current.entryId) return previous;
-      return { ...previous, currentEntry: null, active: null };
-    });
-    showToast('현재 곡을 버렸습니다. 이력에 남지 않고 다음 곡을 자동 재생하지 않습니다.', 'info');
+    finalizeConfirmedDiscard({ entryId: current.entryId, runId: act?.runId });
   };
+
+  useEffect(() => {
+    if (active?.phase !== 'discarding' || !active.discardRequested) return undefined;
+    const marker = { entryId: active.entryId, runId: active.runId };
+    const timeout = window.setTimeout(() => {
+      const latest = activeRef.current;
+      if (!latest || latest.runId !== marker.runId || !latest.discardRequested
+        || latest.phase !== 'discarding') return;
+      commitActivePhaseRef.current?.(marker, 'failed', {
+        discardRequested: true,
+        failureDetail: t('playback.discard.confirmationTimeout')
+      });
+      showToast(t('playback.discard.confirmationTimeout'), 'error');
+    }, 8000);
+    return () => window.clearTimeout(timeout);
+  }, [active?.discardRequested, active?.entryId, active?.phase, active?.runId]);
+
+  useEffect(() => {
+    const latest = activeRef.current;
+    if (!isConfirmedDiscardSnapshot({
+      confirmedPlayback: outputControl.snapshot?.confirmedPlayback,
+      active: latest,
+      currentEntry: stateRef.current?.currentEntry
+    })) return;
+    finalizeDiscardRef.current?.({ entryId: latest.entryId, runId: latest.runId });
+  }, [outputControl.snapshot?.confirmedPlayback]);
 
   // failed 재시도(§4-5): 같은 entry를 새 runId로 다시 재생한다.
   const handleRetryCurrent = () => {
@@ -1157,10 +1358,14 @@ export default function Dashboard() {
     if (!entry) return;
     // §4-3/§4-5: finishing·discarding·failed 중에는 일반 재생/일시정지를 막는다
     // (버튼 비활성 외에 Space 단축키 경로도 함께 차단).
-    if (isPhaseLocked()) return;
+    if (activeRef.current?.phase === 'starting' || isPhaseLocked()) return;
     if (useOnAirPlayer) {
       try {
-        onAir.sendCommand({ type: isPlaying ? 'pause' : 'play', sessionId: entry.entryId });
+        sendOnAirCommand({
+          type: isPlaying ? 'pause' : 'play',
+          sessionId: entry.entryId,
+          runId: activeRef.current?.runId
+        });
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1186,7 +1391,12 @@ export default function Dashboard() {
     setVolume(clamped);
     if (useOnAirPlayer && currentEntry) {
       try {
-        onAir.sendCommand({ type: 'volume', sessionId: currentEntry.entryId, volume: clamped });
+        sendOnAirCommand({
+          type: 'volume',
+          sessionId: currentEntry.entryId,
+          runId: activeRef.current?.runId,
+          volume: clamped
+        });
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1211,8 +1421,10 @@ export default function Dashboard() {
       return;
     }
     try {
-      onAir.sendCommand({ type: 'end_session' });
+      explicitSessionEndRequestedRef.current = true;
+      sendOnAirCommand({ type: 'end_session' });
     } catch (error) {
+      explicitSessionEndRequestedRef.current = false;
       showToast(error.message, 'error');
     }
   };
@@ -1235,6 +1447,37 @@ export default function Dashboard() {
     commitActivePhase(marker, 'failed', { failureDetail });
     showToast(failureDetail + ' — 다시 재생하거나 현재 곡을 버릴 수 있습니다.', 'error');
   };
+  handleMediaFailureRef.current = handleMediaFailure;
+
+  // A v2 LOAD transition is fail-closed. If its authoritative route proof is
+  // lost while the UI is still waiting for the first PLAY confirmation, make
+  // the run explicitly retryable instead of leaving it stuck on “preparing”.
+  useEffect(() => {
+    const act = activeRef.current;
+    if (!useOnAirPlayer || act?.phase !== 'starting' || outputRouteStable) return;
+    handleMediaFailureRef.current?.(
+      { entryId: act.entryId, runId: act.runId },
+      t('onair.output.playback.source'),
+      t('onair.output.playback.routeLostDuringStart')
+    );
+  }, [outputRouteStable, useOnAirPlayer]);
+
+  useEffect(() => {
+    const act = activeRef.current;
+    if (playbackTransitionState?.status !== 'failed'
+      || act?.phase !== 'starting'
+      || playbackTransitionState.entryId !== act.entryId
+      || playbackTransitionState.runId !== act.runId) return;
+    handleMediaFailureRef.current?.(
+      { entryId: act.entryId, runId: act.runId },
+      t('onair.output.playback.source'),
+      t('onair.output.playback.transitionFailed')
+    );
+  }, [
+    playbackTransitionState?.entryId,
+    playbackTransitionState?.runId,
+    playbackTransitionState?.status
+  ]);
 
   // (Stage 6의 프록시 시작 타임아웃·프리페치는 준비 파이프라인으로 대체됐다.
   //  On-Air 경로의 시작 타임아웃은 OnAirPlayer가 자체 보유하고, 대기열 곡의
@@ -1309,16 +1552,25 @@ export default function Dashboard() {
       const remoteTransport = payload.transport || {};
       if (Number.isFinite(remoteTransport.position)) setCurrentTime(remoteTransport.position);
       if (Number.isFinite(event.duration)) setDuration(event.duration);
-      // On-Air 프로토콜은 runId를 나르지 않으므로(이번 단계에서는 프로토콜 불변)
-      // sessionId(=entryId)가 현재 active와 일치할 때만 현재 run으로 인정한다.
+      // Protocol v2 reports the runId; the legacy observer reports entryId.
+      // Never let a late event from the previous run mutate the current song.
       const act = activeRef.current;
-      const marker = act && event.sessionId && act.entryId === String(event.sessionId)
+      const eventIdentityMatches = payload.protocolVersion === 2
+        ? act?.runId === String(event.sessionId || '')
+        : act?.entryId === String(event.sessionId || '');
+      const marker = act && eventIdentityMatches
         ? { entryId: act.entryId, runId: act.runId }
         : null;
       if (!marker) return;
       if (event.type === 'playing') handleConfirmedPlaying(marker);
       if (event.type === 'paused') handleConfirmedPaused(marker);
       if (event.type === 'buffering') handlePlaybackDelay(marker, 'On-Air 위젯');
+      if (isConfirmedDiscardStop({
+        protocolVersion: payload.protocolVersion,
+        event,
+        active: act,
+        currentEntry: stateRef.current?.currentEntry
+      })) finalizeConfirmedDiscard(marker);
       if (event.type === 'ended') handleConfirmedEnded(marker, 'natural');
       if (event.type === 'error') {
         setIsPlaying(false);
@@ -1329,11 +1581,29 @@ export default function Dashboard() {
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
-      // INV-8: On-Air 로컬 곡은 R2 자산(assetId) 참조라 revoke 대상이 아니지만,
-      // 직접 재생 시절의 blob 항목이 이력·대기열에 남아 있을 수 있어 함께 회수한다.
-      revokeBlobSrcs(collectBlobSrcs(stateRef.current));
-      setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
-      showToast('방송 세션을 종료하고 임시 파일 정리를 예약했습니다.', 'info');
+      const reason = payload.reasonCode || payload.reason || '';
+      if (reason === 'explicit') {
+        // Destructive list cleanup is reserved for the user's explicit
+        // "end broadcast" action. A player timeout or OBS restart must never
+        // erase a setlist.
+        revokeBlobSrcs(collectBlobSrcs(stateRef.current));
+        setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
+        showToast(t('onair.session.ended.explicit'), 'info');
+        return;
+      }
+
+      // Unexpected expiry/disconnect only retires runtime state. Put the
+      // interrupted song back at the front so its metadata and ordering stay
+      // recoverable after the user creates a new On-Air connection.
+      setSharedState((previous) => {
+        const interrupted = previous.currentEntry;
+        const queue = previous.queue || [];
+        const nextQueue = interrupted && !queue.some((item) => item.entryId === interrupted.entryId)
+          ? [interrupted, ...queue]
+          : queue;
+        return { ...previous, currentEntry: null, active: null, queue: nextQueue };
+      });
+      showToast(t('onair.session.ended.unexpected'), 'error');
     }
   };
 
@@ -1379,12 +1649,18 @@ export default function Dashboard() {
             showToast={showToast}
             onAirPlayerUrl={onAir.playerUrl}
             onAirDisplayUrl={onAir.displayUrl}
-            onAirStatus={onAir.connectionState}
-            onAirPlayerConnected={onAir.playerConnected}
+            onAirStatus={onAirSessionState}
+            onAirPlayerConnected={obsPlayerConnected}
             onAirDisplayConnected={onAir.displayConnected}
             onPrepareOnAir={onAir.preparePlayer}
             onPrepareOnAirDisplay={onAir.prepareDisplay}
+            onRecoverOnAir={recoverOnAirConnection}
             onEndBroadcastSession={handleEndBroadcastSession}
+            canEndBroadcastSession={canEndBroadcastSession}
+            outputMode={selectedOutputMode}
+            actualOutputMode={actualOutputMode}
+            outputSwitchState={outputSwitchUiState}
+            onSelectOutputMode={outputControllerReady ? handleSelectOutputMode : undefined}
           />
         </ErrorBoundary>
         </div>
@@ -1457,6 +1733,15 @@ export default function Dashboard() {
           모드에서는 beginPlaybackRun이 YouTube run 생성 자체를 막는다(blocked).
           iframe 등 광고가 나갈 수 있는 폴백 경로는 존재하지 않는다. */}
       <div className="live-players-hidden">
+        {useOnAirPlayer && onAirSession?.room && onAirSession?.playerToken && (
+          <Suspense fallback={null}>
+            <DashboardSpeakerPlayerV2
+              apiBaseUrl={onAir.baseUrl}
+              room={onAirSession.room}
+              token={onAirSession.playerToken}
+            />
+          </Suspense>
+        )}
         {liveSong?.type === 'local' && liveSong.mediaType === 'video' && (
           <video
             key={runMarker.runId}

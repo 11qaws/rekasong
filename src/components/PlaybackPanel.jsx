@@ -37,8 +37,14 @@ export default function PlaybackPanel({
   onAirPlayerConnected,
   onAirDisplayConnected,
   onEndBroadcastSession,
+  canEndBroadcastSession = false,
+  onRecoverOnAir,
   onPrepareOnAir,
-  onPrepareOnAirDisplay
+  onPrepareOnAirDisplay,
+  outputMode,
+  actualOutputMode,
+  outputSwitchState = 'idle',
+  onSelectOutputMode
 }) {
   const [previousVolume, setPreviousVolume] = useState(100);
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
@@ -54,9 +60,13 @@ export default function PlaybackPanel({
   const [preparedPlayerUrl, setPreparedPlayerUrl] = useState('');
   const [isPreparingDisplay, setIsPreparingDisplay] = useState(false);
   const [preparedDisplayUrl, setPreparedDisplayUrl] = useState('');
+  const [isRecoveringOnAir, setIsRecoveringOnAir] = useState(false);
   const obsSetupTriggerRef = useRef(null);
   const obsDialogRef = useRef(null);
   const obsDialogTitleRef = useRef(null);
+  const outputOptionRefs = useRef({ speaker: null, obs: null });
+  const previousOnAirPlayerUrlRef = useRef(onAirPlayerUrl);
+  const previousOnAirDisplayUrlRef = useRef(onAirDisplayUrl);
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
@@ -64,6 +74,16 @@ export default function PlaybackPanel({
   // 구버전 room&key 위젯과 동일한 형식이라 예전에 복사해 둔 주소도 계속 동작하며,
   // 이 주소가 구독하는 발행 payload는 축소 projection(N-08)뿐이다.
   const isDirectMode = onAirStatus === 'unconfigured';
+  const isOnAirInvalid = onAirStatus === 'invalid' || onAirStatus === 'ended';
+  const selectedOutputMode = outputMode === 'speaker' || outputMode === 'obs' ? outputMode : null;
+  const confirmedOutputMode = actualOutputMode === 'speaker' || actualOutputMode === 'obs'
+    ? actualOutputMode
+    : null;
+  const normalizedOutputSwitchState = ['idle', 'connecting', 'switching', 'blocked'].includes(outputSwitchState)
+    ? outputSwitchState
+    : 'blocked';
+  const outputSelectionLocked = ['connecting', 'switching'].includes(normalizedOutputSwitchState)
+    || typeof onSelectOutputMode !== 'function';
   const directWidgetUrl = room && publicKeyB64
     ? `${window.location.origin}${window.location.pathname}#/widget?room=${encodeURIComponent(room)}&key=${encodeURIComponent(publicKeyB64)}`
     : '';
@@ -74,11 +94,69 @@ export default function PlaybackPanel({
   const isFinishing = activePhase === 'finishing';
   const isDiscarding = activePhase === 'discarding';
   const isFailed = activePhase === 'failed';
+  const isStarting = activePhase === 'starting';
   const controlsLocked = isFinishing || isDiscarding || isFailed;
-  const phaseBadgeText = isFinishing ? t('playback.phase.skipping')
+  const transportControlsLocked = isStarting || controlsLocked;
+  const phaseBadgeText = isStarting ? t('playback.phase.preparing')
+    : isFinishing ? t('playback.phase.skipping')
     : isDiscarding ? t('playback.phase.discarding')
     : isFailed ? t('playback.phase.failed')
     : isPlaying ? t('playback.phase.onAir') : t('playback.phase.paused');
+  const outputModeLabel = (mode) => mode === 'speaker'
+    ? t('onair.output.selector.mode.speaker')
+    : mode === 'obs'
+      ? t('onair.output.selector.mode.obs')
+      : t('onair.output.selector.mode.unknown');
+
+  const selectOutputMode = (mode) => {
+    const retriesUnconfirmedSelection = mode === selectedOutputMode
+      && mode !== confirmedOutputMode;
+    const restoresConfirmedOutput = normalizedOutputSwitchState === 'blocked'
+      && mode === confirmedOutputMode;
+    if (outputSelectionLocked
+      || (normalizedOutputSwitchState === 'blocked'
+        && !retriesUnconfirmedSelection
+        && !restoresConfirmedOutput)
+      || (mode === selectedOutputMode && mode === confirmedOutputMode)) return;
+    onSelectOutputMode(mode);
+  };
+
+  const handleOutputOptionKeyDown = (event, currentMode) => {
+    const modes = ['speaker', 'obs'];
+    const forwardKeys = ['ArrowRight', 'ArrowDown', 'End'];
+    const backwardKeys = ['ArrowLeft', 'ArrowUp', 'Home'];
+    if (!forwardKeys.includes(event.key) && !backwardKeys.includes(event.key)) return;
+
+    event.preventDefault();
+    const currentIndex = modes.indexOf(currentMode);
+    const nextMode = event.key === 'Home'
+      ? modes[0]
+      : event.key === 'End'
+        ? modes[modes.length - 1]
+        : forwardKeys.includes(event.key)
+          ? modes[(currentIndex + 1) % modes.length]
+          : modes[(currentIndex - 1 + modes.length) % modes.length];
+    outputOptionRefs.current[nextMode]?.focus();
+    selectOutputMode(nextMode);
+  };
+
+  // 부모가 세션 URL을 제거했다면 `prepare*`가 임시로 보관한 같은 세션의 URL도
+  // 함께 폐기한다. 그렇지 않으면 종료/교체 뒤에도 설정창이 이전 주소를 근거로
+  // 계속 "연결 중"이라고 표시하거나 그 주소를 다시 복사할 수 있다.
+  useEffect(() => {
+    if (previousOnAirPlayerUrlRef.current && !onAirPlayerUrl) setPreparedPlayerUrl('');
+    if (previousOnAirDisplayUrlRef.current && !onAirDisplayUrl) setPreparedDisplayUrl('');
+    previousOnAirPlayerUrlRef.current = onAirPlayerUrl;
+    previousOnAirDisplayUrlRef.current = onAirDisplayUrl;
+  }, [onAirDisplayUrl, onAirPlayerUrl]);
+
+  // 유효성을 잃은 세션의 임시 URL은 부모 URL의 소멸보다 먼저 폐기한다. 부모가
+  // 아직 낡은 URL을 들고 있어도 아래 copy gate가 복사를 차단한다.
+  useEffect(() => {
+    if (!isOnAirInvalid) return;
+    setPreparedPlayerUrl('');
+    setPreparedDisplayUrl('');
+  }, [isOnAirInvalid]);
 
   // 대화상자를 열면 제목으로 초점을 옮기고, Tab 초점을 내부에 가둔다.
   // 배경 클릭으로는 닫지 않는다. 이후 오디오 점검이 들어와도 실수로 대화상자만
@@ -153,6 +231,7 @@ export default function PlaybackPanel({
   };
 
   const preparePlayer = async () => {
+    if (isOnAirInvalid) return '';
     if (playerUrl) return playerUrl;
     if (!onPrepareOnAir) return '';
     setIsPreparingPlayer(true);
@@ -169,11 +248,13 @@ export default function PlaybackPanel({
   };
 
   const copyPlayerUrl = async () => {
+    if (isOnAirInvalid) return;
     const url = await preparePlayer();
     if (url) copyUrl(url, t('obs.setup.player.urlCopied'));
   };
 
   const prepareDisplay = async () => {
+    if (isOnAirInvalid) return '';
     if (displayUrl) return displayUrl;
     if (!onPrepareOnAirDisplay) return '';
     setIsPreparingDisplay(true);
@@ -190,8 +271,23 @@ export default function PlaybackPanel({
   };
 
   const copyDisplayUrl = async () => {
+    if (isOnAirInvalid) return;
     const url = await prepareDisplay();
     if (url) copyUrl(url, t('obs.setup.display.urlCopied'));
+  };
+
+  const recoverOnAir = async () => {
+    if (isRecoveringOnAir || typeof onRecoverOnAir !== 'function') return;
+    setIsRecoveringOnAir(true);
+    setPreparedPlayerUrl('');
+    setPreparedDisplayUrl('');
+    try {
+      await onRecoverOnAir();
+    } catch (error) {
+      showToast?.(error?.message || t('obs.setup.recovery.failed'), 'error');
+    } finally {
+      setIsRecoveringOnAir(false);
+    }
   };
 
   const toggleMute = () => {
@@ -224,6 +320,101 @@ export default function PlaybackPanel({
         </div>
       </div>
 
+      <section
+        className="output-selector"
+        aria-labelledby="output-selector-title"
+        aria-describedby="output-selector-description output-selector-status"
+      >
+        <div className="output-selector-heading">
+          <strong id="output-selector-title">{t('onair.output.heading')}</strong>
+          <span id="output-selector-description">{t('onair.output.description')}</span>
+        </div>
+        <div
+          className="output-selector-options"
+          role="radiogroup"
+          aria-label={t('onair.output.region.label')}
+          aria-disabled={outputSelectionLocked}
+        >
+          {['speaker', 'obs'].map((mode) => {
+            const isSelected = selectedOutputMode === mode;
+            const isActual = confirmedOutputMode === mode;
+            const canRetryBlockedSelection = normalizedOutputSwitchState === 'blocked'
+              && isSelected
+              && !isActual;
+            const isOptionDisabled = outputSelectionLocked
+              || (normalizedOutputSwitchState === 'blocked'
+                && !canRetryBlockedSelection
+                && !isActual);
+            return (
+              <button
+                key={mode}
+                ref={(element) => { outputOptionRefs.current[mode] = element; }}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                aria-disabled={isOptionDisabled}
+                aria-describedby="output-selector-status"
+                tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
+                className={`output-selector-option${isSelected ? ' is-selected' : ''}${isActual ? ' is-actual' : ''}`}
+                onClick={() => selectOutputMode(mode)}
+                onKeyDown={(event) => handleOutputOptionKeyDown(event, mode)}
+              >
+                <span className="output-selector-option-label">
+                  {mode === 'speaker'
+                    ? <Volume2 size={17} aria-hidden="true" />
+                    : <Radio size={17} aria-hidden="true" />}
+                  {outputModeLabel(mode)}
+                </span>
+                <span className="output-selector-badges" aria-hidden="true">
+                  {isSelected && (
+                    <span className="output-selector-badge is-selected">
+                      {t('onair.output.selector.badge.selected')}
+                    </span>
+                  )}
+                  {isActual && (
+                    <span className="output-selector-badge is-actual">
+                      {t('onair.output.selector.badge.actual')}
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div
+          id="output-selector-status"
+          className={`output-selector-status is-${normalizedOutputSwitchState}`}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span>{t('onair.output.selector.status.selected', { mode: outputModeLabel(selectedOutputMode) })}</span>
+          <span>{t('onair.output.selector.status.actual', { mode: outputModeLabel(confirmedOutputMode) })}</span>
+          {normalizedOutputSwitchState === 'switching' && (
+            <strong>{t('onair.output.selector.status.switching')}</strong>
+          )}
+          {normalizedOutputSwitchState === 'connecting' && (
+            <strong>{t('onair.output.selector.status.connecting')}</strong>
+          )}
+          {normalizedOutputSwitchState === 'blocked' && (
+            <strong>{t('onair.output.selector.status.blocked')}</strong>
+          )}
+        </div>
+        {isOnAirInvalid && (
+          <button
+            type="button"
+            className="btn-secondary output-selector-recovery"
+            onClick={recoverOnAir}
+            disabled={isRecoveringOnAir || typeof onRecoverOnAir !== 'function'}
+          >
+            <RotateCcw size={15} aria-hidden="true" />
+            {isRecoveringOnAir
+              ? t('obs.setup.recovery.inProgress')
+              : t('obs.setup.recovery.action')}
+          </button>
+        )}
+      </section>
+
       {currentSong ? (
         <div className="playback-now">
           <div className="playback-title-row">
@@ -231,7 +422,7 @@ export default function PlaybackPanel({
           </div>
           <div className="playback-controls">
             {/* finishing/discarding/failed 중 일반 재생 조작 잠금(§4-3, §4-5). */}
-            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={controlsLocked} title={controlsLocked ? t('playback.control.locked') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
+            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={transportControlsLocked} title={transportControlsLocked ? t('playback.control.locked') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
             <button type="button" onClick={toggleMute} className="btn-icon" title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
@@ -270,7 +461,7 @@ export default function PlaybackPanel({
           ) : (
             <div className="playback-progress">
               <span>{formatTime(currentTime)}</span>
-              <input aria-label={t('playback.control.seek')} type="range" min="0" max={duration || 100} value={seekDraft ?? currentTime} onChange={(event) => setSeekDraft(Number(event.target.value))} onPointerUp={commitSeek} onKeyUp={commitSeek} onBlur={commitSeek} className="progress-slider" disabled={controlsLocked} />
+              <input aria-label={t('playback.control.seek')} type="range" min="0" max={duration || 100} value={seekDraft ?? currentTime} onChange={(event) => setSeekDraft(Number(event.target.value))} onPointerUp={commitSeek} onKeyUp={commitSeek} onBlur={commitSeek} className="progress-slider" disabled={transportControlsLocked} />
               <span>{formatTime(duration)}</span>
             </div>
           )}
@@ -303,15 +494,34 @@ export default function PlaybackPanel({
               {t('obs.setup.intro')}
             </p>
 
-            {!isDirectMode && (
+            {!isDirectMode && !isOnAirInvalid && (
               <p className="obs-session-url-note" role="note">
                 {t('obs.setup.sessionUrl')}
               </p>
             )}
 
+            {isOnAirInvalid && (
+              <div className="obs-recovery-alert" role="alert">
+                <p>{t(onAirStatus === 'ended'
+                  ? 'obs.setup.recovery.ended'
+                  : 'obs.setup.recovery.invalid')}</p>
+                <button
+                  type="button"
+                  className="btn-secondary obs-recovery-action"
+                  onClick={recoverOnAir}
+                  disabled={isRecoveringOnAir || typeof onRecoverOnAir !== 'function'}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  {isRecoveringOnAir
+                    ? t('obs.setup.recovery.inProgress')
+                    : t('obs.setup.recovery.action')}
+                </button>
+              </div>
+            )}
+
             {/* 대시보드↔서버(control) 상태 — 아래 위젯 연결 칩과는 별개의 정보라
                 무채색 한 줄로 구분한다. "서버 준비"를 위젯 연결로 오해하지 않게. */}
-            {!isDirectMode && (
+            {!isDirectMode && !isOnAirInvalid && (
               <p className="obs-server-note">
                 <span className={`obs-status-dot ${onAirStatus === 'connected' ? 'is-live' : ''}`} aria-hidden="true" />
                 {onAirStatus === 'connected'
@@ -328,10 +538,14 @@ export default function PlaybackPanel({
                 <div>
                   <strong>{t('obs.setup.player.stepTitle')} <span className="obs-step-requirement is-required">{t('obs.setup.player.requirement')}</span></strong>
                   <p>{t('obs.setup.player.instruction')}</p>
-                  <button type="button" onClick={copyPlayerUrl} className="btn-copy" disabled={isPreparingPlayer || onAirStatus === 'unconfigured'}>
-                    {isPreparingPlayer ? t('obs.setup.player.preparing') : <><Copy size={14} /> {playerUrl ? t('obs.setup.player.copyUrl') : t('obs.setup.player.prepareAndCopy')}</>}
+                  <button type="button" onClick={copyPlayerUrl} className="btn-copy" disabled={isPreparingPlayer || isOnAirInvalid || onAirStatus === 'unconfigured'}>
+                    {isOnAirInvalid
+                      ? t('obs.setup.recovery.copyBlocked')
+                      : isPreparingPlayer
+                        ? t('obs.setup.player.preparing')
+                        : <><Copy size={14} /> {playerUrl ? t('obs.setup.player.copyUrl') : t('obs.setup.player.prepareAndCopy')}</>}
                   </button>
-                  {isDirectMode ? (
+                  {isOnAirInvalid ? null : isDirectMode ? (
                     <span className="obs-player-status is-waiting">
                       <span className="obs-status-dot" aria-hidden="true" /> {t('obs.setup.player.serverRequired')}
                     </span>
@@ -365,14 +579,20 @@ export default function PlaybackPanel({
                     </button>
                   ) : (
                     <>
-                      <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay}>
-                        {isPreparingDisplay ? t('obs.setup.player.preparing') : <><Copy size={14} /> {displayUrl ? t('obs.setup.display.copyUrl') : t('obs.setup.display.prepareAndCopy')}</>}
+                      <button type="button" onClick={copyDisplayUrl} className="btn-copy" disabled={isPreparingDisplay || isOnAirInvalid}>
+                        {isOnAirInvalid
+                          ? t('obs.setup.recovery.copyBlocked')
+                          : isPreparingDisplay
+                            ? t('obs.setup.player.preparing')
+                            : <><Copy size={14} /> {displayUrl ? t('obs.setup.display.copyUrl') : t('obs.setup.display.prepareAndCopy')}</>}
                       </button>
-                      <WidgetStatusChip
-                        connected={Boolean(onAirDisplayConnected)}
-                        connectedLabel={t('obs.setup.display.connected')}
-                        waitingLabel={t('obs.setup.display.waiting')}
-                      />
+                      {!isOnAirInvalid && (
+                        <WidgetStatusChip
+                          connected={Boolean(onAirDisplayConnected)}
+                          connectedLabel={t('obs.setup.display.connected')}
+                          waitingLabel={t('obs.setup.display.waiting')}
+                        />
+                      )}
                     </>
                   )}
                 </div>
@@ -391,9 +611,15 @@ export default function PlaybackPanel({
             {onEndBroadcastSession && (
               <div className="obs-session-actions">
                 <p>{t('obs.setup.session.endDescription')}</p>
+                {!canEndBroadcastSession && (
+                  <p className="obs-session-end-blocked" role="status">
+                    {t('obs.setup.session.endBlocked')}
+                  </p>
+                )}
                 <button
                   type="button"
                   className="btn-secondary"
+                  disabled={!canEndBroadcastSession}
                   onClick={() => {
                     if (window.confirm(t('obs.setup.session.endConfirm'))) {
                       onEndBroadcastSession();

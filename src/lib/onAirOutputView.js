@@ -766,7 +766,7 @@ export function deriveOnAirOutputView(input = {}) {
     && leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
     && noActiveRunProven
     && noActiveTestProven
-    && desiredStatus === 'idle'
+    && DESIRED_QUIET_STATES.has(desiredStatus)
     && confirmedStatus === 'unknown'
     && ['not_confirmed', 'output_inactive'].includes(confirmedPlayback.reasonCode);
 
@@ -832,10 +832,10 @@ export function deriveOnAirOutputView(input = {}) {
       && currentRouteStable
       && targetCandidateSingle
       && (adapterSafeForActiveCommands || leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE);
-    const operation = mode === selectedOutputMode
-      ? null
-      : leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
-        ? ON_AIR_OUTPUT_ACTIONS.ACTIVATE
+    const operation = leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
+      ? ON_AIR_OUTPUT_ACTIONS.ACTIVATE
+      : mode === selectedOutputMode
+        ? null
         : ON_AIR_OUTPUT_ACTIONS.SWITCH_OUTPUT;
     const allowed = operation === ON_AIR_OUTPUT_ACTIONS.ACTIVATE
       ? targetActivateAllowed
