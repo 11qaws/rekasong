@@ -79,9 +79,16 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
   await transformWithOxc(wrapper, wrapperPath, { lang: 'jsx' });
 
   assert.match(player, /clientKind: requestedClientKind = null/);
+  assert.match(player, /identity = null/);
   assert.match(player, /requestedClientKind \|\| \(runtime\.capabilities\.obsRuntime/);
   assert.match(player, /runtime = isDashboardSpeaker\s*\? null\s*: createObsRuntimeAttestation/);
+  assert.match(
+    player,
+    /onChange\(snapshot\)[\s\S]*?adapter\?\.handleRuntimeAttestation\(snapshot, \{ phase: 'obs_callback' \}\)/,
+    'OBS runtime source events must synchronously reach the local playback safety adapter',
+  );
   assert.match(player, /runtimeProbe: \(\) => runtime\?\.runtime\(\) \|\| \{\}/);
+  assert.match(player, /clientKind,\s+identity,\s+capabilities:/);
   assert.match(player, /safeNotify\(callbacksRef\.current\.onStateChange, change\)/);
   assert.match(player, /safeNotify\(callbacksRef\.current\.onSnapshot, snapshot\)/);
 
@@ -97,6 +104,12 @@ test('dashboard speaker ownership and released-owner reconnect stay authority-ga
   await transformWithOxc(source, dashboardPath, { lang: 'jsx' });
 
   assert.match(source, /const outputControllerReady = outputControlAuthority\.writable;/);
+  assert.match(source, /dashboardSpeakerIdentityRef\.current = createPlayerPageIdentity\(\)/);
+  assert.match(
+    source,
+    /dashboardSpeakerPlayerInstanceId: dashboardSpeakerIdentity\.playerInstanceId/,
+  );
+  assert.match(source, /identity=\{dashboardSpeakerIdentity\}/);
   assert.match(
     source,
     /\{useOnAirPlayer && shouldHostDashboardSpeaker && onAirSession\?\.room && onAirSession\?\.playerToken && \(/,

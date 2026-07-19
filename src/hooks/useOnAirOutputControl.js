@@ -17,6 +17,7 @@ const UNKNOWN_LEASE_STATES = new Set(['unknown', 'failed', 'emergency_stopping']
 
 export const ON_AIR_OUTPUT_CONNECTION_TIMEOUT_MS = 10_000;
 export const ON_AIR_OUTPUT_SWITCH_TIMEOUT_MS = 12_000;
+export const ON_AIR_OUTPUT_CANDIDATE_WAIT_MS = 12_000;
 
 export const ON_AIR_OUTPUT_CONTROL_CODES = Object.freeze({
   INVALID_CONFIGURATION: 'output_control_invalid_configuration',
@@ -224,6 +225,7 @@ export class OnAirOutputController {
   #webSocketFactory;
   #coordinatorFactory;
   #controlIdentity;
+  #dashboardSpeakerPlayerInstanceId;
   #coordinator = null;
   #coordinatorUnsubscribe = null;
   #snapshot = null;
@@ -240,6 +242,7 @@ export class OnAirOutputController {
   #clearTimeoutFn;
   #connectionTimeoutMs;
   #switchTimeoutMs;
+  #candidateWaitMs;
   #connectionWatchdogTimer = null;
   #switchWatchdogTimer = null;
 
@@ -253,18 +256,27 @@ export class OnAirOutputController {
     clearTimeoutFn = (timer) => globalThis.clearTimeout(timer),
     connectionTimeoutMs = ON_AIR_OUTPUT_CONNECTION_TIMEOUT_MS,
     switchTimeoutMs = ON_AIR_OUTPUT_SWITCH_TIMEOUT_MS,
+    candidateWaitMs = ON_AIR_OUTPUT_CANDIDATE_WAIT_MS,
+    dashboardSpeakerPlayerInstanceId = null,
   } = {}) {
     this.#session = validateSession(session);
     this.#baseUrl = normalizeBaseUrl(baseUrl);
     if (!isIdentifier(buildId)) {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, { field: 'buildId' });
     }
+    if (dashboardSpeakerPlayerInstanceId !== null
+      && !isIdentifier(dashboardSpeakerPlayerInstanceId)) {
+      throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, {
+        field: 'dashboardSpeakerPlayerInstanceId',
+      });
+    }
     if (typeof webSocketFactory !== 'function' || typeof coordinatorFactory !== 'function') {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, { field: 'factory' });
     }
     if (typeof setTimeoutFn !== 'function' || typeof clearTimeoutFn !== 'function'
       || !Number.isFinite(connectionTimeoutMs) || connectionTimeoutMs <= 0
-      || !Number.isFinite(switchTimeoutMs) || switchTimeoutMs <= 0) {
+      || !Number.isFinite(switchTimeoutMs) || switchTimeoutMs <= 0
+      || !Number.isFinite(candidateWaitMs) || candidateWaitMs <= 0) {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, { field: 'watchdog' });
     }
     this.#buildId = buildId;
@@ -274,6 +286,8 @@ export class OnAirOutputController {
     this.#clearTimeoutFn = clearTimeoutFn;
     this.#connectionTimeoutMs = connectionTimeoutMs;
     this.#switchTimeoutMs = switchTimeoutMs;
+    this.#candidateWaitMs = candidateWaitMs;
+    this.#dashboardSpeakerPlayerInstanceId = dashboardSpeakerPlayerInstanceId;
     // One browser page is one control participant. Keep its identity stable
     // when the socket/coordinator is rebuilt so a reconnect cannot look like a
     // surprise second tab to the Worker.
@@ -368,6 +382,16 @@ export class OnAirOutputController {
     return result;
   }
 
+  startTest(options) {
+    this.#assertUsable();
+    return this.#coordinator.startTest(options);
+  }
+
+  stopTest() {
+    this.#assertUsable();
+    return this.#coordinator.stopTest();
+  }
+
   selectOutputMode(mode) {
     this.#assertUsable();
     if (!OUTPUT_MODE_SET.has(mode)) {
@@ -389,6 +413,19 @@ export class OnAirOutputController {
         return Object.freeze({ status: 'already_active', mode });
       }
       this.#assertNoActiveWork();
+      const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[mode];
+      // The dashboard speaker is owned by this page, but its lazy player can
+      // register one snapshot after the route buttons become interactive. A
+      // click in that short window is a valid intent, not a configuration
+      // error. Wait only for this page-owned speaker and keep OBS fail-closed:
+      // a missing external OBS source must still be reported immediately.
+      if (mode === ON_AIR_OUTPUT_MODES.SPEAKER
+        && lease.status === 'inactive'
+        && this.#dashboardSpeakerPlayerInstanceId !== null
+        && Array.isArray(candidates)
+        && candidates.length === 0) {
+        return this.#waitForDashboardSpeakerCandidate(mode);
+      }
       this.#assertSingleCandidate(mode);
       if (lease.status === 'inactive') {
         return this.#activate(mode);
@@ -568,8 +605,20 @@ export class OnAirOutputController {
       // Missing terminal evidence is never interpreted as success. Keep the
       // target diagnostic only, block further routing, and require a fresh
       // authoritative connection (or emergency stop when the route is unknown).
-      this.#failSwitch(ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_TIMEOUT);
-    }, this.#switchTimeoutMs);
+      let reasonCode = ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_TIMEOUT;
+      if (intent.awaitingCandidate === true) {
+        const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
+        reasonCode = Array.isArray(candidates)
+          && candidates.length === 1
+          && this.#dashboardSpeakerPlayerInstanceId !== null
+          && candidates[0] !== this.#dashboardSpeakerPlayerInstanceId
+          ? ON_AIR_OUTPUT_CONTROL_CODES.TARGET_IDENTITY_MISMATCH
+          : ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT;
+      }
+      this.#failSwitch(reasonCode);
+    }, this.#switchIntent?.awaitingCandidate === true
+      ? this.#candidateWaitMs
+      : this.#switchTimeoutMs);
   }
 
   #clearSwitchWatchdog() {
@@ -602,6 +651,15 @@ export class OnAirOutputController {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT, {
         mode,
         count: Array.isArray(candidates) ? candidates.length : null,
+      });
+    }
+    if (mode === ON_AIR_OUTPUT_MODES.SPEAKER
+      && this.#dashboardSpeakerPlayerInstanceId !== null
+      && candidates[0] !== this.#dashboardSpeakerPlayerInstanceId) {
+      throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.TARGET_IDENTITY_MISMATCH, {
+        mode,
+        expectedPlayerInstanceId: this.#dashboardSpeakerPlayerInstanceId,
+        actualPlayerInstanceId: candidates[0],
       });
     }
     return candidates[0];
@@ -960,6 +1018,18 @@ export class OnAirOutputController {
     }
   }
 
+  #waitForDashboardSpeakerCandidate(mode) {
+    this.#switchIntent = {
+      targetMode: mode,
+      phase: ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
+      awaitingCandidate: true,
+    };
+    this.#switchState = outputSwitchState(ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING, mode);
+    this.#armSwitchWatchdog(mode, ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING);
+    this.#publish();
+    return Object.freeze({ status: 'waiting_for_candidate', mode });
+  }
+
   #reconcileSwitchIntent() {
     const intent = this.#switchIntent;
     if (!intent) return;
@@ -998,6 +1068,46 @@ export class OnAirOutputController {
       }
 
       const leaseMode = modeForClientKind(lease.clientKind);
+      if (intent.awaitingCandidate === true) {
+        if (ACTIVE_LEASE_STATES.has(lease.status) && leaseMode === intent.targetMode) {
+          this.#switchIntent = null;
+          this.#clearSwitchWatchdog();
+          this.#switchState = outputSwitchState();
+          return;
+        }
+        if (lease.status !== 'inactive') {
+          this.#failSwitch(ON_AIR_OUTPUT_CONTROL_CODES.LEASE_NOT_SWITCHABLE);
+          return;
+        }
+        this.#assertNoActiveWork();
+        const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
+        if (!Array.isArray(candidates) || candidates.length > 1) {
+          this.#failSwitch(ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT);
+          return;
+        }
+        if (candidates.length === 0) return;
+        // A sole speaker from an older/reconnecting tab is not this page's
+        // lazy player. Keep the original click pending so the old owner can
+        // retire; never activate a foreign candidate just because it arrived
+        // first. If both remain, the duplicate branch above fails closed.
+        if (candidates[0] !== this.#dashboardSpeakerPlayerInstanceId) return;
+
+        this.#switchIntent = {
+          targetMode: intent.targetMode,
+          phase: ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
+          awaitingCandidate: false,
+        };
+        this.#armSwitchWatchdog(
+          intent.targetMode,
+          ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
+        );
+        try {
+          this.#coordinator.activateOutput(intent.targetMode);
+        } catch (error) {
+          this.#failSwitch(error?.code || ON_AIR_OUTPUT_CONTROL_CODES.LEASE_NOT_SWITCHABLE);
+        }
+        return;
+      }
       if (ACTIVE_LEASE_STATES.has(lease.status) && leaseMode === intent.targetMode) {
         this.#switchIntent = null;
         this.#clearSwitchWatchdog();
@@ -1038,13 +1148,13 @@ export function createOnAirOutputController(options) {
   return new OnAirOutputController(options);
 }
 
-function sharedKeys(baseUrl, session) {
+function sharedKeys(baseUrl, session, dashboardSpeakerPlayerInstanceId = null) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   const validSession = validateSession(session);
   const ownerKey = `${normalizedBaseUrl}\u0000${validSession.room}`;
   return {
     ownerKey,
-    controllerKey: `${ownerKey}\u0000${validSession.controlToken}`,
+    controllerKey: `${ownerKey}\u0000${validSession.controlToken}\u0000${dashboardSpeakerPlayerInstanceId ?? ''}`,
   };
 }
 
@@ -1075,7 +1185,11 @@ export function createOnAirOutputControllerRegistry({
       if (typeof listener !== 'function') {
         throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_ARGUMENT, { field: 'listener' });
       }
-      const keys = sharedKeys(options.baseUrl, options.session);
+      const keys = sharedKeys(
+        options.baseUrl,
+        options.session,
+        options.dashboardSpeakerPlayerInstanceId ?? null,
+      );
       const priorOwner = sessionOwners.get(keys.ownerKey);
       if (priorOwner && priorOwner.controllerKey !== keys.controllerKey) retire(priorOwner);
 
@@ -1118,13 +1232,18 @@ const sharedControllerRegistry = createOnAirOutputControllerRegistry();
 
 const EMPTY_STATE = publicState(null, outputSwitchState(), playbackTransitionState());
 
-export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {}) {
+export function useOnAirOutputControl({
+  session,
+  baseUrl,
+  enabled = true,
+  dashboardSpeakerPlayerInstanceId = null,
+} = {}) {
   const [ownedState, setOwnedState] = useState(() => ({ key: null, value: EMPTY_STATE }));
   const controllerRef = useRef(null);
   const sessionRoom = session?.room;
   const sessionControlToken = session?.controlToken;
   const configurationKey = enabled && baseUrl && sessionRoom && sessionControlToken
-    ? `${String(baseUrl)}\u0000${sessionRoom}\u0000${sessionControlToken}`
+    ? `${String(baseUrl)}\u0000${sessionRoom}\u0000${sessionControlToken}\u0000${dashboardSpeakerPlayerInstanceId ?? ''}`
     : null;
   const configurationKeyRef = useRef(configurationKey);
   configurationKeyRef.current = configurationKey;
@@ -1142,6 +1261,7 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
       lease = sharedControllerRegistry.acquire({
         session: { room: sessionRoom, controlToken: sessionControlToken },
         baseUrl,
+        dashboardSpeakerPlayerInstanceId,
       }, (value) => setOwnedState({ key: configurationKey, value }));
     } catch (error) {
       setOwnedState({
@@ -1162,7 +1282,14 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
       if (controllerRef.current?.controller === lease.controller) controllerRef.current = null;
       lease.release();
     };
-  }, [baseUrl, configurationKey, enabled, sessionControlToken, sessionRoom]);
+  }, [
+    baseUrl,
+    configurationKey,
+    dashboardSpeakerPlayerInstanceId,
+    enabled,
+    sessionControlToken,
+    sessionRoom,
+  ]);
 
   const requireController = useCallback(() => {
     const owner = controllerRef.current;
@@ -1192,6 +1319,14 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
     () => requireController().takeOverControl(),
     [requireController],
   );
+  const startTest = useCallback(
+    (options) => requireController().startTest(options),
+    [requireController],
+  );
+  const stopTest = useCallback(
+    () => requireController().stopTest(),
+    [requireController],
+  );
 
   return {
     ...state,
@@ -1200,5 +1335,7 @@ export function useOnAirOutputControl({ session, baseUrl, enabled = true } = {})
     retryConnection,
     emergencyStop,
     takeOverControl,
+    startTest,
+    stopTest,
   };
 }

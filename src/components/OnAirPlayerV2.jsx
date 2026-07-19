@@ -41,6 +41,7 @@ export default function OnAirPlayerV2({
   room,
   token,
   clientKind: requestedClientKind = null,
+  identity = null,
   onSnapshot = null,
   onStateChange = null,
 }) {
@@ -72,7 +73,15 @@ export default function OnAirPlayerV2({
     // OBS JavaScript binding or its source-active events.
     const runtime = isDashboardSpeaker
       ? null
-      : createObsRuntimeAttestation({ windowObject: window });
+      : createObsRuntimeAttestation({
+        windowObject: window,
+        onChange(snapshot) {
+          // OBS source loss is a local media-safety interrupt, not merely
+          // heartbeat telemetry. The adapter keeps server truth unknown until
+          // an authenticated emergency-stop command proves global recovery.
+          void adapter?.handleRuntimeAttestation(snapshot, { phase: 'obs_callback' });
+        },
+      });
     const clientKind = requestedClientKind || (runtime.capabilities.obsRuntime
       ? PLAYER_CLIENT_KINDS.OBS_BROWSER_SOURCE
       : PLAYER_CLIENT_KINDS.GENERIC_BROWSER);
@@ -121,6 +130,7 @@ export default function OnAirPlayerV2({
           webSocketFactory: (url) => new WebSocket(url),
           buildId: BUILD_ID,
           clientKind,
+          identity,
           capabilities: {
             audioWorklet: typeof AudioWorkletNode === 'function',
             analyser: typeof AudioContext === 'function',
@@ -176,7 +186,7 @@ export default function OnAirPlayerV2({
       prefetchCache?.dispose();
       runtime?.dispose();
     };
-  }, [apiBaseUrl, requestedClientKind, room, token]);
+  }, [apiBaseUrl, identity, requestedClientKind, room, token]);
 
   return (
     <div data-on-air-player-v2-state={localState} aria-hidden="true">

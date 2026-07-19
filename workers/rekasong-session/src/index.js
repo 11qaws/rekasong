@@ -3988,6 +3988,13 @@ export class SessionRoom {
       const session = await this.getSession();
       if (!session) return;
       if (session.status === 'ended') {
+        // A previously queued grace/watchdog event can reach this handler after
+        // endSession has persisted a later cleanup deadline. Preserve the full
+        // retention window and explicitly re-arm the consumed alarm.
+        if (Number.isFinite(session.cleanupAt) && Date.now() < session.cleanupAt) {
+          await this.ctx.storage.setAlarm(session.cleanupAt);
+          return;
+        }
         await this.deleteAssets(session);
         return;
       }

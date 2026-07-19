@@ -20,6 +20,8 @@ import {
   deriveOutputControlAuthority,
   isSafeOutputControlTakeover,
 } from '../lib/outputControlAuthority';
+import { deriveObsAudioCheckView } from '../lib/obsAudioCheckView';
+import { createPlayerPageIdentity } from '../lib/onAirClientState';
 import {
   getOutputMessage as t,
   outputSwitchFailureMessageKey,
@@ -116,6 +118,11 @@ export default function Dashboard() {
   // 설계라 원격 발행 payload에 절대 싣지 않는다(N-08).
 
   const onAirEventHandlerRef = useRef(null);
+  const dashboardSpeakerIdentityRef = useRef(null);
+  if (dashboardSpeakerIdentityRef.current === null) {
+    dashboardSpeakerIdentityRef.current = createPlayerPageIdentity();
+  }
+  const dashboardSpeakerIdentity = dashboardSpeakerIdentityRef.current;
   const onAir = useOnAirSession(
     (payload) => onAirEventHandlerRef.current?.(payload),
     { observeOnly: true }
@@ -129,6 +136,7 @@ export default function Dashboard() {
   const outputControl = useOnAirOutputControl({
     session: onAirSession,
     baseUrl: onAir.baseUrl,
+    dashboardSpeakerPlayerInstanceId: dashboardSpeakerIdentity.playerInstanceId,
     // Protocol v2 owns its control lease. A transient legacy observer reconnect
     // must not dispose that owner in the middle of a run.
     enabled: onAir.configured
@@ -300,6 +308,13 @@ export default function Dashboard() {
     : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
       ? 'switching'
       : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
+  const obsAudioCheck = deriveObsAudioCheckView({
+    snapshot: outputControl.snapshot,
+    actualOutputMode,
+    outputRouteStable,
+    outputSwitchState: outputControl.outputSwitchState,
+    playbackTransitionState,
+  });
   const obsPlayerCandidate = outputControl.outputView?.candidates?.obs ?? null;
   const canEndBroadcastSession = !useOnAirPlayer || Boolean(
     outputControllerReady
@@ -2019,9 +2034,13 @@ export default function Dashboard() {
             outputControlTakeover={outputControl.snapshot?.pendingTakeover ?? null}
             outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
+            outputSwitchReasonCode={outputControl.outputSwitchState?.reasonCode ?? null}
+            obsAudioCheck={obsAudioCheck}
             onSelectOutputMode={outputControllerReady && !outputControlRecoveryReason
               ? handleSelectOutputMode
               : undefined}
+            onStartObsAudioCheck={outputControl.startTest}
+            onStopObsAudioCheck={outputControl.stopTest}
             onEmergencyStopOutput={outputControl.emergencyStop}
             onTakeOverOutputControl={outputControl.takeOverControl}
             onRetryOutputControl={retryOutputControlNow}
@@ -2103,6 +2122,7 @@ export default function Dashboard() {
               apiBaseUrl={onAir.baseUrl}
               room={onAirSession.room}
               token={onAirSession.playerToken}
+              identity={dashboardSpeakerIdentity}
             />
           </Suspense>
         )}

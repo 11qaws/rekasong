@@ -463,6 +463,166 @@ test('a previously true runtime source attestation fails closed when the live pr
   assert.equal(heartbeat.runtime.sourceActive, false);
 });
 
+test('a playing OBS graph physically stops without ACK when active or visible evidence is lost', async (t) => {
+  for (const lostField of ['sourceActive', 'sourceVisible']) {
+    await t.test(lostField, async () => {
+      const runtime = { sourceActive: true, sourceVisible: true };
+      const harness = createHarness({ runtimeProbe: () => ({ ...runtime }) });
+      await activate(harness);
+      await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+      await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY, {
+        commandId: `play-${lostField}`,
+      }));
+      assert.equal(harness.engineState.status, 'playing');
+      assert.equal(harness.engineState.mediaPaused, false);
+      assert.equal(harness.engineState.sourceAttached, true);
+      harness.commands.length = 0;
+      harness.events.length = 0;
+
+      runtime[lostField] = false;
+      const stopped = await harness.adapter.handleRuntimeAttestation(runtime, {
+        phase: 'obs_callback',
+      });
+
+      assert.equal(stopped, true);
+      assert.deepEqual(harness.commands.map((command) => command.type), [
+        PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP,
+      ]);
+      assert.equal(harness.engineState.status, 'stopped');
+      assert.equal(harness.engineState.mediaPaused, true);
+      assert.equal(harness.engineState.sourceAttached, false);
+      assert.equal(harness.engineState.runId, null);
+      assert.equal(harness.events.length, 0, 'source loss is local evidence, never a STOP/deactivate ACK');
+      const snapshot = harness.adapter.snapshot();
+      assert.equal(snapshot.routeState, 'unknown');
+      assert.equal(snapshot.confirmation, 'unknown');
+      assert.equal(snapshot.safetyLocked, true);
+      assert.equal(snapshot.autoResumeAllowed, false);
+      assert.equal(snapshot.activeEntryId, null);
+      assert.equal(snapshot.activeRunId, null);
+      assert.equal(snapshot.lastError.code, ON_AIR_PLAYBACK_ADAPTER_CODES.RUNTIME_SOURCE_LOST);
+    });
+  }
+});
+
+test('runtime source-loss physical stop failure fails closed without manufacturing a terminal event', async () => {
+  const runtime = { sourceActive: true, sourceVisible: true };
+  const harness = createHarness({
+    runtimeProbe: () => ({ ...runtime }),
+    execute(command, { engineState }) {
+      if (command.type === PLAYBACK_COMMAND_TYPES.DETACH) {
+        engineState.status = 'detached';
+        engineState.sourceAttached = false;
+        engineState.mediaPaused = true;
+        return {
+          status: 'applied',
+          postcondition: {
+            mediaPaused: true,
+            sourceDetached: true,
+            autoplayCancelled: true,
+          },
+        };
+      }
+      if (command.type === PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP) {
+        return {
+          status: 'applied',
+          postcondition: {
+            mediaPaused: false,
+            sourceDetached: false,
+            autoplayCancelled: false,
+          },
+        };
+      }
+      throw new Error(`unexpected command ${command.type}`);
+    },
+  });
+  await activate(harness);
+  harness.engineState.status = 'playing';
+  harness.engineState.sourceAttached = true;
+  harness.engineState.mediaPaused = false;
+  harness.engineState.runId = 'run-1';
+  harness.commands.length = 0;
+  harness.events.length = 0;
+  runtime.sourceVisible = false;
+
+  const stopped = await harness.adapter.handleRuntimeAttestation(runtime, {
+    phase: 'obs_callback',
+  });
+
+  assert.equal(stopped, false);
+  assert.equal(harness.events.length, 0);
+  assert.equal(harness.connectionState.state, ON_AIR_V2_CONNECTION_STATES.CLOSED);
+  const snapshot = harness.adapter.snapshot();
+  assert.equal(snapshot.routeState, 'unknown');
+  assert.equal(snapshot.confirmation, 'unknown');
+  assert.equal(snapshot.safetyLocked, true);
+  assert.equal(snapshot.lastError.code, ON_AIR_PLAYBACK_ADAPTER_CODES.LOCAL_SAFETY_STOP_FAILED);
+  assert.equal(
+    snapshot.lastError.detail.triggerCode,
+    ON_AIR_PLAYBACK_ADAPTER_CODES.RUNTIME_SOURCE_LOST,
+  );
+});
+
+test('runtime restoration and reconnect cannot resume; wire emergency permits only detached reactivation', async () => {
+  const runtime = { sourceActive: true, sourceVisible: true };
+  const harness = createHarness({ runtimeProbe: () => ({ ...runtime }) });
+  await activate(harness);
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY));
+  harness.commands.length = 0;
+  harness.events.length = 0;
+
+  runtime.sourceActive = false;
+  await harness.adapter.handleRuntimeAttestation(runtime, { phase: 'obs_callback' });
+  const afterLossCommandCount = harness.commands.length;
+  runtime.sourceActive = true;
+  assert.equal(await harness.adapter.handleRuntimeAttestation(runtime, { phase: 'obs_callback' }), false);
+  harness.connectionCallbacks.onStateChange({
+    previous: ON_AIR_V2_CONNECTION_STATES.NEGOTIATING,
+    state: ON_AIR_V2_CONNECTION_STATES.READY,
+    detail: {},
+  });
+  assert.equal(harness.adapter.snapshot().routeState, 'unknown');
+  assert.equal(harness.adapter.snapshot().safetyLocked, true);
+
+  const blockedActivation = await harness.connectionCallbacks.onPlayerCommand(routeCommand(
+    ROUTE_COMMAND_TYPES.ACTIVATE,
+    { commandId: 'activate-before-emergency', switchId: 'switch-before-emergency', leaseEpoch: 2 },
+  ));
+  assert.equal(blockedActivation, false);
+  assert.equal(harness.commands.length, afterLossCommandCount);
+  assert.equal(harness.events.length, 0);
+
+  await harness.connectionCallbacks.onPlayerCommand({
+    type: ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP,
+    commandId: 'source-loss-recovery-emergency',
+    sessionId: 'session-1',
+    authenticatedControlInstanceId: 'control-1',
+    targetConnectionId: 'connection-1',
+  });
+  assert.equal(harness.events.length, 1);
+  assert.equal(harness.events[0].type, ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP_ACK);
+  assert.equal(harness.adapter.snapshot().routeState, 'emergency_stopped_event_sent');
+
+  await harness.connectionCallbacks.onPlayerCommand(routeCommand(
+    ROUTE_COMMAND_TYPES.ACTIVATE,
+    { commandId: 'activate-after-source-loss', switchId: 'switch-after-source-loss', leaseEpoch: 3 },
+  ));
+  assert.equal(harness.events.at(-1).event, ROUTE_EVENT_TYPES.OUTPUT_READY);
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.engineState.mediaPaused, true);
+  assert.equal(harness.engineState.sourceAttached, false);
+  assert.equal(
+    harness.commands.some((command) => [
+      PLAYBACK_COMMAND_TYPES.LOAD,
+      PLAYBACK_COMMAND_TYPES.PLAY,
+    ].includes(command.type)),
+    false,
+    'reattestation, reconnect, emergency recovery, and route activation never auto-resume',
+  );
+});
+
 test('run frames cannot bypass local route readiness before activation', async () => {
   const harness = createHarness();
 

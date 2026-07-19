@@ -60,6 +60,7 @@ export const ON_AIR_CONTROL_COORDINATOR_CODES = Object.freeze({
   TEST_EVENT_STALE: 'control_coordinator_test_event_stale',
   TEST_EVENT_WITHOUT_START: 'control_coordinator_test_event_without_start',
   TEST_EVIDENCE_INTEGRITY: 'control_coordinator_test_evidence_integrity',
+  EMERGENCY_EVIDENCE_INVALID: 'control_coordinator_emergency_evidence_invalid',
   CONTROL_TAKEOVER_PENDING: 'control_coordinator_takeover_pending',
   SESSION_ENDED: 'control_coordinator_session_ended',
   EPOCH_REGRESSION: 'control_coordinator_epoch_regression',
@@ -77,6 +78,7 @@ const MAX_DETAIL_KEYS = 16;
 const MAX_DETAIL_ARRAY = 16;
 const MAX_DETAIL_STRING = 160;
 const MAX_TEST_MARKERS = 64;
+const PRESTART_TEST_CANCELLATION_CODE = 'playback_adapter_test_cancelled';
 
 function sessionIdFromTransportUrl(rawUrl) {
   try {
@@ -187,6 +189,7 @@ function emptyTestEvidence(generation) {
     started: null,
     markers: [],
     lastTerminal: null,
+    lastAbort: null,
     lastSequences: {
       [ON_AIR_SEQUENCE_NAMESPACES.TEST]: null,
       [ON_AIR_SEQUENCE_NAMESPACES.TEST_TELEMETRY]: null,
@@ -207,7 +210,18 @@ function isExactStrongStopPostcondition(value) {
     && value.audible === false;
 }
 
-function normalizedTestEvent(frame) {
+function isExactEmergencyStopPostcondition(value) {
+  if (!isRecord(value)) return false;
+  const fields = Object.keys(value).sort();
+  const expected = ['autoplayCancelled', 'mediaPaused', 'sourceDetached'];
+  return fields.length === expected.length
+    && fields.every((field, index) => field === expected[index])
+    && value.mediaPaused === true
+    && value.sourceDetached === true
+    && value.autoplayCancelled === true;
+}
+
+function normalizedTestEvent(frame, { startedObserved } = {}) {
   const event = {
     event: frame.event,
     eventId: frame.eventId,
@@ -228,8 +242,10 @@ function normalizedTestEvent(frame) {
   } else if (frame.event === TEST_EVENT_TYPES.TEST_COMPLETE) {
     event.markerCount = frame.markerCount;
     event.postcondition = { stopped: true };
+    if (typeof startedObserved === 'boolean') event.startedObserved = startedObserved;
   } else if (frame.event === TEST_EVENT_TYPES.TEST_FAILED) {
     event.code = frame.code;
+    if (typeof startedObserved === 'boolean') event.startedObserved = startedObserved;
     if (isRecord(frame.detail)) event.detail = stableDetail(frame.detail);
     if (isRecord(frame.safetyPostcondition)) {
       event.safetyPostcondition = stableDetail(frame.safetyPostcondition);
@@ -261,6 +277,8 @@ export class OnAirControlCoordinator {
   #activeRun = null;
   #pendingSwitch = null;
   #pendingTest = null;
+  #testStopIntent = null;
+  #emergencyTestIntent = null;
   #pendingTakeover = null;
   #connectionGeneration = 0;
   #testEvidence = emptyTestEvidence(0);
@@ -371,6 +389,8 @@ export class OnAirControlCoordinator {
     this.#snapshotTrusted = false;
     this.#pendingSwitch = null;
     this.#pendingTest = null;
+    this.#testStopIntent = null;
+    this.#emergencyTestIntent = null;
     this.#pendingTakeover = null;
     this.#connectionGeneration += 1;
     this.#testEvidence = emptyTestEvidence(this.#connectionGeneration);
@@ -435,7 +455,7 @@ export class OnAirControlCoordinator {
       confirmedPlayback: this.#confirmedPlayback,
       activeRun: this.#activeRun,
       pendingSwitch: this.#pendingSwitch,
-      pendingTest: this.#pendingTest,
+      pendingTest: this.#pendingTestSnapshot(),
       pendingTakeover: this.#pendingTakeover,
       testEvidence: this.#testEvidenceSnapshot(),
       pendingCommandIds: [...this.#pendingCommands.keys()].slice(0, 64),
@@ -448,23 +468,41 @@ export class OnAirControlCoordinator {
   }
 
   #testEvidenceSnapshot() {
+    const pendingTest = this.#pendingTestSnapshot();
+    const rawActiveCheckId = this.#playerSnapshot?.activeCheckId ?? null;
     return {
       generation: this.#testEvidence.generation,
       requested: {
-        activeCheckId: this.#playerSnapshot?.activeCheckId ?? null,
-        pendingOperation: this.#pendingTest?.operation ?? null,
-        pendingCheckId: this.#pendingTest?.checkId ?? null,
+        activeCheckId: rawActiveCheckId,
+        effectiveActiveCheckId: this.#effectiveActiveCheckId(),
+        pendingOperation: pendingTest?.operation ?? null,
+        pendingCheckId: pendingTest?.checkId ?? null,
       },
       started: this.#testEvidence.started,
       markers: this.#testEvidence.markers,
       lastTerminal: this.#testEvidence.lastTerminal,
+      lastAbort: this.#testEvidence.lastAbort,
       lastSequences: this.#testEvidence.lastSequences,
+    };
+  }
+
+  #pendingTestSnapshot() {
+    const pending = this.#pendingTest ?? this.#testStopIntent;
+    if (!pending) return null;
+    return {
+      operation: pending.operation,
+      checkId: pending.checkId,
+      commandId: pending.commandId,
     };
   }
 
   #terminalOverridesSnapshotCheck(checkId) {
     const terminal = this.#testEvidence.lastTerminal;
     const lease = this.#playerSnapshot?.lease;
+    const currentConnectionId = this.#snapshotPlayerConnectionId(
+      this.#playerSnapshot,
+      lease?.leaseTarget,
+    );
     const stopped = terminal?.event === TEST_EVENT_TYPES.TEST_COMPLETE
       ? terminal.postcondition?.stopped === true
       : terminal?.event === TEST_EVENT_TYPES.TEST_FAILED
@@ -473,7 +511,197 @@ export class OnAirControlCoordinator {
       && stopped
       && terminal?.checkId === checkId
       && terminal.playerInstanceId === lease?.leaseTarget
-      && terminal.leaseEpoch === lease?.epoch;
+      && terminal.leaseEpoch === lease?.epoch
+      && isIdentifier(currentConnectionId)
+      && terminal.connectionId === currentConnectionId;
+  }
+
+  #snapshotPlayerConnectionId(snapshot, playerInstanceId) {
+    if (!isIdentifier(playerInstanceId) || !Array.isArray(snapshot?.players)) return null;
+    const matchingPlayers = snapshot.players.filter((player) => (
+      player?.playerInstanceId === playerInstanceId && isIdentifier(player?.connectionId)
+    ));
+    return matchingPlayers.length === 1 ? matchingPlayers[0].connectionId : null;
+  }
+
+  #stopIntentConnectionId(checkId, lease) {
+    const started = this.#testEvidence.started;
+    if (started?.checkId === checkId
+      && started.playerInstanceId === lease?.leaseTarget
+      && started.leaseEpoch === lease?.epoch
+      && isIdentifier(started.connectionId)) {
+      return started.connectionId;
+    }
+    return this.#snapshotPlayerConnectionId(this.#playerSnapshot, lease?.leaseTarget);
+  }
+
+  #snapshotPreservesTestStopIntent(snapshot) {
+    const intent = this.#testStopIntent;
+    if (!intent || intent.generation !== this.#connectionGeneration) return false;
+    return snapshot?.lease?.leaseTarget === intent.playerInstanceId
+      && snapshot?.lease?.epoch === intent.leaseEpoch
+      && isIdentifier(intent.connectionId)
+      && this.#snapshotPlayerConnectionId(snapshot, intent.playerInstanceId) === intent.connectionId;
+  }
+
+  #isExactPreStartCancellation(frame, sequenceNamespace, previousSequence) {
+    const intent = this.#testStopIntent;
+    if (!intent || intent.generation !== this.#connectionGeneration) return false;
+    const sequenceValid = sequenceNamespace === ON_AIR_SEQUENCE_NAMESPACES.TEST
+      && Number.isSafeInteger(frame.sequence)
+      && frame.sequence >= 0
+      && (previousSequence === null || frame.sequence === previousSequence + 1);
+    return sequenceValid
+      && frame.event === TEST_EVENT_TYPES.TEST_FAILED
+      && frame.code === PRESTART_TEST_CANCELLATION_CODE
+      && frame.checkId === intent.checkId
+      && frame.commandId === intent.commandId
+      && frame.playerInstanceId === intent.playerInstanceId
+      && frame.leaseEpoch === intent.leaseEpoch
+      && isIdentifier(intent.connectionId)
+      && frame.connectionId === intent.connectionId
+      && isExactStrongStopPostcondition(frame.safetyPostcondition);
+  }
+
+  #captureEmergencyTestIntent(command) {
+    const started = this.#testEvidence.started;
+    const snapshot = this.#playerSnapshot;
+    const lease = snapshot?.lease;
+    if (!started || !this.#snapshotTrusted
+      || this.#connectionState !== ON_AIR_V2_CONNECTION_STATES.READY
+      || started.playerInstanceId !== lease?.leaseTarget
+      || started.leaseEpoch !== lease?.epoch
+      || this.#snapshotPlayerConnectionId(snapshot, started.playerInstanceId)
+        !== started.connectionId) {
+      return null;
+    }
+    return immutable({
+      commandId: command.commandId,
+      sessionId: command.sessionId,
+      checkId: started.checkId,
+      playerInstanceId: started.playerInstanceId,
+      connectionId: started.connectionId,
+      leaseEpoch: started.leaseEpoch,
+      generation: this.#connectionGeneration,
+      emergencyLeaseEpoch: null,
+      acknowledgement: null,
+    });
+  }
+
+  #isExactEmergencyAcknowledgement(frame, intent) {
+    return intent?.generation === this.#connectionGeneration
+      && frame.type === ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP_ACK
+      && frame.commandId === intent.commandId
+      && frame.sessionId === intent.sessionId
+      && frame.playerInstanceId === intent.playerInstanceId
+      && frame.connectionId === intent.connectionId
+      && isExactEmergencyStopPostcondition(frame.postcondition);
+  }
+
+  #hasExactEmergencyStoppedSnapshot(intent) {
+    const snapshot = this.#playerSnapshot;
+    const lease = snapshot?.lease;
+    const confirmed = snapshot?.confirmedPlayback;
+    const desired = snapshot?.desiredTransport;
+    return this.#snapshotTrusted
+      && this.#connectionState === ON_AIR_V2_CONNECTION_STATES.READY
+      && Number.isSafeInteger(intent?.emergencyLeaseEpoch)
+      && intent.emergencyLeaseEpoch === intent.leaseEpoch + 1
+      && lease?.epoch === intent.emergencyLeaseEpoch
+      && lease.status === 'inactive'
+      && lease.leaseTarget === null
+      && lease.clientKind === null
+      && lease.switchId === null
+      && snapshot.activeCheckId === null
+      && snapshot.activeFamily === null
+      && this.#snapshotPlayerConnectionId(snapshot, intent.playerInstanceId)
+        === intent.connectionId
+      && desired?.status === 'stopped'
+      && desired.entryId === null
+      && desired.runId === null
+      && confirmed?.status === 'stopped'
+      && confirmed.reasonCode === 'emergency_stop_acknowledged'
+      && confirmed.paused === true
+      && confirmed.sourceDetached === true
+      && confirmed.autoplayCancelled === true
+      && confirmed.audible === false;
+  }
+
+  #finalizeEmergencyAbortedTestIfProven() {
+    const intent = this.#emergencyTestIntent;
+    const started = this.#testEvidence.started;
+    if (!intent || !intent.acknowledgement || !started
+      || intent.generation !== this.#connectionGeneration
+      || started.checkId !== intent.checkId
+      || started.playerInstanceId !== intent.playerInstanceId
+      || started.connectionId !== intent.connectionId
+      || started.leaseEpoch !== intent.leaseEpoch
+      || !this.#hasExactEmergencyStoppedSnapshot(intent)) {
+      return false;
+    }
+    this.#testEvidence = {
+      ...this.#testEvidence,
+      started: null,
+      lastAbort: immutable({
+        outcome: 'aborted',
+        reasonCode: 'emergency_stop_acknowledged',
+        checkId: intent.checkId,
+        startedObserved: true,
+        emergencyCommandId: intent.commandId,
+        playerInstanceId: intent.playerInstanceId,
+        connectionId: intent.connectionId,
+        leaseEpoch: intent.leaseEpoch,
+        emergencyLeaseEpoch: intent.emergencyLeaseEpoch,
+        acknowledgement: {
+          eventId: intent.acknowledgement.eventId,
+          sequence: intent.acknowledgement.sequence,
+          monotonicTimeMs: intent.acknowledgement.monotonicTimeMs,
+        },
+        safetyPostcondition: {
+          status: 'stopped',
+          mediaPaused: true,
+          sourceDetached: true,
+          autoplayCancelled: true,
+          audible: false,
+        },
+      }),
+    };
+    if (this.#pendingTest?.checkId === intent.checkId) this.#pendingTest = null;
+    if (this.#testStopIntent?.checkId === intent.checkId) this.#testStopIntent = null;
+    this.#emergencyTestIntent = null;
+    return true;
+  }
+
+  #handleEmergencyAcknowledgement(frame) {
+    const intent = this.#emergencyTestIntent;
+    if (!intent) return;
+    if (!this.#isExactEmergencyAcknowledgement(frame, intent)) {
+      this.#recordDiagnostic(
+        ON_AIR_CONTROL_COORDINATOR_CODES.EMERGENCY_EVIDENCE_INVALID,
+        {
+          reason: 'emergency_ack_identity_or_postcondition_mismatch',
+          commandId: typeof frame?.commandId === 'string' ? frame.commandId : null,
+          playerInstanceId: typeof frame?.playerInstanceId === 'string'
+            ? frame.playerInstanceId
+            : null,
+          connectionId: typeof frame?.connectionId === 'string' ? frame.connectionId : null,
+        },
+      );
+      this.#publish();
+      return;
+    }
+    if (intent.acknowledgement) return;
+    this.#emergencyTestIntent = immutable({
+      ...intent,
+      acknowledgement: {
+        eventId: frame.eventId,
+        sequence: frame.sequence,
+        monotonicTimeMs: frame.monotonicTimeMs,
+        postcondition: frame.postcondition,
+      },
+    });
+    this.#finalizeEmergencyAbortedTestIfProven();
+    this.#publish();
   }
 
   #effectiveActiveCheckId() {
@@ -483,7 +711,8 @@ export class OnAirControlCoordinator {
   }
 
   #hasActiveTestWork() {
-    return Boolean(this.#pendingTest || this.#testEvidence.started || this.#effectiveActiveCheckId());
+    return Boolean(this.#pendingTest || this.#testStopIntent
+      || this.#testEvidence.started || this.#effectiveActiveCheckId());
   }
 
   activateOutput(mode) {
@@ -720,10 +949,11 @@ export class OnAirControlCoordinator {
         },
       );
     }
-    if (this.#pendingTest) {
+    if (this.#pendingTest || this.#testStopIntent) {
+      const pending = this.#pendingTest ?? this.#testStopIntent;
       throw new OnAirControlCoordinatorError(
         ON_AIR_CONTROL_COORDINATOR_CODES.TEST_COMMAND_PENDING,
-        { operation: this.#pendingTest.operation, checkId: this.#pendingTest.checkId },
+        { operation: pending.operation, checkId: pending.checkId },
       );
     }
     const activeCheckId = this.#effectiveActiveCheckId();
@@ -753,6 +983,9 @@ export class OnAirControlCoordinator {
       controlEpoch: this.#playerSnapshot.controlLease.controlEpoch,
       payload: { fixtureId, durationMs },
     };
+    this.#testStopIntent = null;
+    this.#emergencyTestIntent = null;
+    this.#testEvidence = emptyTestEvidence(this.#connectionGeneration);
     this.#pendingTest = immutable({ operation: 'start', checkId, commandId: command.commandId });
     try {
       return this.#request(command, { kind: 'startTest', checkId });
@@ -764,10 +997,11 @@ export class OnAirControlCoordinator {
 
   stopTest() {
     this.#assertRunLeaseReady({ allowActiveCheck: true });
-    if (this.#pendingTest) {
+    if (this.#pendingTest || this.#testStopIntent) {
+      const pending = this.#pendingTest ?? this.#testStopIntent;
       throw new OnAirControlCoordinatorError(
         ON_AIR_CONTROL_COORDINATOR_CODES.TEST_COMMAND_PENDING,
-        { operation: this.#pendingTest.operation, checkId: this.#pendingTest.checkId },
+        { operation: pending.operation, checkId: pending.checkId },
       );
     }
     const checkId = this.#effectiveActiveCheckId();
@@ -787,10 +1021,20 @@ export class OnAirControlCoordinator {
       controlEpoch: this.#playerSnapshot.controlLease.controlEpoch,
       payload: {},
     };
+    this.#testStopIntent = immutable({
+      operation: 'stop',
+      checkId,
+      commandId: command.commandId,
+      playerInstanceId: lease.leaseTarget,
+      leaseEpoch: lease.epoch,
+      connectionId: this.#stopIntentConnectionId(checkId, lease),
+      generation: this.#connectionGeneration,
+    });
     this.#pendingTest = immutable({ operation: 'stop', checkId, commandId: command.commandId });
     try {
       return this.#request(command, { kind: 'stopTest', checkId });
     } catch (error) {
+      if (this.#testStopIntent?.commandId === command.commandId) this.#testStopIntent = null;
       if (!this.#unknownLock) this.#pendingTest = null;
       throw error;
     }
@@ -804,7 +1048,15 @@ export class OnAirControlCoordinator {
       sessionId: this.#sessionId,
       authenticatedControlInstanceId: this.#connection.identity.controlInstanceId,
     };
-    return this.#request(command, { kind: 'emergencyStop' });
+    this.#emergencyTestIntent = this.#captureEmergencyTestIntent(command);
+    try {
+      return this.#request(command, { kind: 'emergencyStop' });
+    } catch (error) {
+      if (this.#emergencyTestIntent?.commandId === command.commandId) {
+        this.#emergencyTestIntent = null;
+      }
+      throw error;
+    }
   }
 
   takeOverControl() {
@@ -834,7 +1086,7 @@ export class OnAirControlCoordinator {
 
     const lease = this.#playerSnapshot.lease;
     const desiredStatus = this.#desiredTransport?.status ?? null;
-    const safeToTransfer = isSafeOutputControlTakeover(this.snapshot());
+    const safeToTransfer = !this.#testStopIntent && isSafeOutputControlTakeover(this.snapshot());
     if (!safeToTransfer) {
       throw new OnAirControlCoordinatorError(
         ON_AIR_CONTROL_COORDINATOR_CODES.ACTIVE_WORK_PRESENT,
@@ -843,7 +1095,9 @@ export class OnAirControlCoordinator {
           leaseStatus: lease?.status ?? null,
           desiredStatus,
           activeRun: Boolean(this.#activeRun || this.#playerSnapshot.activeFamily),
-          activeTest: Boolean(this.#pendingTest || this.#playerSnapshot.activeCheckId),
+          activeTest: Boolean(
+            this.#pendingTest || this.#testStopIntent || this.#playerSnapshot.activeCheckId,
+          ),
         },
       );
     }
@@ -1246,10 +1500,11 @@ export class OnAirControlCoordinator {
 
     const lease = this.#playerSnapshot.lease;
     const pendingCheckId = this.#pendingTest?.checkId ?? null;
+    const stopIntentCheckId = this.#testStopIntent?.checkId ?? null;
     const snapshotCheckId = this.#effectiveActiveCheckId();
     const started = this.#testEvidence.started;
     const expectedCheckIds = new Set(
-      [pendingCheckId, snapshotCheckId, started?.checkId].filter(isIdentifier),
+      [pendingCheckId, stopIntentCheckId, snapshotCheckId, started?.checkId].filter(isIdentifier),
     );
     if (expectedCheckIds.size === 0) {
       this.#rejectTestEvent(
@@ -1325,7 +1580,11 @@ export class OnAirControlCoordinator {
       return;
     }
 
-    const normalized = normalizedTestEvent(frame);
+    const terminalEvent = [TEST_EVENT_TYPES.TEST_COMPLETE, TEST_EVENT_TYPES.TEST_FAILED]
+      .includes(frame.event);
+    const normalized = normalizedTestEvent(frame, {
+      ...(terminalEvent ? { startedObserved: Boolean(started) } : {}),
+    });
     if (frame.event === TEST_EVENT_TYPES.TEST_STARTED) {
       if (started) {
         this.#rejectTestEvent(
@@ -1347,15 +1606,33 @@ export class OnAirControlCoordinator {
       };
       if (this.#pendingTest?.operation === 'start'
         && this.#pendingTest.checkId === frame.checkId) this.#pendingTest = null;
-    } else {
-      if (!started) {
+    } else if (!started) {
+      if (!this.#isExactPreStartCancellation(frame, sequenceNamespace, previousSequence)) {
         this.#rejectTestEvent(
           ON_AIR_CONTROL_COORDINATOR_CODES.TEST_EVENT_WITHOUT_START,
           frame,
-          { reason: 'actual_start_not_observed' },
+          {
+            reason: 'pre_start_terminal_contract_mismatch',
+            stopIntentPresent: Boolean(this.#testStopIntent),
+            intentGeneration: this.#testStopIntent?.generation ?? null,
+            actualGeneration: this.#connectionGeneration,
+          },
         );
         return;
       }
+      this.#testEvidence = {
+        ...this.#testEvidence,
+        started: null,
+        markers: [],
+        lastTerminal: normalized,
+        lastSequences: {
+          ...this.#testEvidence.lastSequences,
+          [sequenceNamespace]: frame.sequence,
+        },
+      };
+      if (this.#pendingTest?.checkId === frame.checkId) this.#pendingTest = null;
+      this.#testStopIntent = null;
+    } else {
       const sameStartedIdentity = started.checkId === frame.checkId
         && started.playerInstanceId === frame.playerInstanceId
         && started.connectionId === frame.connectionId
@@ -1430,6 +1707,10 @@ export class OnAirControlCoordinator {
           },
         };
         if (this.#pendingTest?.checkId === frame.checkId) this.#pendingTest = null;
+        if (this.#testStopIntent?.checkId === frame.checkId) this.#testStopIntent = null;
+        if (this.#emergencyTestIntent?.checkId === frame.checkId) {
+          this.#emergencyTestIntent = null;
+        }
       }
     }
 
@@ -1452,6 +1733,14 @@ export class OnAirControlCoordinator {
         );
         return;
       }
+      if (frame?.type === ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP_ACK) {
+        this.#recordDiagnostic(
+          ON_AIR_CONTROL_COORDINATOR_CODES.EMERGENCY_EVIDENCE_INVALID,
+          { reason: 'invalid_emergency_ack', ...validationDetail(validation) },
+        );
+        this.#publish();
+        return;
+      }
       if (frame?.type === SERVER_MESSAGE_TYPES.PLAYER_SNAPSHOT
         || frame?.type === SERVER_MESSAGE_TYPES.DESIRED_TRANSPORT) {
         if (frame?.type === SERVER_MESSAGE_TYPES.PLAYER_SNAPSHOT) this.#snapshotTrusted = false;
@@ -1464,6 +1753,10 @@ export class OnAirControlCoordinator {
     }
     if (frame.type === ON_AIR_MESSAGE_TYPES.TEST_EVENT) {
       this.#handleTestEvent(frame);
+      return;
+    }
+    if (frame.type === ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP_ACK) {
+      this.#handleEmergencyAcknowledgement(frame);
       return;
     }
     if (frame.type === SERVER_MESSAGE_TYPES.SESSION_ENDED) {
@@ -1503,11 +1796,15 @@ export class OnAirControlCoordinator {
         this.#maxControlEpoch ?? 0,
         frame.controlLease.controlEpoch,
       );
+      if (this.#testStopIntent && !this.#snapshotPreservesTestStopIntent(frame)) {
+        this.#testStopIntent = null;
+      }
       this.#playerSnapshot = immutable(frame);
       this.#desiredTransport = immutable(frame.desiredTransport);
       this.#confirmedPlayback = immutable(frame.confirmedPlayback);
       this.#snapshotTrusted = true;
       this.#reconcileAuthoritativeState();
+      this.#finalizeEmergencyAbortedTestIfProven();
       this.#publish();
       return;
     }
@@ -1670,6 +1967,26 @@ export class OnAirControlCoordinator {
       if (metadata?.kind === 'load' && this.#activeRun?.loadCommandId === commandId) {
         this.#activeRun = immutable({ ...this.#activeRun, acknowledged: true });
       }
+      if (metadata?.kind === 'emergencyStop'
+        && this.#emergencyTestIntent?.commandId === commandId) {
+        const acknowledgement = result?.entry?.result;
+        const emergencyLeaseEpoch = acknowledgement?.leaseEpoch;
+        const validAcknowledgement = acknowledgement?.code === 'emergency_stop_dispatched'
+          && Number.isSafeInteger(emergencyLeaseEpoch)
+          && emergencyLeaseEpoch === this.#emergencyTestIntent.leaseEpoch + 1;
+        if (!validAcknowledgement) {
+          this.#lockUnknown(
+            ON_AIR_CONTROL_COORDINATOR_CODES.EMERGENCY_EVIDENCE_INVALID,
+            { reason: 'emergency_command_ack_invalid', commandId },
+          );
+        } else {
+          this.#emergencyTestIntent = immutable({
+            ...this.#emergencyTestIntent,
+            emergencyLeaseEpoch,
+          });
+          this.#finalizeEmergencyAbortedTestIfProven();
+        }
+      }
       if (commandId) this.#pendingCommands.delete(commandId);
     } else if (result?.status === 'rejected') {
       if (metadata?.kind === 'takeover' && this.#pendingTakeover?.commandId === commandId) {
@@ -1689,6 +2006,14 @@ export class OnAirControlCoordinator {
       if ((metadata?.kind === 'startTest' || metadata?.kind === 'stopTest')
         && this.#pendingTest?.commandId === commandId) {
         this.#pendingTest = null;
+      }
+      if (metadata?.kind === 'stopTest'
+        && this.#testStopIntent?.commandId === commandId) {
+        this.#testStopIntent = null;
+      }
+      if (metadata?.kind === 'emergencyStop'
+        && this.#emergencyTestIntent?.commandId === commandId) {
+        this.#emergencyTestIntent = null;
       }
       if (commandId) this.#pendingCommands.delete(commandId);
     }
@@ -1731,6 +2056,8 @@ export class OnAirControlCoordinator {
   }
 
   #lockUnknown(code, detail) {
+    this.#testStopIntent = null;
+    this.#emergencyTestIntent = null;
     if (!this.#unknownLock) {
       this.#unknownLock = immutable({ code, detail: stableDetail(detail) });
       this.#recordDiagnostic(code, detail);

@@ -70,10 +70,14 @@ export default function PlaybackPanel({
   outputControlTakeover = null,
   outputRouteStable = false,
   outputSwitchState = 'idle',
+  outputSwitchReasonCode = null,
+  obsAudioCheck = null,
   onSelectOutputMode,
+  onStartObsAudioCheck,
+  onStopObsAudioCheck,
   onEmergencyStopOutput,
   onTakeOverOutputControl,
-  onRetryOutputControl
+  onRetryOutputControl,
 }) {
   const [previousVolume, setPreviousVolume] = useState(100);
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
@@ -185,17 +189,34 @@ export default function PlaybackPanel({
     : mode === 'obs'
       ? t('onair.output.selector.mode.obs')
       : t('onair.output.selector.mode.unknown');
-  const isOutputActivelyPlaying = Boolean(currentSong && isPlaying && !controlsLocked);
+  const transitionTargetMode = normalizedOutputSwitchState === 'switching'
+    ? selectedOutputMode
+    : null;
+  const targetCandidateState = failedSelectionMode
+    ? outputView?.targets?.[failedSelectionMode]?.candidate?.state ?? null
+    : transitionTargetMode
+      ? outputView?.targets?.[transitionTargetMode]?.candidate?.state ?? null
+      : null;
   const activeOutputStatus = derivePlaybackOutputStatus({
     confirmedOutputMode,
     outputSwitchState: normalizedOutputSwitchState,
     isSessionInvalid: isOnAirInvalid || outputRouteStateUnknown,
     isRouteStable: outputRouteStable,
-    isPlaying: isOutputActivelyPlaying,
+    targetMode: failedSelectionMode ?? transitionTargetMode,
+    targetCandidateState,
+    reasonCode: outputSwitchReasonCode,
   });
   const outputNeedsAttention = isOnAirInvalid
     || outputRouteStateUnknown
     || normalizedOutputSwitchState === 'blocked';
+  const obsAudioCheckStage = obsAudioCheck?.stage ?? 'unknown';
+  const obsAudioCheckMarkerSeconds = ((obsAudioCheck?.markerTimeMs ?? 0) / 1_000).toFixed(1);
+  const obsAudioCheckDurationSeconds = ((obsAudioCheck?.durationMs ?? 0) / 1_000).toFixed(0);
+  const shouldOfferObsAudioCheckStop = Boolean(
+    obsAudioCheck?.canStop
+    || obsAudioCheck?.pendingOperation === 'stop'
+    || (obsAudioCheck?.active && obsAudioCheck?.pendingOperation !== 'start'),
+  );
 
   const selectOutputMode = (mode) => {
     if (outputSelectionLocked) {
@@ -526,6 +547,22 @@ export default function PlaybackPanel({
     }
   };
 
+  const runObsAudioCheckAction = (operation) => {
+    const handler = operation === 'stop' ? onStopObsAudioCheck : onStartObsAudioCheck;
+    if (typeof handler !== 'function') return;
+    try {
+      Promise.resolve(handler()).catch(() => {
+        showToast?.(t(operation === 'stop'
+          ? 'obs.audioCheck.action.stopFailed'
+          : 'obs.audioCheck.action.startFailed'), 'error');
+      });
+    } catch {
+      showToast?.(t(operation === 'stop'
+        ? 'obs.audioCheck.action.stopFailed'
+        : 'obs.audioCheck.action.startFailed'), 'error');
+    }
+  };
+
   const toggleMute = () => {
     if (isMuted) onVolumeChange(previousVolume || 50);
     else {
@@ -735,6 +772,100 @@ export default function PlaybackPanel({
               {outputView?.messageKey && (
                 <p className="output-route-authoritative-detail">{t(outputView.messageKey)}</p>
               )}
+              {confirmedOutputMode === 'obs' && (
+                <p className="output-route-obs-silence-note" role="note">
+                  {t('obs.audioCheck.localSpeakerSilent')}
+                </p>
+              )}
+            </section>
+
+            <section className={`obs-audio-check is-${obsAudioCheckStage}`} aria-labelledby="obs-audio-check-title">
+              <header>
+                <div>
+                  <h3 id="obs-audio-check-title">{t('obs.audioCheck.title')}</h3>
+                  <p id="obs-audio-check-scope">{t('obs.audioCheck.scope')}</p>
+                </div>
+                <span
+                  id="obs-audio-check-status"
+                  className="obs-audio-check-status"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {t(obsAudioCheck?.messageKey ?? 'obs.audioCheck.stage.unknown', {
+                    count: obsAudioCheck?.markerCount ?? 0,
+                    seconds: obsAudioCheckMarkerSeconds,
+                    duration: obsAudioCheckDurationSeconds,
+                  })}
+                </span>
+              </header>
+
+              {obsAudioCheck?.requestObserved && (
+                <div className="obs-audio-check-evidence" role="list" aria-label={t('obs.audioCheck.evidence.label')}>
+                  <span className="is-proven" role="listitem">
+                    <Check size={12} aria-hidden="true" /> {t('obs.audioCheck.evidence.requested')}
+                  </span>
+                  <span className={obsAudioCheck.actualPlayingObserved ? 'is-proven' : ''} role="listitem">
+                    {obsAudioCheck.actualPlayingObserved && <Check size={12} aria-hidden="true" />}
+                    {t(obsAudioCheck.actualPlayingObserved
+                      ? 'obs.audioCheck.evidence.playing'
+                      : 'obs.audioCheck.evidence.playingPending')}
+                  </span>
+                  <span className={obsAudioCheck.markerCount > 0 ? 'is-proven' : ''} role="listitem">
+                    {obsAudioCheck.markerCount > 0 && <Check size={12} aria-hidden="true" />}
+                    {t(obsAudioCheck.markerCount > 0
+                      ? 'obs.audioCheck.evidence.markers'
+                      : 'obs.audioCheck.evidence.markersPending', {
+                      count: obsAudioCheck.markerCount,
+                    })}
+                  </span>
+                </div>
+              )}
+
+              {obsAudioCheck?.markerCount > 0 && obsAudioCheck?.active && (
+                <progress
+                  className="obs-audio-check-progress"
+                  max={obsAudioCheck.durationMs}
+                  value={Math.min(obsAudioCheck.markerTimeMs, obsAudioCheck.durationMs)}
+                  aria-label={t('obs.audioCheck.progressLabel', {
+                    seconds: obsAudioCheckMarkerSeconds,
+                    duration: obsAudioCheckDurationSeconds,
+                  })}
+                />
+              )}
+
+              <p id="obs-audio-check-prompt" className="obs-audio-check-prompt">
+                {t('obs.audioCheck.mixerPrompt')}
+              </p>
+              <div className="obs-audio-check-actions">
+                {shouldOfferObsAudioCheckStop ? (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => runObsAudioCheckAction('stop')}
+                    disabled={!obsAudioCheck?.canStop || typeof onStopObsAudioCheck !== 'function'}
+                    aria-describedby="obs-audio-check-scope obs-audio-check-status obs-audio-check-prompt"
+                  >
+                    {t(obsAudioCheck?.pendingOperation === 'stop'
+                      ? 'obs.audioCheck.action.stopping'
+                      : 'obs.audioCheck.action.stop')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => runObsAudioCheckAction('start')}
+                    disabled={!obsAudioCheck?.canStart || typeof onStartObsAudioCheck !== 'function'}
+                    aria-describedby="obs-audio-check-scope obs-audio-check-status obs-audio-check-prompt"
+                  >
+                    {t(obsAudioCheck?.pendingOperation === 'start'
+                      ? 'obs.audioCheck.action.requesting'
+                      : obsAudioCheck?.completed || obsAudioCheck?.cancelled || obsAudioCheck?.failed
+                        ? 'obs.audioCheck.action.retry'
+                        : 'obs.audioCheck.action.start')}
+                  </button>
+                )}
+              </div>
             </section>
 
             {!isDirectMode && !isOnAirInvalid && (

@@ -94,6 +94,97 @@ test('PlaybackPanel keeps compact route controls in the header and diagnostics i
   assert.match(source.slice(detailsStart), /obs\.setup\.recovery\.routeUnknown/);
 });
 
+test('OBS audio check stays inside settings, exposes evidence accessibly, and states its G2 limit', async () => {
+  const [panelSource, dashboardSource, viewSource] = await Promise.all([
+    readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/lib/obsAudioCheckView.js', import.meta.url), 'utf8'),
+  ]);
+  const modalStart = panelSource.indexOf('{isObsSetupOpen && (');
+  const checkStart = panelSource.indexOf('className={`obs-audio-check', modalStart);
+  assert.ok(modalStart >= 0 && checkStart > modalStart, 'the check must remain in the gear dialog');
+  assert.doesNotMatch(panelSource.slice(0, modalStart), /obs-audio-check/);
+  assert.match(panelSource.slice(checkStart), /aria-labelledby="obs-audio-check-title"/);
+  assert.match(panelSource.slice(checkStart), /role="status"[\s\S]*?aria-live="polite"/);
+  assert.match(panelSource.slice(checkStart), /role="list"[\s\S]*?role="listitem"/);
+  assert.match(panelSource.slice(checkStart), /aria-describedby="obs-audio-check-scope obs-audio-check-status obs-audio-check-prompt"/);
+  assert.match(panelSource.slice(checkStart), /onStartObsAudioCheck/);
+  assert.match(panelSource.slice(checkStart), /onStopObsAudioCheck/);
+  assert.match(dashboardSource, /onStartObsAudioCheck=\{outputControl\.startTest\}/);
+  assert.match(dashboardSource, /onStopObsAudioCheck=\{outputControl\.stopTest\}/);
+  assert.doesNotMatch(viewSource, /rmsDbfs|peakDbfs/);
+
+  assert.match(outputMessageCatalog.ko['obs.audioCheck.scope'], /G2/);
+  assert.match(outputMessageCatalog.ko['obs.audioCheck.scope'], /의미하지 않습니다/);
+  assert.match(outputMessageCatalog.en['obs.audioCheck.scope'], /does not prove/i);
+});
+
+test('OBS audio check copy has exact Korean-English key and placeholder parity', () => {
+  const prefix = 'obs.audioCheck.';
+  const keysByLocale = Object.fromEntries(
+    ['ko', 'en'].map((locale) => [
+      locale,
+      Object.keys(outputMessageCatalog[locale]).filter((key) => key.startsWith(prefix)).sort(),
+    ]),
+  );
+  assert.deepEqual(keysByLocale.en, keysByLocale.ko, 'OBS check locale key sets must stay at 100% parity');
+
+  const required = [
+    'title',
+    'scope',
+    'localSpeakerSilent',
+    'mixerPrompt',
+    'stage.ready',
+    'stage.requested',
+    'stage.awaitingPlaying',
+    'stage.playing',
+    'stage.progress',
+    'stage.stopping',
+    'stage.completed',
+    'stage.cancelled',
+    'stage.failed',
+    'stage.unknown',
+    'block.connection',
+    'block.otherController',
+    'block.mode',
+    'block.candidateNone',
+    'block.candidateDuplicate',
+    'block.switching',
+    'block.activeWork',
+    'block.route',
+    'block.unavailable',
+    'block.staleEvidence',
+    'evidence.label',
+    'evidence.requested',
+    'evidence.playing',
+    'evidence.playingPending',
+    'evidence.markers',
+    'evidence.markersPending',
+    'progressLabel',
+    'action.start',
+    'action.retry',
+    'action.requesting',
+    'action.stop',
+    'action.stopping',
+    'action.startFailed',
+    'action.stopFailed',
+  ].map((suffix) => `${prefix}${suffix}`);
+  assert.deepEqual(required.filter((key) => !keysByLocale.ko.includes(key)), []);
+
+  for (const key of keysByLocale.ko) {
+    assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean OBS check copy for ${key}`);
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English OBS check copy for ${key}`);
+    assert.deepEqual(
+      placeholders(outputMessageCatalog.en[key]),
+      placeholders(outputMessageCatalog.ko[key]),
+      `OBS check placeholder mismatch for ${key}`,
+    );
+  }
+
+  assert.match(outputMessageCatalog.ko['obs.audioCheck.block.activeWork'], /끝내거나.*제거/);
+  assert.match(outputMessageCatalog.en['obs.audioCheck.block.activeWork'], /Finish or remove/);
+});
+
 test('route buttons reflect authoritative output and every blocked route remains recoverable', async () => {
   const [dashboardSource, panelSource] = await Promise.all([
     readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
@@ -214,6 +305,10 @@ test('route refusal, watchdog recovery, and takeover timeout copy is localized a
     outputSwitchFailureMessageKey('output_control_state_unknown'),
     'onair.output.switch.blocked.unknown',
   );
+  assert.equal(
+    outputSwitchFailureMessageKey('output_control_target_identity_mismatch'),
+    'onair.output.switch.blocked.foreignSpeaker',
+  );
   assert.match(dashboardSource, /t\(outputSwitchFailureMessageKey\(error\)\)/);
   assert.match(panelSource, /onair\.control\.takeover\.timeout/);
   assert.match(
@@ -263,6 +358,12 @@ test('compact output header and settings diagnostics have Korean and English cop
     'onair.output.header.standby.obs',
     'onair.output.header.active.connecting',
     'onair.output.header.active.switching',
+    'onair.output.header.connecting.speaker',
+    'onair.output.header.blocked.speaker.none',
+    'onair.output.header.blocked.speaker.duplicate',
+    'onair.output.header.blocked.speaker.foreign',
+    'onair.output.header.blocked.obs.none',
+    'onair.output.header.blocked.obs.duplicate',
     'onair.output.header.active.attention',
     'onair.output.header.active.inactive',
     'onair.output.details.title',

@@ -18,6 +18,14 @@ import {
 import { ON_AIR_TEST_FIXTURE_MIN_DURATION_MS } from '../src/lib/onAirTestFixture.js';
 import { ON_AIR_V2_CONNECTION_STATES } from '../src/lib/onAirV2Connection.js';
 
+const strongStoppedTestPostcondition = Object.freeze({
+  status: 'stopped',
+  mediaPaused: true,
+  sourceDetached: true,
+  autoplayCancelled: true,
+  audible: false,
+});
+
 class FakeConnection {
   constructor(options) {
     this.options = options;
@@ -170,6 +178,17 @@ function playerSnapshot(overrides = {}) {
 function readyOutputSnapshot(overrides = {}) {
   return playerSnapshot({
     selectedOutputMode: 'obs',
+    players: [{
+      playerInstanceId: 'obs-player',
+      connectionId: 'obs-connection-a',
+      clientKind: 'obs-browser-source',
+      state: 'ready',
+      lastSeenAt: 1_000,
+      heartbeatStale: false,
+      buildId: 'coordinator-test-build',
+      capabilities: { obsRuntime: true },
+      runtime: { sourceActive: true },
+    }],
     lease: {
       epoch: 4,
       leaseTarget: 'obs-player',
@@ -235,6 +254,109 @@ function createHarness({ welcome, snapshot, callbacks, requestResult } = {}) {
   connection.negotiate(welcome ?? controlWelcome());
   if (snapshot !== null) connection.frame(snapshot ?? playerSnapshot());
   return { coordinator, connection };
+}
+
+function beginPreStartStop() {
+  const harness = createHarness({ snapshot: readyOutputSnapshot() });
+  const start = harness.coordinator.startTest();
+  harness.connection.frame(readyOutputSnapshot({ activeCheckId: start.command.checkId }));
+  const stop = harness.coordinator.stopTest();
+  return { ...harness, start, stop };
+}
+
+function exactCancellationEvent(start, stop, overrides = {}) {
+  return testEvent(TEST_EVENT_TYPES.TEST_FAILED, {
+    checkId: start.command.checkId,
+    commandId: stop.command.commandId,
+    sequence: 6,
+    code: 'playback_adapter_test_cancelled',
+    detail: { reason: 'explicit_stop', safetyStopped: true },
+    safetyPostcondition: strongStoppedTestPostcondition,
+    ...overrides,
+  });
+}
+
+function beginStartedTest() {
+  const harness = createHarness({ snapshot: readyOutputSnapshot() });
+  const start = harness.coordinator.startTest();
+  harness.connection.frame(testEvent(TEST_EVENT_TYPES.TEST_STARTED, {
+    checkId: start.command.checkId,
+    sequence: 10,
+  }));
+  return { ...harness, start };
+}
+
+function emergencyAcknowledgement(command, overrides = {}) {
+  return {
+    type: ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP_ACK,
+    protocolVersion: ON_AIR_PROTOCOL_VERSION,
+    eventId: 'emergency-event-1',
+    commandId: command.commandId,
+    sessionId: 'protocol-v2-room',
+    playerInstanceId: 'obs-player',
+    connectionId: 'obs-connection-a',
+    sequence: 0,
+    monotonicTimeMs: 2_000,
+    postcondition: {
+      mediaPaused: true,
+      sourceDetached: true,
+      autoplayCancelled: true,
+    },
+    ...overrides,
+  };
+}
+
+function acknowledgeEmergencyCommand(connection, command, overrides = {}) {
+  connection.result({
+    status: 'acknowledged',
+    entry: {
+      commandId: command.commandId,
+      command,
+      state: 'acknowledged',
+      result: {
+        code: 'emergency_stop_dispatched',
+        leaseEpoch: 5,
+        delivered: { protocolV2: 1, legacy: 0 },
+        ...overrides,
+      },
+    },
+  });
+}
+
+function emergencySnapshot(status = 'inactive', overrides = {}) {
+  const stopped = status === 'inactive';
+  return readyOutputSnapshot({
+    lease: {
+      epoch: 5,
+      leaseTarget: null,
+      clientKind: null,
+      status,
+      switchId: null,
+    },
+    activeCheckId: null,
+    activeFamily: null,
+    desiredTransport: {
+      status: 'stopped',
+      song: null,
+      entryId: null,
+      runId: null,
+      position: 0,
+      volume: 100,
+    },
+    confirmedPlayback: stopped
+      ? {
+          status: 'stopped',
+          reasonCode: 'emergency_stop_acknowledged',
+          position: 0,
+          paused: true,
+          sourceDetached: true,
+          autoplayCancelled: true,
+          audible: false,
+          lastSeenAt: 2_100,
+        }
+      : { status: 'unknown', reasonCode: 'emergency_stop_unconfirmed' },
+    ...overrides,
+  });
 }
 
 function assertCoordinatorError(operation, code) {
@@ -1051,11 +1173,215 @@ test('test commands use exact check and lease identities while activeCheck gates
   assert.equal(stop.command.leaseEpoch, start.command.leaseEpoch);
   assert.equal(stop.command.controlEpoch, start.command.controlEpoch);
 
+  connection.result({
+    status: 'acknowledged',
+    entry: { commandId: stop.command.commandId, command: stop.command, state: 'acknowledged' },
+  });
+  assert.equal(coordinator.snapshot().pendingTest.operation, 'stop');
   connection.frame(readyOutputSnapshot({ activeCheckId: null }));
+  assert.equal(coordinator.snapshot().pendingTest.operation, 'stop');
+  assert.equal(coordinator.snapshot().testEvidence.requested.pendingOperation, 'stop');
+  assertCoordinatorError(
+    () => coordinator.startTest(),
+    ON_AIR_CONTROL_COORDINATOR_CODES.TEST_COMMAND_PENDING,
+  );
+  connection.frame(testEvent(TEST_EVENT_TYPES.TEST_FAILED, {
+    checkId: start.command.checkId,
+    commandId: stop.command.commandId,
+    sequence: 6,
+    code: 'playback_adapter_test_cancelled',
+    detail: { reason: 'explicit_stop', safetyStopped: true },
+    safetyPostcondition: strongStoppedTestPostcondition,
+  }));
+  assert.equal(coordinator.snapshot().testEvidence.lastTerminal.startedObserved, false);
   assert.equal(coordinator.snapshot().pendingTest, null);
   const restarted = coordinator.startTest({ fixtureId: 'custom-pulse', durationMs: 1000 });
   assert.equal(restarted.command.payload.fixtureId, 'custom-pulse');
   assert.notEqual(restarted.command.checkId, start.command.checkId);
+});
+
+test('pre-start cancellation remains authoritative when its event arrives before ACK and snapshot', () => {
+  const { coordinator, connection, start, stop } = beginPreStartStop();
+  connection.frame(exactCancellationEvent(start, stop));
+  const accepted = coordinator.snapshot().testEvidence;
+  assert.equal(accepted.started, null);
+  assert.equal(accepted.lastTerminal.checkId, start.command.checkId);
+  assert.equal(accepted.lastTerminal.commandId, stop.command.commandId);
+  assert.equal(accepted.lastTerminal.code, 'playback_adapter_test_cancelled');
+  assert.equal(accepted.lastTerminal.startedObserved, false);
+  assert.deepEqual(accepted.lastTerminal.safetyPostcondition, strongStoppedTestPostcondition);
+
+  connection.result({
+    status: 'acknowledged',
+    entry: { commandId: stop.command.commandId, command: stop.command, state: 'acknowledged' },
+  });
+  connection.frame(readyOutputSnapshot({ activeCheckId: null }));
+  assert.deepEqual(coordinator.snapshot().testEvidence.lastTerminal, accepted.lastTerminal);
+});
+
+test('pre-start cancellation rejects every mismatched stop identity without promoting a terminal', () => {
+  const scenarios = [
+    { name: 'checkId', overrides: { checkId: 'foreign-check' } },
+    { name: 'commandId', overrides: { commandId: 'foreign-stop-command' } },
+    { name: 'playerInstanceId', overrides: { playerInstanceId: 'foreign-player' } },
+    { name: 'leaseEpoch', overrides: { leaseEpoch: 5 } },
+    { name: 'connectionId', overrides: { connectionId: 'foreign-player-connection' } },
+  ];
+  for (const scenario of scenarios) {
+    const { coordinator, connection, start, stop } = beginPreStartStop();
+    connection.frame(exactCancellationEvent(start, stop, scenario.overrides));
+    assert.equal(
+      coordinator.snapshot().testEvidence.lastTerminal,
+      null,
+      scenario.name,
+    );
+  }
+});
+
+test('pre-start cancellation requires its exact code and complete strong-stop postcondition', () => {
+  const scenarios = [
+    { name: 'wrong code', overrides: { code: 'fixture_test_failed' } },
+    { name: 'missing safety', overrides: { safetyPostcondition: undefined } },
+    {
+      name: 'false safety field',
+      overrides: {
+        safetyPostcondition: { ...strongStoppedTestPostcondition, audible: true },
+      },
+    },
+  ];
+  for (const scenario of scenarios) {
+    const { coordinator, connection, start, stop } = beginPreStartStop();
+    const frame = exactCancellationEvent(start, stop, scenario.overrides);
+    if (scenario.overrides.safetyPostcondition === undefined) delete frame.safetyPostcondition;
+    connection.frame(frame);
+    assert.equal(
+      coordinator.snapshot().testEvidence.lastTerminal,
+      null,
+      scenario.name,
+    );
+  }
+});
+
+test('rejected STOP, reconnect, and route replacement each retire the pre-start stop intent', () => {
+  {
+    const { coordinator, connection, start, stop } = beginPreStartStop();
+    connection.result({
+      status: 'rejected',
+      entry: { commandId: stop.command.commandId, command: stop.command, state: 'rejected' },
+    });
+    connection.frame(exactCancellationEvent(start, stop));
+    assert.equal(coordinator.snapshot().testEvidence.lastTerminal, null);
+    connection.frame(readyOutputSnapshot({ activeCheckId: null }));
+    assert.doesNotThrow(() => coordinator.startTest());
+  }
+
+  {
+    const { coordinator, connection, start, stop } = beginPreStartStop();
+    connection.lose('cancel_intent_reconnect');
+    coordinator.connect();
+    connection.negotiate(controlWelcome({ connectionId: 'control-connection-b' }));
+    connection.frame(readyOutputSnapshot());
+    connection.frame(exactCancellationEvent(start, stop));
+    assert.equal(coordinator.snapshot().testEvidence.lastTerminal, null);
+  }
+
+  {
+    const { coordinator, connection, start, stop } = beginPreStartStop();
+    connection.frame(readyOutputSnapshot({
+      players: [{
+        playerInstanceId: 'replacement-player',
+        connectionId: 'replacement-connection',
+        clientKind: 'obs-browser-source',
+        state: 'ready',
+        lastSeenAt: 2_000,
+        heartbeatStale: false,
+        buildId: 'replacement-build',
+        capabilities: { obsRuntime: true },
+        runtime: { sourceActive: true },
+      }],
+      eligibleCandidates: { obs: ['replacement-player'] },
+      lease: {
+        epoch: 5,
+        leaseTarget: 'replacement-player',
+        clientKind: 'obs-browser-source',
+        status: 'ready',
+        switchId: 'replacement-switch',
+      },
+      activeCheckId: null,
+    }));
+    connection.frame(exactCancellationEvent(start, stop));
+    assert.equal(coordinator.snapshot().testEvidence.lastTerminal, null);
+    assert.doesNotThrow(() => coordinator.startTest());
+  }
+});
+
+test('accepted pre-start cancellation is one-shot and duplicate replay cannot overwrite it', () => {
+  const { coordinator, connection, start, stop } = beginPreStartStop();
+  const acceptedFrame = exactCancellationEvent(start, stop);
+  connection.frame(acceptedFrame);
+  const accepted = coordinator.snapshot().testEvidence.lastTerminal;
+
+  connection.frame(acceptedFrame);
+  connection.frame(exactCancellationEvent(start, stop, {
+    eventId: 'test-event-replayed-with-different-detail',
+    sequence: 7,
+    detail: { reason: 'replayed_terminal', safetyStopped: true },
+  }));
+  const afterReplay = coordinator.snapshot();
+  assert.deepEqual(afterReplay.testEvidence.lastTerminal, accepted);
+  assert.ok(afterReplay.diagnostics.some((diagnostic) => (
+    diagnostic.code === ON_AIR_CONTROL_COORDINATOR_CODES.TEST_EVENT_STALE
+  )));
+});
+
+test('terminal evidence records whether actual playback start was observed', () => {
+  const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
+  const start = coordinator.startTest();
+  connection.frame(testEvent(TEST_EVENT_TYPES.TEST_STARTED, {
+    checkId: start.command.checkId,
+    sequence: 10,
+  }));
+  const stop = coordinator.stopTest();
+  connection.frame(exactCancellationEvent(start, stop, { sequence: 11 }));
+  const terminal = coordinator.snapshot().testEvidence.lastTerminal;
+  assert.equal(terminal.startedObserved, true);
+  assert.equal(terminal.code, 'playback_adapter_test_cancelled');
+  assert.equal(coordinator.snapshot().testEvidence.markers.length, 0);
+});
+
+test('a new test clears old success evidence before an immediate pre-start cancellation', () => {
+  const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
+  const completedStart = coordinator.startTest();
+  connection.frame(testEvent(TEST_EVENT_TYPES.TEST_STARTED, {
+    checkId: completedStart.command.checkId,
+    sequence: 10,
+  }));
+  connection.frame(testEvent(TEST_EVENT_TYPES.TEST_MARKER, {
+    checkId: completedStart.command.checkId,
+    sequence: 20,
+    markerIndex: 0,
+    markerTimeMs: 250,
+  }));
+  connection.frame(testEvent(TEST_EVENT_TYPES.TEST_COMPLETE, {
+    checkId: completedStart.command.checkId,
+    sequence: 11,
+    markerCount: 1,
+  }));
+  assert.equal(coordinator.snapshot().testEvidence.lastTerminal.startedObserved, true);
+
+  const nextStart = coordinator.startTest();
+  const pending = coordinator.snapshot().testEvidence;
+  assert.equal(pending.lastTerminal, null);
+  assert.equal(pending.markers.length, 0);
+  assert.equal(pending.started, null);
+  connection.frame(readyOutputSnapshot({ activeCheckId: nextStart.command.checkId }));
+  const nextStop = coordinator.stopTest();
+  connection.frame(exactCancellationEvent(nextStart, nextStop, { sequence: 30 }));
+  const cancelled = coordinator.snapshot().testEvidence;
+  assert.equal(cancelled.lastTerminal.checkId, nextStart.command.checkId);
+  assert.equal(cancelled.lastTerminal.startedObserved, false);
+  assert.equal(cancelled.lastTerminal.code, 'playback_adapter_test_cancelled');
+  assert.equal(cancelled.markers.length, 0);
 });
 
 test('test fixture duration rejects sub-fixture values and accepts the exact shared minimum', () => {
@@ -1097,6 +1423,7 @@ test('test evidence keeps requested state separate from an actually observed sta
   const start = coordinator.startTest();
   const requested = coordinator.snapshot().testEvidence;
   assert.equal(requested.requested.activeCheckId, null);
+  assert.equal(requested.requested.effectiveActiveCheckId, null);
   assert.equal(requested.requested.pendingOperation, 'start');
   assert.equal(requested.requested.pendingCheckId, start.command.checkId);
   assert.equal(requested.started, null);
@@ -1109,6 +1436,10 @@ test('test evidence keeps requested state separate from an actually observed sta
   assert.equal(started.playerSnapshot.activeCheckId, null, 'raw snapshot remains distinct');
   assert.equal(started.pendingTest, null);
   assert.equal(started.testEvidence.requested.activeCheckId, null);
+  assert.equal(
+    started.testEvidence.requested.effectiveActiveCheckId,
+    start.command.checkId,
+  );
   assert.equal(started.testEvidence.started.checkId, start.command.checkId);
   assert.equal(started.testEvidence.started.event, TEST_EVENT_TYPES.TEST_STARTED);
   assertCoordinatorError(
@@ -1152,6 +1483,73 @@ test('test evidence keeps requested state separate from an actually observed sta
   assert.equal(load.command.entryId, 'post-test-entry');
 });
 
+test('terminal override requires the exact sole current connection for the leased player', () => {
+  const routeScenarios = [
+    {
+      name: 'leased player is absent from players',
+      players: [],
+    },
+    {
+      name: 'same player instance has a new connection',
+      players: [{
+        ...readyOutputSnapshot().players[0],
+        connectionId: 'obs-connection-new',
+      }],
+    },
+    {
+      name: 'same player instance has ambiguous connections',
+      players: [
+        readyOutputSnapshot().players[0],
+        {
+          ...readyOutputSnapshot().players[0],
+          connectionId: 'obs-connection-new',
+        },
+      ],
+    },
+  ];
+
+  for (const scenario of routeScenarios) {
+    const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
+    const start = coordinator.startTest();
+    connection.frame(readyOutputSnapshot({ activeCheckId: start.command.checkId }));
+    connection.frame(testEvent(TEST_EVENT_TYPES.TEST_STARTED, {
+      checkId: start.command.checkId,
+      sequence: 10,
+    }));
+    connection.frame(testEvent(TEST_EVENT_TYPES.TEST_MARKER, {
+      checkId: start.command.checkId,
+      sequence: 20,
+      markerIndex: 0,
+      markerTimeMs: 250,
+    }));
+    connection.frame(testEvent(TEST_EVENT_TYPES.TEST_COMPLETE, {
+      checkId: start.command.checkId,
+      sequence: 11,
+      markerCount: 1,
+    }));
+
+    const exactRoute = coordinator.snapshot().testEvidence.requested;
+    assert.equal(exactRoute.activeCheckId, start.command.checkId, scenario.name);
+    assert.equal(exactRoute.effectiveActiveCheckId, null, scenario.name);
+
+    connection.frame(readyOutputSnapshot({
+      activeCheckId: start.command.checkId,
+      players: scenario.players,
+    }));
+    const replacedRoute = coordinator.snapshot().testEvidence.requested;
+    assert.equal(replacedRoute.activeCheckId, start.command.checkId, scenario.name);
+    assert.equal(
+      replacedRoute.effectiveActiveCheckId,
+      start.command.checkId,
+      scenario.name,
+    );
+    assertCoordinatorError(
+      () => coordinator.startTest(),
+      ON_AIR_CONTROL_COORDINATOR_CODES.TEST_ALREADY_ACTIVE,
+    );
+  }
+});
+
 test('test_failed records terminal evidence but only a proven safety stop releases stale activeCheck', () => {
   const strongStopped = {
     status: 'stopped',
@@ -1191,6 +1589,11 @@ test('test_failed records terminal evidence but only a proven safety stop releas
     assert.equal(evidence.lastTerminal.event, TEST_EVENT_TYPES.TEST_FAILED);
     assert.equal(evidence.lastTerminal.code, 'fixture_test_failed');
     assert.equal(evidence.lastTerminal.detail.safetyStopped, scenario.detail.safetyStopped);
+    assert.equal(evidence.requested.activeCheckId, start.command.checkId);
+    assert.equal(
+      evidence.requested.effectiveActiveCheckId,
+      scenario.safe ? null : start.command.checkId,
+    );
 
     if (!scenario.safe) {
       assertCoordinatorError(
@@ -1634,6 +2037,200 @@ test('display state rejects non-JSON, cyclic, deep, and oversized values before 
     assert.deepEqual(coordinator.snapshot().pendingCommandIds, []);
     assert.equal(coordinator.snapshot().unknownLock, null);
     assert.equal(connection.commands.length, 0);
+  }
+});
+
+test('exact emergency proof aborts a source-loss started test without a fake terminal', () => {
+  const { coordinator, connection, start } = beginStartedTest();
+  connection.frame(readyOutputSnapshot({
+    activeCheckId: start.command.checkId,
+    lease: {
+      epoch: 4,
+      leaseTarget: 'obs-player',
+      clientKind: 'obs-browser-source',
+      status: 'unknown',
+      switchId: 'active-switch',
+    },
+    desiredTransport: { status: 'unknown' },
+    confirmedPlayback: { status: 'unknown', reasonCode: 'target_source_inactive' },
+  }));
+  assert.equal(coordinator.snapshot().routeUnknown, true);
+  const emergency = coordinator.emergencyStop();
+  acknowledgeEmergencyCommand(connection, emergency.command);
+  connection.frame(emergencySnapshot('emergency_stopping'));
+  assert.equal(coordinator.snapshot().testEvidence.started.checkId, start.command.checkId);
+  assert.equal(coordinator.snapshot().testEvidence.lastAbort, null);
+
+  connection.frame(emergencyAcknowledgement(emergency.command));
+  assert.equal(coordinator.snapshot().testEvidence.started.checkId, start.command.checkId);
+  connection.frame(emergencySnapshot());
+
+  const evidence = coordinator.snapshot().testEvidence;
+  assert.equal(evidence.started, null);
+  assert.equal(evidence.lastTerminal, null);
+  assert.equal(evidence.lastAbort.outcome, 'aborted');
+  assert.equal(evidence.lastAbort.reasonCode, 'emergency_stop_acknowledged');
+  assert.equal(evidence.lastAbort.checkId, start.command.checkId);
+  assert.equal(evidence.lastAbort.startedObserved, true);
+  assert.equal(evidence.lastAbort.emergencyCommandId, emergency.command.commandId);
+  assert.equal(evidence.lastAbort.playerInstanceId, 'obs-player');
+  assert.equal(evidence.lastAbort.connectionId, 'obs-connection-a');
+  assert.equal(evidence.lastAbort.leaseEpoch, 4);
+  assert.equal(evidence.lastAbort.emergencyLeaseEpoch, 5);
+  assert.deepEqual(evidence.lastAbort.safetyPostcondition, strongStoppedTestPostcondition);
+
+  const ended = coordinator.endSession();
+  assert.equal(ended.command.type, 'end_session');
+});
+
+test('emergency abort proof converges when final snapshot and player ACK precede command ACK', () => {
+  const { coordinator, connection, start } = beginStartedTest();
+  const emergency = coordinator.emergencyStop();
+  connection.frame(emergencySnapshot());
+  connection.frame(emergencyAcknowledgement(emergency.command));
+  assert.equal(coordinator.snapshot().testEvidence.started.checkId, start.command.checkId);
+  assert.equal(coordinator.snapshot().testEvidence.lastAbort, null);
+
+  acknowledgeEmergencyCommand(connection, emergency.command);
+  assert.equal(coordinator.snapshot().testEvidence.started, null);
+  assert.equal(coordinator.snapshot().testEvidence.lastTerminal, null);
+  assert.equal(coordinator.snapshot().testEvidence.lastAbort.outcome, 'aborted');
+});
+
+test('emergency abort remains active when any command, player, lease, or strong-stop proof is absent', () => {
+  const scenarios = [
+    {
+      name: 'missing command ACK',
+      apply({ connection, emergency }) {
+        connection.frame(emergencyAcknowledgement(emergency.command));
+        connection.frame(emergencySnapshot());
+      },
+    },
+    {
+      name: 'missing player ACK',
+      apply({ connection, emergency }) {
+        acknowledgeEmergencyCommand(connection, emergency.command);
+        connection.frame(emergencySnapshot());
+      },
+    },
+    {
+      name: 'missing final strong-stop snapshot',
+      apply({ connection, emergency }) {
+        acknowledgeEmergencyCommand(connection, emergency.command);
+        connection.frame(emergencyAcknowledgement(emergency.command));
+        connection.frame(emergencySnapshot('emergency_stopping'));
+      },
+    },
+    {
+      name: 'wrong final lease epoch',
+      apply({ connection, emergency }) {
+        acknowledgeEmergencyCommand(connection, emergency.command);
+        connection.frame(emergencyAcknowledgement(emergency.command));
+        connection.frame(emergencySnapshot('inactive', { lease: { epoch: 6 } }));
+      },
+    },
+    {
+      name: 'non-strong final playback',
+      apply({ connection, emergency }) {
+        acknowledgeEmergencyCommand(connection, emergency.command);
+        connection.frame(emergencyAcknowledgement(emergency.command));
+        connection.frame(emergencySnapshot('inactive', {
+          confirmedPlayback: {
+            status: 'stopped',
+            reasonCode: 'emergency_stop_acknowledged',
+            paused: true,
+            sourceDetached: true,
+            autoplayCancelled: true,
+            audible: true,
+          },
+        }));
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const harness = beginStartedTest();
+    const emergency = harness.coordinator.emergencyStop();
+    scenario.apply({ ...harness, emergency });
+    const evidence = harness.coordinator.snapshot().testEvidence;
+    assert.equal(evidence.started.checkId, harness.start.command.checkId, scenario.name);
+    assert.equal(evidence.lastAbort, null, scenario.name);
+    assert.equal(evidence.lastTerminal, null, scenario.name);
+    assertCoordinatorError(
+      () => harness.coordinator.endSession(),
+      ON_AIR_CONTROL_COORDINATOR_CODES.ACTIVE_WORK_PRESENT,
+    );
+  }
+});
+
+test('foreign, malformed, rejected, or terminal-raced emergency evidence cannot invent an abort', () => {
+  const eventScenarios = [
+    { name: 'commandId', overrides: { commandId: 'foreign-emergency-command' } },
+    { name: 'sessionId', overrides: { sessionId: 'foreign-session' } },
+    { name: 'playerInstanceId', overrides: { playerInstanceId: 'foreign-player' } },
+    { name: 'connectionId', overrides: { connectionId: 'foreign-connection' } },
+    {
+      name: 'postcondition',
+      overrides: {
+        postcondition: {
+          mediaPaused: true,
+          sourceDetached: true,
+          autoplayCancelled: false,
+        },
+      },
+    },
+  ];
+  for (const scenario of eventScenarios) {
+    const harness = beginStartedTest();
+    const emergency = harness.coordinator.emergencyStop();
+    acknowledgeEmergencyCommand(harness.connection, emergency.command);
+    harness.connection.frame(emergencyAcknowledgement(emergency.command, scenario.overrides));
+    harness.connection.frame(emergencySnapshot());
+    assert.equal(harness.coordinator.snapshot().testEvidence.lastAbort, null, scenario.name);
+    assert.equal(
+      harness.coordinator.snapshot().testEvidence.started.checkId,
+      harness.start.command.checkId,
+      scenario.name,
+    );
+  }
+
+  {
+    const harness = beginStartedTest();
+    const emergency = harness.coordinator.emergencyStop();
+    harness.connection.result({
+      status: 'rejected',
+      entry: {
+        commandId: emergency.command.commandId,
+        command: emergency.command,
+        state: 'rejected',
+        result: { code: 'emergency_stop_rejected' },
+      },
+    });
+    harness.connection.frame(emergencyAcknowledgement(emergency.command));
+    harness.connection.frame(emergencySnapshot());
+    assert.equal(harness.coordinator.snapshot().testEvidence.lastAbort, null);
+    assert.equal(
+      harness.coordinator.snapshot().testEvidence.started.checkId,
+      harness.start.command.checkId,
+    );
+  }
+
+  {
+    const harness = beginStartedTest();
+    const emergency = harness.coordinator.emergencyStop();
+    harness.connection.frame(testEvent(TEST_EVENT_TYPES.TEST_FAILED, {
+      checkId: harness.start.command.checkId,
+      sequence: 11,
+      code: 'fixture_test_failed',
+      detail: { phase: 'emergency_race', safetyStopped: true },
+      safetyPostcondition: strongStoppedTestPostcondition,
+    }));
+    const terminal = harness.coordinator.snapshot().testEvidence.lastTerminal;
+    acknowledgeEmergencyCommand(harness.connection, emergency.command);
+    harness.connection.frame(emergencyAcknowledgement(emergency.command));
+    harness.connection.frame(emergencySnapshot());
+    assert.deepEqual(harness.coordinator.snapshot().testEvidence.lastTerminal, terminal);
+    assert.equal(harness.coordinator.snapshot().testEvidence.lastAbort, null);
   }
 });
 

@@ -20,7 +20,8 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 const waitFor = async (predicate, timeoutMs, label) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await predicate()) return true;
+    const result = await predicate();
+    if (result) return result;
     await sleep(100);
   }
   throw new Error(`${label} timed out after ${timeoutMs}ms`);
@@ -79,12 +80,22 @@ try {
 
   const sendCommand = async (command) => {
     const commandId = `codex-${command.type}-${crypto.randomUUID()}`;
+    const messageOffset = messages.length;
     control.send(JSON.stringify({ type: 'command', command: { ...command, commandId } }));
-    await waitFor(
-      () => messages.some((message) => message.type === 'command_ack' && message.commandId === commandId),
+    const outcome = await waitFor(
+      () => messages.slice(messageOffset).find((message) => (
+        (message.type === 'command_ack' || message.type === 'command_rejected')
+          && message.commandId === commandId
+      ) || (
+        message.type === 'error'
+          && (message.commandId === commandId || !message.commandId)
+      )),
       5_000,
-      `${command.type} command acknowledgement`
+      `${command.type} command terminal result`
     );
+    if (outcome.type !== 'command_ack') {
+      throw new Error(`${command.type} command ${outcome.type}: ${JSON.stringify(outcome)}`);
+    }
     return commandId;
   };
 
@@ -209,6 +220,13 @@ try {
       messages.some((message) => message.type === 'player_event' && Number(message.event?.position) > 0)
   );
   check('player page emitted no uncaught errors', pageErrors.length === 0, pageErrors.join(' | '));
+
+  await sendCommand({ type: 'stop', sessionId: 'codex-fallback-run' });
+  const stoppedState = await waitFor(async () => {
+    const state = await mediaState(page);
+    return state.exists && state.paused && state.currentTime <= 0.1 ? state : null;
+  }, 5_000, 'final STOP reflected by media element');
+  check('final STOP is physically reflected before session end', true, JSON.stringify(stoppedState));
 
   await sendCommand({ type: 'end_session' });
 } catch (error) {

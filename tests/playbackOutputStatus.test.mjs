@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { derivePlaybackOutputStatus } from '../src/lib/playbackOutputStatus.js';
 
-test('stable routes use active labels only while playback is actually running', () => {
+test('stable routes identify the selected output path even while no song is playing', () => {
   assert.deepEqual(
     derivePlaybackOutputStatus({
       confirmedOutputMode: 'speaker',
@@ -26,7 +26,43 @@ test('stable routes use active labels only while playback is actually running', 
       isRouteStable: true,
       isPlaying: false,
     }).key,
-    'onair.output.header.standby.speaker',
+    'onair.output.header.active.speaker',
+  );
+});
+
+test('speaker startup and candidate failures use compact target-specific labels', () => {
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'switching',
+      targetMode: 'speaker',
+      targetCandidateState: 'none',
+    }),
+    { key: 'onair.output.header.connecting.speaker', tone: 'pending', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'blocked',
+      targetMode: 'obs',
+      targetCandidateState: 'none',
+    }),
+    { key: 'onair.output.header.blocked.obs.none', tone: 'attention', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'blocked',
+      targetMode: 'obs',
+      targetCandidateState: 'duplicate',
+    }),
+    { key: 'onair.output.header.blocked.obs.duplicate', tone: 'attention', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'blocked',
+      targetMode: 'speaker',
+      targetCandidateState: 'single',
+      reasonCode: 'output_control_target_identity_mismatch',
+    }),
+    { key: 'onair.output.header.blocked.speaker.foreign', tone: 'attention', mode: null },
   );
 });
 

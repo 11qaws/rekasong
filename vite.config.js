@@ -62,4 +62,7 @@ function widgetSyncPlugin() {
 export default defineConfig({
   plugins: [react(), widgetSyncPlugin()],
   base: process.env.GITHUB_ACTIONS ? '/rekasong/' : '/',
+  build: {
+    manifest: true,
+  },
 })

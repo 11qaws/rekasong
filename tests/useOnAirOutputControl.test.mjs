@@ -204,6 +204,16 @@ class FakeCoordinator {
     return { status: 'created', operation: 'emergencyStop' };
   }
 
+  startTest(options) {
+    this.calls.push(['startTest', options]);
+    return { status: 'created', operation: 'startTest' };
+  }
+
+  stopTest() {
+    this.calls.push(['stopTest']);
+    return { status: 'created', operation: 'stopTest' };
+  }
+
   takeOverControl() {
     this.calls.push(['takeOverControl']);
     return { status: 'created', operation: 'takeOverControl' };
@@ -492,6 +502,143 @@ test('activation and deactivation watchdogs fail closed without assuming a route
   }
 });
 
+test('a first-click speaker selection waits for the page-owned lazy candidate and activates once', () => {
+  const timers = createTimerHarness();
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [] },
+  })), {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+      candidateWaitMs: 30,
+      switchTimeoutMs: 60,
+      dashboardSpeakerPlayerInstanceId: 'speaker-player',
+    },
+  });
+  const coordinator = coordinators[0];
+
+  assert.deepEqual(controller.selectOutputMode('speaker'), {
+    status: 'waiting_for_candidate',
+    mode: 'speaker',
+  });
+  assert.deepEqual(coordinator.calls, []);
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING);
+  assert.equal(timers.size, 1);
+
+  coordinator.emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['speaker-player'] },
+  })));
+  assert.deepEqual(coordinator.calls, [['activateOutput', 'speaker']]);
+  assert.equal(timers.size, 1, 'candidate wait is replaced by the activation watchdog');
+
+  coordinator.emit(coordinatorSnapshot(readyRoute('speaker')));
+  assert.equal(controller.getState().actualOutputMode, 'speaker');
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+  assert.equal(timers.size, 0);
+});
+
+test('a missing page-owned speaker candidate times out visibly without sending a route command', () => {
+  const timers = createTimerHarness();
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [] },
+  })), {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+      candidateWaitMs: 25,
+      dashboardSpeakerPlayerInstanceId: 'speaker-player',
+    },
+  });
+
+  controller.selectOutputMode('speaker');
+  assert.equal(timers.runNext(), 25);
+  assert.deepEqual(controller.getState().outputSwitchState, {
+    status: ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED,
+    targetMode: 'speaker',
+    reasonCode: ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT,
+  });
+  assert.deepEqual(coordinators[0].calls, []);
+
+  coordinators[0].emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['speaker-player'] },
+  })));
+  assert.deepEqual(
+    coordinators[0].calls,
+    [],
+    'a candidate arriving after the explicit timeout cannot silently revive an expired click',
+  );
+});
+
+test('a duplicate speaker candidate fails closed while the first-click intent is waiting', () => {
+  const timers = createTimerHarness();
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [] },
+  })), {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+      candidateWaitMs: 25,
+      dashboardSpeakerPlayerInstanceId: 'speaker-player',
+    },
+  });
+
+  controller.selectOutputMode('speaker');
+  coordinators[0].emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['speaker-a', 'speaker-b'] },
+  })));
+
+  assert.deepEqual(controller.getState().outputSwitchState, {
+    status: ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED,
+    targetMode: 'speaker',
+    reasonCode: ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT,
+  });
+  assert.deepEqual(coordinators[0].calls, []);
+  assert.equal(timers.size, 0);
+});
+
+test('speaker activation requires the exact Dashboard-owned player identity', () => {
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['foreign-speaker'] },
+  })), {
+    controllerOptions: {
+      dashboardSpeakerPlayerInstanceId: 'owned-speaker',
+    },
+  });
+
+  assertControlError(
+    () => controller.selectOutputMode('speaker'),
+    ON_AIR_OUTPUT_CONTROL_CODES.TARGET_IDENTITY_MISMATCH,
+  );
+  assert.deepEqual(coordinators[0].calls, []);
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED);
+});
+
+test('first-click wait ignores a sole foreign speaker and activates only the owned identity', () => {
+  const timers = createTimerHarness();
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [] },
+  })), {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+      candidateWaitMs: 50,
+      dashboardSpeakerPlayerInstanceId: 'owned-speaker',
+    },
+  });
+
+  controller.selectOutputMode('speaker');
+  coordinators[0].emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['foreign-speaker'] },
+  })));
+  assert.deepEqual(coordinators[0].calls, []);
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING);
+
+  coordinators[0].emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['owned-speaker'] },
+  })));
+  assert.deepEqual(coordinators[0].calls, [['activateOutput', 'speaker']]);
+});
+
 test('reselecting the actual active route clears a blocked alternate intent during playback', () => {
   const protocol = readyRoute('speaker', {
     activeFamily: { family: 'run', entryId: 'entry-a', runId: 'run-a' },
@@ -635,6 +782,21 @@ test('maps the complete legacy command surface to coordinator APIs', () => {
     ['prefetch', ['abcdefghijk']],
     ['publishDisplayState', display],
     ['endSession'],
+  ]);
+});
+
+test('wires OBS audio check start and safe stop directly to the owned coordinator', () => {
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(readyRoute('obs')));
+  const coordinator = coordinators[0];
+
+  assert.deepEqual(
+    controller.startTest({ fixtureId: 'pcm-pulse-v1', durationMs: 8_000 }),
+    { status: 'created', operation: 'startTest' },
+  );
+  assert.deepEqual(controller.stopTest(), { status: 'created', operation: 'stopTest' });
+  assert.deepEqual(coordinator.calls, [
+    ['startTest', { fixtureId: 'pcm-pulse-v1', durationMs: 8_000 }],
+    ['stopTest'],
   ]);
 });
 

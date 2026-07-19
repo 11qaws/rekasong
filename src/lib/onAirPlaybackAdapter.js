@@ -53,6 +53,7 @@ export const ON_AIR_PLAYBACK_ADAPTER_CODES = Object.freeze({
   EVENT_DELIVERY_UNKNOWN: 'playback_adapter_event_delivery_unknown',
   ENGINE_COMMAND_FAILED: 'playback_adapter_engine_command_failed',
   ENGINE_POSTCONDITION_FAILED: 'playback_adapter_engine_postcondition_failed',
+  RUNTIME_SOURCE_LOST: 'playback_adapter_runtime_source_lost',
   LOCAL_SAFETY_STOP_FAILED: 'playback_adapter_local_safety_stop_failed',
 });
 
@@ -243,6 +244,7 @@ export class OnAirPlaybackAdapter {
   #testFixtureFactory;
   #outputPathProbe;
   #runtimeProbe;
+  #requiresRuntimeSourceAttestation = false;
   #onSnapshot;
   #now;
   #defer;
@@ -261,6 +263,9 @@ export class OnAirPlaybackAdapter {
   #activeLeaseEpoch = 0;
   #safetyLocked = true;
   #sourceActiveReported = false;
+  #runtimeSourceLossRequiresEmergency = false;
+  #runtimeSourceLossStopPromise = null;
+  #runtimeSourceSafetyEpoch = 0;
   #disposed = false;
   #sessionEnded = false;
   #emergencyLocalIds = new Map();
@@ -330,6 +335,7 @@ export class OnAirPlaybackAdapter {
       .filter(([field]) => RUNTIME_STRING_FIELDS.has(field)));
     const requiresSourceActiveAttestation = connectionOptions.clientKind
       === PLAYER_CLIENT_KINDS.OBS_BROWSER_SOURCE;
+    this.#requiresRuntimeSourceAttestation = requiresSourceActiveAttestation;
     const initialRuntime = {
       ...runtimeMetadata,
       ...sanitizedRuntime(this.#runtimeProbe({ phase: 'hello' })),
@@ -361,6 +367,11 @@ export class OnAirPlaybackAdapter {
           // merge-only, so an unavailable probe must fail closed explicitly.
           currentRuntime.sourceActive = false;
         }
+        // OBS source callbacks are bridged directly by OnAirPlayerV2 for the
+        // immediate path. This heartbeat path is the fail-closed backup when a
+        // runtime drops or mangles an event: local media safety must not wait
+        // for Worker lease reconciliation.
+        this.handleRuntimeAttestation(currentRuntime, { phase: 'heartbeat' });
         const runtime = { ...runtimeMetadata, ...currentRuntime };
         return Object.keys(runtime).length > 0 ? { runtime } : {};
       },
@@ -407,6 +418,101 @@ export class OnAirPlaybackAdapter {
   close(code, reason) {
     this.#preemptForSafety('adapter_close');
     return this.connection.close(code, reason);
+  }
+
+  /**
+   * Consume OBS-runtime source evidence without turning it into server truth.
+   * A source that becomes inactive or invisible after this route was exposed
+   * may no longer own an audible media graph. The local emergency detach is
+   * deliberately eventless: only a later authenticated wire emergency may
+   * acknowledge a globally stopped state.
+   */
+  handleRuntimeAttestation(value, { phase = 'runtime_event' } = {}) {
+    if (this.#disposed || !this.#requiresRuntimeSourceAttestation) return Promise.resolve(false);
+    const runtime = sanitizedRuntime(value);
+    const sourceLost = runtime.sourceActive === false || runtime.sourceVisible === false;
+    if (!sourceLost || this.#runtimeSourceLossRequiresEmergency) return Promise.resolve(false);
+
+    let engineSnapshot = {};
+    try {
+      engineSnapshot = this.engine.snapshot();
+    } catch {
+      // A missing engine snapshot is itself unsafe once the route claimed
+      // readiness; the physical stop below remains the source of truth.
+    }
+    const routeWasExposed = this.#routeState === 'ready_event_sent'
+      || this.#safetyLocked === false
+      || Boolean(this.#activeTest || this.#activeEntryId || this.#activeRunId)
+      || engineSnapshot.sourceAttached === true
+      || engineSnapshot.mediaPaused === false
+      || engineSnapshot.pendingPlay === true
+      || engineSnapshot.wantsPlayback === true
+      || ['loading', 'playing'].includes(engineSnapshot.status);
+    if (!routeWasExposed) return Promise.resolve(false);
+
+    this.#runtimeSourceLossRequiresEmergency = true;
+    const sourceSafetyEpoch = ++this.#runtimeSourceSafetyEpoch;
+    this.#normalEpoch += 1;
+    this.#abortCurrentNormal();
+    this.#safetyLocked = true;
+    this.#activeEntryId = null;
+    this.#activeRunId = null;
+    this.#clearActiveTest();
+    const detail = {
+      phase: stableCode(phase, 'runtime_event'),
+      sourceActive: runtime.sourceActive ?? null,
+      sourceVisible: runtime.sourceVisible ?? null,
+      emergencyStopRequired: true,
+      autoResumeAllowed: false,
+    };
+    this.#markUnknown(ON_AIR_PLAYBACK_ADAPTER_CODES.RUNTIME_SOURCE_LOST, detail);
+
+    let execution;
+    try {
+      execution = this.engine.execute({
+        type: PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP,
+        commandId: this.#nextLocalCommandId('runtime-source-loss'),
+      });
+    } catch (error) {
+      execution = Promise.reject(error);
+    }
+
+    const operation = Promise.resolve(execution).then((result) => {
+      if (sourceSafetyEpoch !== this.#runtimeSourceSafetyEpoch) return false;
+      const postcondition = stoppedPhysicalPostcondition(result?.postcondition);
+      if (!postcondition) {
+        throw new OnAirPlaybackAdapterError(
+          ON_AIR_PLAYBACK_ADAPTER_CODES.LOCAL_SAFETY_STOP_FAILED,
+          result?.postcondition,
+        );
+      }
+      // Keep route truth unknown and the safety latch closed. This snapshot is
+      // local physical evidence only; it is not a normal STOP/deactivate ACK.
+      this.#emitSnapshot();
+      return true;
+    }).catch((error) => {
+      if (sourceSafetyEpoch !== this.#runtimeSourceSafetyEpoch) return false;
+      this.#markUnknown(
+        ON_AIR_PLAYBACK_ADAPTER_CODES.LOCAL_SAFETY_STOP_FAILED,
+        {
+          triggerCode: ON_AIR_PLAYBACK_ADAPTER_CODES.RUNTIME_SOURCE_LOST,
+          ...detail,
+          failure: safeErrorDetail(error),
+        },
+      );
+      try {
+        this.connection.close(4003, 'runtime_source_loss_safety_stop_failed');
+      } catch {
+        // Unknown + safety lock remain authoritative when transport close fails.
+      }
+      return false;
+    }).finally(() => {
+      if (this.#runtimeSourceLossStopPromise === operation) {
+        this.#runtimeSourceLossStopPromise = null;
+      }
+    });
+    this.#runtimeSourceLossStopPromise = operation;
+    return operation;
   }
 
   dispose() {
@@ -970,6 +1076,17 @@ export class OnAirPlaybackAdapter {
   #handlePlayerCommand(command) {
     if (command?.type === ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP) {
       return this.#handleEmergency(command);
+    }
+    if (this.#runtimeSourceLossRequiresEmergency) {
+      // Runtime restoration, reconnect, and route activation are not recovery
+      // authority. Refuse every non-emergency command without emitting an ACK
+      // that could falsely collapse the Worker's unknown lease to inactive.
+      this.#markUnknown(ON_AIR_PLAYBACK_ADAPTER_CODES.RUNTIME_SOURCE_LOST, {
+        requestedType: stableCode(command?.type, null),
+        emergencyStopRequired: true,
+        autoResumeAllowed: false,
+      });
+      return false;
     }
     if (command?.type === TEST_COMMAND_TYPES.STOP && this.#activeTest) {
       const test = this.#activeTest;
@@ -1920,6 +2037,7 @@ export class OnAirPlaybackAdapter {
   }
 
   async #handleEmergency(command) {
+    this.#runtimeSourceSafetyEpoch += 1;
     this.#normalEpoch += 1;
     this.#abortCurrentNormal();
     this.#safetyLocked = true;
@@ -1959,6 +2077,7 @@ export class OnAirPlaybackAdapter {
         },
       });
       if (sent) {
+        this.#runtimeSourceLossRequiresEmergency = false;
         this.#lastError = null;
         this.#setLocalState('emergency_stopped_event_sent', 'local_event_sent');
       }

@@ -2,7 +2,7 @@
 
 > 목표는 “플레이어가 연결됐다”가 아니라, 반주 PCM이 OBS 최종 출력에 들어가고 라이브 마이크와의 상대 싱크가 방송 내내 유지된다는 사실을 증명하는 것이다.
 
-실제 장비에서 이 계획을 실행할 때는 `OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md`의 G0–G6 관문과 증거 기록 양식을 사용한다. 현재 자동 구현·검증 상태는 `IMPLEMENTATION_LOG_2026-07-19.md`, 제품·상태 설계 기준은 `AUDIO_OUTPUT_OBS_MASTER_PLAN_2026-07-19.md`를 우선한다.
+실제 장비에서 이 계획을 실행할 때는 `OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md`의 G0–G6 관문과 증거 기록 양식을 사용한다. 2026-07-20의 실행 결과와 잔여 검증은 `OBS_VALIDATION_STATUS_2026-07-20.md`, 제품·상태 설계 기준은 `AUDIO_OUTPUT_OBS_MASTER_PLAN_2026-07-19.md`를 우선한다.
 
 ## 1. 증거 단계를 섞지 않는다
 
@@ -33,6 +33,18 @@ npm run build -- --mode staging
 npm run preview -- --port 5100 --host 127.0.0.1
 $env:REKASONG_APP='http://127.0.0.1:5100'
 npm run test:obs:staging
+```
+
+위 명령은 legacy 실제 미디어 경로다. 최신 Protocol v2의 G2 smoke는 격리된 로컬 Worker와 최신 앱을 띄운 뒤 별도로 실행한다.
+
+```powershell
+npx wrangler dev --config workers/rekasong-session/wrangler.jsonc --local --port 8787
+npm run dev -- --host 127.0.0.1 --port 5100
+$env:REKASONG_WORKER='http://127.0.0.1:8787'
+$env:REKASONG_APP='http://127.0.0.1:5100'
+npm run test:obs:v2
+npm run test:obs:v2:safety
+npm run test:obs:v2:idle-soak
 ```
 
 ## 3. 설정 1회 필수 관문
@@ -72,7 +84,7 @@ npm run test:obs:staging
 ### 4.1 연결·프로토콜
 
 - [자동] control/player/display presence 전이와 새로고침 snapshot 복원.
-- [자동] player 미연결 시 송출 차단.
+- [자동] player 미연결 시 송출 차단. 단, 같은 Dashboard가 미리 공유한 exact `playerInstanceId`의 lazy speaker player 첫 등록만 최대 12초 기다리고, 그 ID가 유일 후보일 때 원래 사용자 클릭을 정확히 한 번 실행한다. 이전 탭의 단독 speaker는 자동 활성화하지 않는다.
 - [자동] 일반 브라우저도 player presence를 만들 수 있음을 회귀 테스트해, UI가 이를 OBS 증거로 표현하지 않게 한다.
 - [자동] 동일 room의 중복 player 연결 탐지 또는 단일 player lease.
 - [자동] room/session 격리와 다른 세션 이벤트 차단.
@@ -155,10 +167,10 @@ npm run test:obs:staging
 1. 완료: 연결 문구를 일반 player page presence로 낮추고 OBS 송출 완료와 분리했다.
 2. 완료: run/player/connection/lease identity, 중복 candidate 차단, route postcondition, 500ms/2초 liveness, emergency·mutation race를 Protocol v2 자동 테스트로 고정했다.
 3. 완료: 공통 PlaybackEngine과 player adapter가 연결 손실·emergency에 physical stop/detach하고 자동 resume를 금지한다.
-4. 완료: 전체 Blob source resolver, bounded v2 prefetch 수신 경계와 control coordinator의 순수 계약을 구현했다. OBS v2 player까지 연결했으며 Dashboard speaker bridge는 남아 있다.
+4. 완료: 전체 Blob source resolver, bounded v2 prefetch 수신 경계와 control coordinator를 구현했다. OBS v2 player와 Dashboard speaker가 같은 PlaybackEngine/adapter 경로를 사용한다.
 5. 부분 완료/P0: v2 route split, heavy graph/font 제외, raw/gzip budget, 4Hz heartbeat 무렌더, active/prefetch 64MiB cap은 완료했다. 실제 OBS CEF 60분 soak와 Dashboard history/local Blob 상한은 남아 있다.
-6. P0: idle-only 출력 selector와 desired/confirmed truth strip을 연결한다.
-7. 부분 완료/P0: 같은 graph의 결정적 생성 pulse와 reliable marker는 구현했다. `Control audio via OBS` 안내와 3단계 점검 UI(앱 재생 증거 → OBS meter 사용자 확인 → 녹화 artifact)는 연결해야 한다.
+6. 완료: idle-only 출력 selector와 selected/authoritative truth strip을 연결했다. 첫 speaker 클릭과 lazy 후보 등록 race를 수정했고, control/player가 공유한 exact player ID로 현재 탭 소유권까지 검증한다. 정상·4.5초 인위 지연 모두 `스피커 연결 중 → 스피커 송출 중`으로 자동 수렴했다. OBS 후보 없음·중복은 각각 명시적 문구로 fail-closed하며 버튼은 다시 조작할 수 있다.
+7. 부분 완료/P0: 같은 graph의 결정적 생성 pulse, reliable marker, 설정 안 시작·중지·진행·안전 정지 UI와 `OBS 출력 중 로컬 무음은 정상` 안내를 구현했다. 앱 재생 증거(G2)와 OBS mixer 직접 확인(G3)을 분리해 표시하며, OBS meter 사용자 확인 기록과 녹화 artifact 판정은 남아 있다.
 8. 완료: authoritative/test sequence gap, 강한 종료 증거, outcome unknown 뒤 수동 reconciliation contract를 구현했다. 정상 run 자동 resume는 제공하지 않는다.
 9. P1: 실제 OBS 녹화 파형 분석 도구와 10분 싱크 fixture를 추가한다.
 10. P1: skip/auto-next/display projection, legacy player count, v2 display presence 공백을 회귀 테스트로 고정한다.
