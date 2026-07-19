@@ -70,6 +70,46 @@ test('PlaybackPanel references only existing output catalog keys', async () => {
   assert.deepEqual(missing, []);
 });
 
+test('PlaybackPanel keeps compact route controls in the header and diagnostics in settings', async () => {
+  const source = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
+  const headerStart = source.indexOf('className="playback-panel-header"');
+  const playbackBodyStart = source.indexOf('{currentSong ? (', headerStart);
+  const modalStart = source.indexOf('{isObsSetupOpen && (');
+  const detailsStart = source.indexOf('className="output-route-details"');
+
+  assert.ok(headerStart >= 0 && playbackBodyStart > headerStart, 'playback header must remain identifiable');
+  const headerSource = source.slice(headerStart, playbackBodyStart);
+  assert.match(headerSource, /className="playback-live-badges"/);
+  assert.match(headerSource, /className="output-route-switch"/);
+  assert.match(headerSource, /className="output-route-actions"/);
+  assert.doesNotMatch(source, /className="output-selector"/);
+  assert.ok(modalStart >= 0 && detailsStart > modalStart, 'route diagnostics must render inside the settings dialog');
+  assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.selected/);
+  assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.actual/);
+});
+
+test('compact output header and settings diagnostics have Korean and English copy', () => {
+  const keys = [
+    'onair.output.header.active.speaker',
+    'onair.output.header.active.obs',
+    'onair.output.header.standby.speaker',
+    'onair.output.header.standby.obs',
+    'onair.output.header.active.connecting',
+    'onair.output.header.active.switching',
+    'onair.output.header.active.attention',
+    'onair.output.header.active.inactive',
+    'onair.output.details.title',
+    'onair.output.details.description',
+    'obs.setup.openLabel',
+    'obs.setup.openLabelAttention',
+  ];
+
+  for (const key of keys) {
+    assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean copy for ${key}`);
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English copy for ${key}`);
+  }
+});
+
 test('the output selector state contract has Korean fallback copy for every public action and gate', () => {
   const camel = (value) => value.replace(/_([a-z])/g, (_, character) => character.toUpperCase());
   const required = new Set([

@@ -1659,6 +1659,7 @@ export default function Dashboard() {
             canEndBroadcastSession={canEndBroadcastSession}
             outputMode={selectedOutputMode}
             actualOutputMode={actualOutputMode}
+            outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
             onSelectOutputMode={outputControllerReady ? handleSelectOutputMode : undefined}
           />

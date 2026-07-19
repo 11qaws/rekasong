@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 import { getOutputMessage as t } from '../copy/outputMessages';
+import { derivePlaybackOutputStatus } from '../lib/playbackOutputStatus';
 
 // 위젯 연결 칩 — 서버가 중계하는 **일반 브라우저 페이지 presence**에만 근거한다.
 // 이 값만으로 OBS CEF, 오디오 믹서, 녹화/송출 경로를 확인했다고 말하면 안 된다.
@@ -43,6 +44,7 @@ export default function PlaybackPanel({
   onPrepareOnAirDisplay,
   outputMode,
   actualOutputMode,
+  outputRouteStable = false,
   outputSwitchState = 'idle',
   onSelectOutputMode
 }) {
@@ -107,6 +109,14 @@ export default function PlaybackPanel({
     : mode === 'obs'
       ? t('onair.output.selector.mode.obs')
       : t('onair.output.selector.mode.unknown');
+  const isOutputActivelyPlaying = Boolean(currentSong && isPlaying && !controlsLocked);
+  const activeOutputStatus = derivePlaybackOutputStatus({
+    confirmedOutputMode,
+    outputSwitchState: normalizedOutputSwitchState,
+    isSessionInvalid: isOnAirInvalid,
+    isRouteStable: outputRouteStable,
+    isPlaying: isOutputActivelyPlaying,
+  });
 
   const selectOutputMode = (mode) => {
     const retriesUnconfirmedSelection = mode === selectedOutputMode
@@ -303,117 +313,82 @@ export default function PlaybackPanel({
       <div className="playback-panel-header">
         <div className="playback-heading"><ListMusic size={17} /> {t('playback.heading')}</div>
         <div className="playback-header-actions">
-          {currentSong && <span className={`on-air-badge ${isPlaying && !controlsLocked ? '' : 'is-paused'}`}>{phaseBadgeText}</span>}
-          <button
-            ref={obsSetupTriggerRef}
-            type="button"
-            onClick={() => setIsObsSetupOpen(true)}
-            className="btn-icon"
-            title={t('obs.setup.openLabel')}
-            aria-label={t('obs.setup.openLabel')}
-            aria-haspopup="dialog"
-            aria-expanded={isObsSetupOpen}
-            aria-controls="obs-setup-dialog"
-          >
-            <Settings size={16} />
-          </button>
+          <div className="playback-live-badges">
+            {currentSong && <span className={`on-air-badge ${isPlaying && !controlsLocked ? '' : 'is-paused'}`}>{phaseBadgeText}</span>}
+            <span
+              id="output-route-live-status"
+              className={`output-route-live-status is-${activeOutputStatus.tone}`}
+              role="status"
+              aria-live="polite"
+            >
+              {activeOutputStatus.mode === 'speaker' && <Volume2 size={14} aria-hidden="true" />}
+              {activeOutputStatus.mode === 'obs' && <Radio size={14} aria-hidden="true" />}
+              {!activeOutputStatus.mode && <span className="obs-status-dot" aria-hidden="true" />}
+              {t(activeOutputStatus.key)}
+            </span>
+          </div>
+          <div className="output-route-actions">
+            <div
+              className="output-route-switch"
+              role="radiogroup"
+              aria-label={t('onair.output.region.label')}
+              aria-disabled={outputSelectionLocked}
+            >
+              {['speaker', 'obs'].map((mode) => {
+                const isSelected = selectedOutputMode === mode;
+                const isActual = confirmedOutputMode === mode;
+                const canRetryBlockedSelection = normalizedOutputSwitchState === 'blocked'
+                  && isSelected
+                  && !isActual;
+                const isOptionDisabled = outputSelectionLocked
+                  || (normalizedOutputSwitchState === 'blocked'
+                    && !canRetryBlockedSelection
+                    && !isActual);
+                return (
+                  <button
+                    key={mode}
+                    ref={(element) => { outputOptionRefs.current[mode] = element; }}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    aria-disabled={isOptionDisabled}
+                    aria-describedby="output-route-live-status"
+                    tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
+                    className={`output-route-button${isSelected ? ' is-selected' : ''}`}
+                    onClick={() => selectOutputMode(mode)}
+                    onKeyDown={(event) => handleOutputOptionKeyDown(event, mode)}
+                  >
+                    {mode === 'speaker'
+                      ? <Volume2 size={15} aria-hidden="true" />
+                      : <Radio size={15} aria-hidden="true" />}
+                    <span>{outputModeLabel(mode)}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              ref={obsSetupTriggerRef}
+              type="button"
+              onClick={() => setIsObsSetupOpen(true)}
+              className={`btn-icon output-settings-button${isOnAirInvalid || normalizedOutputSwitchState === 'blocked' ? ' has-attention' : ''}`}
+              title={t(isOnAirInvalid || normalizedOutputSwitchState === 'blocked'
+                ? 'obs.setup.openLabelAttention'
+                : 'obs.setup.openLabel')}
+              aria-label={t(isOnAirInvalid || normalizedOutputSwitchState === 'blocked'
+                ? 'obs.setup.openLabelAttention'
+                : 'obs.setup.openLabel')}
+              aria-haspopup="dialog"
+              aria-expanded={isObsSetupOpen}
+              aria-controls="obs-setup-dialog"
+            >
+              <Settings size={16} />
+              {(isOnAirInvalid || normalizedOutputSwitchState === 'blocked') && (
+                <span className="output-settings-alert-dot" aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
-
-      <section
-        className="output-selector"
-        aria-labelledby="output-selector-title"
-        aria-describedby="output-selector-description output-selector-status"
-      >
-        <div className="output-selector-heading">
-          <strong id="output-selector-title">{t('onair.output.heading')}</strong>
-          <span id="output-selector-description">{t('onair.output.description')}</span>
-        </div>
-        <div
-          className="output-selector-options"
-          role="radiogroup"
-          aria-label={t('onair.output.region.label')}
-          aria-disabled={outputSelectionLocked}
-        >
-          {['speaker', 'obs'].map((mode) => {
-            const isSelected = selectedOutputMode === mode;
-            const isActual = confirmedOutputMode === mode;
-            const canRetryBlockedSelection = normalizedOutputSwitchState === 'blocked'
-              && isSelected
-              && !isActual;
-            const isOptionDisabled = outputSelectionLocked
-              || (normalizedOutputSwitchState === 'blocked'
-                && !canRetryBlockedSelection
-                && !isActual);
-            return (
-              <button
-                key={mode}
-                ref={(element) => { outputOptionRefs.current[mode] = element; }}
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
-                aria-disabled={isOptionDisabled}
-                aria-describedby="output-selector-status"
-                tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
-                className={`output-selector-option${isSelected ? ' is-selected' : ''}${isActual ? ' is-actual' : ''}`}
-                onClick={() => selectOutputMode(mode)}
-                onKeyDown={(event) => handleOutputOptionKeyDown(event, mode)}
-              >
-                <span className="output-selector-option-label">
-                  {mode === 'speaker'
-                    ? <Volume2 size={17} aria-hidden="true" />
-                    : <Radio size={17} aria-hidden="true" />}
-                  {outputModeLabel(mode)}
-                </span>
-                <span className="output-selector-badges" aria-hidden="true">
-                  {isSelected && (
-                    <span className="output-selector-badge is-selected">
-                      {t('onair.output.selector.badge.selected')}
-                    </span>
-                  )}
-                  {isActual && (
-                    <span className="output-selector-badge is-actual">
-                      {t('onair.output.selector.badge.actual')}
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div
-          id="output-selector-status"
-          className={`output-selector-status is-${normalizedOutputSwitchState}`}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <span>{t('onair.output.selector.status.selected', { mode: outputModeLabel(selectedOutputMode) })}</span>
-          <span>{t('onair.output.selector.status.actual', { mode: outputModeLabel(confirmedOutputMode) })}</span>
-          {normalizedOutputSwitchState === 'switching' && (
-            <strong>{t('onair.output.selector.status.switching')}</strong>
-          )}
-          {normalizedOutputSwitchState === 'connecting' && (
-            <strong>{t('onair.output.selector.status.connecting')}</strong>
-          )}
-          {normalizedOutputSwitchState === 'blocked' && (
-            <strong>{t('onair.output.selector.status.blocked')}</strong>
-          )}
-        </div>
-        {isOnAirInvalid && (
-          <button
-            type="button"
-            className="btn-secondary output-selector-recovery"
-            onClick={recoverOnAir}
-            disabled={isRecoveringOnAir || typeof onRecoverOnAir !== 'function'}
-          >
-            <RotateCcw size={15} aria-hidden="true" />
-            {isRecoveringOnAir
-              ? t('obs.setup.recovery.inProgress')
-              : t('obs.setup.recovery.action')}
-          </button>
-        )}
-      </section>
 
       {currentSong ? (
         <div className="playback-now">
@@ -493,6 +468,41 @@ export default function PlaybackPanel({
             <p id="obs-setup-description" className="obs-setup-intro">
               {t('obs.setup.intro')}
             </p>
+
+            <section className="output-route-details" aria-labelledby="output-route-details-title">
+              <header>
+                <div>
+                  <h3 id="output-route-details-title">{t('onair.output.details.title')}</h3>
+                  <p>{t('onair.output.details.description')}</p>
+                </div>
+                <span className={`output-route-live-status is-${activeOutputStatus.tone}`}>
+                  {activeOutputStatus.mode === 'speaker' && <Volume2 size={14} aria-hidden="true" />}
+                  {activeOutputStatus.mode === 'obs' && <Radio size={14} aria-hidden="true" />}
+                  {!activeOutputStatus.mode && <span className="obs-status-dot" aria-hidden="true" />}
+                  {t(activeOutputStatus.key)}
+                </span>
+              </header>
+              <div className="output-route-details-summary">
+                <span>{t('onair.output.selector.status.selected', { mode: outputModeLabel(selectedOutputMode) })}</span>
+                <span>{t('onair.output.selector.status.actual', { mode: outputModeLabel(confirmedOutputMode) })}</span>
+              </div>
+              <div
+                className={`output-route-details-status is-${normalizedOutputSwitchState}`}
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                {normalizedOutputSwitchState === 'switching' && (
+                  <strong>{t('onair.output.selector.status.switching')}</strong>
+                )}
+                {normalizedOutputSwitchState === 'connecting' && (
+                  <strong>{t('onair.output.selector.status.connecting')}</strong>
+                )}
+                {normalizedOutputSwitchState === 'blocked' && (
+                  <strong>{t('onair.output.selector.status.blocked')}</strong>
+                )}
+              </div>
+            </section>
 
             {!isDirectMode && !isOnAirInvalid && (
               <p className="obs-session-url-note" role="note">
