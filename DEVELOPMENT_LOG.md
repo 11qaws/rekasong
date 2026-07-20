@@ -334,3 +334,9 @@
 - Worker는 dashboard-speaker에 한해 heartbeat throttling을 active output unknown으로 승격하지 않는다. 실제 소켓 단절과 route 전환의 inactive 증거 요구는 유지한다.
 - unknown 스피커에서 같은 송출경로 버튼을 다시 누르면 deactivation을 먼저 시도해 inactive 증거를 만들고 재활성화할 수 있다. OBS로 자동 전환하거나 재생을 자동 재개하지 않는다.
 - 회귀 테스트: adapter 55개, output controller 48개, Worker Protocol v2 106개 중 변경 시나리오 포함 전부 통과. 상세 설계와 수동 모바일/OBS 확인 항목은 `docs/SPEAKER_OBS_SAFETY_BOUNDARY_2026-07-20.md`에 기록했다.
+
+## 2026-07-20 (Codex) — 스피커 복구 후보 대기 순서 보정
+
+- 끊긴 dashboard-speaker lease가 `unknown`에서 `inactive`으로 정리되는 순간, 새 페이지 소유 플레이어가 아직 후보로 재등록되지 않았다는 이유로 출력 전환을 즉시 `candidate_count` 차단하던 순서 버그를 수정했다.
+- 스피커 복구도 첫 연결과 동일하게 page-owned 후보 등록을 기다린 뒤 정확한 player identity가 확인되면 activate하도록 통일했다. OBS 경로의 엄격한 후보 검증은 변경하지 않았다.
+- 회귀 테스트를 추가하고 로컬 브라우저에서 새로고침 후 `ready → 스피커 송출 중`, 설정 패널에서 `선택: 스피커 / 실제 활성: 스피커`를 확인했다.

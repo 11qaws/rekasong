@@ -726,7 +726,9 @@ test('speaker route button retries deactivation when a disconnected speaker rout
   });
   const { controller, coordinators } = createHarness(coordinatorSnapshot(unknownProtocol, {
     routeUnknown: true,
-  }));
+  }), {
+    controllerOptions: { dashboardSpeakerPlayerInstanceId: 'speaker-player' },
+  });
   const coordinator = coordinators[0];
 
   controller.selectOutputMode('speaker');
@@ -750,6 +752,42 @@ test('speaker route button retries deactivation when a disconnected speaker rout
   })));
   controller.selectOutputMode('speaker');
   assert.deepEqual(coordinator.calls, [['deactivateOutput'], ['emergencyStop'], ['activateOutput', 'speaker']]);
+});
+
+test('speaker recovery waits for the replacement page-owned candidate after deactivation', () => {
+  const unknownProtocol = readyRoute('speaker', {
+    eligibleCandidates: { speaker: [] },
+    lease: {
+      status: 'unknown',
+      leaseTarget: 'speaker-player',
+      clientKind: 'dashboard-speaker',
+    },
+    confirmedPlayback: { status: 'unknown', reasonCode: 'target_disconnected' },
+  });
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(unknownProtocol, {
+    routeUnknown: true,
+  }), {
+    controllerOptions: { dashboardSpeakerPlayerInstanceId: 'speaker-player' },
+  });
+  const coordinator = coordinators[0];
+
+  controller.selectOutputMode('speaker');
+  assert.deepEqual(coordinator.calls, [['deactivateOutput']]);
+
+  // Deactivation is terminal, but the replacement player has not registered
+  // yet. Keep the user's intent pending instead of blocking the route.
+  coordinator.emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [] },
+    lease: { epoch: 5, status: 'inactive' },
+  })));
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING);
+  assert.deepEqual(coordinator.calls, [['deactivateOutput']]);
+
+  coordinator.emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: ['speaker-player'] },
+    lease: { epoch: 5, status: 'inactive' },
+  })));
+  assert.deepEqual(coordinator.calls, [['deactivateOutput'], ['activateOutput', 'speaker']]);
 });
 
 test('maps the complete legacy command surface to coordinator APIs', () => {

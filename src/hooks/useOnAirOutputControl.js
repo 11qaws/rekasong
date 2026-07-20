@@ -1082,6 +1082,19 @@ export class OnAirOutputController {
         }
         if (lease.status === 'inactive') {
           this.#assertNoActiveWork();
+          const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
+          // Recovery from a disconnected speaker lease can reach `inactive`
+          // before this page's replacement player has finished registering.
+          // Treat that short window as a pending speaker intent, just like a
+          // first-click activation. Failing closed here strands the session
+          // even though the page-owned player is already reconnecting.
+          if (intent.targetMode === ON_AIR_OUTPUT_MODES.SPEAKER
+            && this.#dashboardSpeakerPlayerInstanceId !== null
+            && Array.isArray(candidates)
+            && candidates.length === 0) {
+            this.#waitForDashboardSpeakerCandidate(intent.targetMode);
+            return;
+          }
           this.#assertSingleCandidate(intent.targetMode);
           this.#switchIntent = {
             targetMode: intent.targetMode,
