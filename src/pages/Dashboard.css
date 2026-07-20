@@ -1009,6 +1009,8 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .output-route-details-status.is-conflict strong,
 .output-route-details-status.is-switching strong { color: var(--eureka-azure); }
 .output-route-details-status.is-blocked strong { color: var(--accent-red); }
+.output-route-next-action { max-width: 30rem; margin: 0; color: var(--text-muted); font-size: 0.7rem; line-height: 1.4; }
+.output-route-next-action span { color: var(--text-main); font-weight: 800; }
 .output-route-authoritative-detail { margin: 0; padding-top: 0.55rem; border-top: 1px solid var(--glass-border); color: var(--text-muted); font-size: 0.74rem; line-height: 1.45; }
 .output-route-obs-silence-note { margin: 0; padding: 0.48rem 0.55rem; border: 1px solid rgba(109, 154, 189, 0.35); border-radius: 7px; background: rgba(109, 154, 189, 0.07); color: var(--eureka-azure); font-size: 0.73rem; line-height: 1.4; }
 .obs-audio-check { display: grid; min-width: 0; gap: 0.55rem; margin: 0 0 0.85rem; padding: 0.75rem 0.8rem; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--bg-deep); }

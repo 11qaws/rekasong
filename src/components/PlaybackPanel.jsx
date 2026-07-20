@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 import { getOutputMessage as t } from '../copy/outputMessages';
-import { derivePlaybackOutputStatus } from '../lib/playbackOutputStatus';
+import {
+  derivePlaybackOutputNextAction,
+  derivePlaybackOutputStatus,
+} from '../lib/playbackOutputStatus';
 
 // 위젯 연결 칩 — 서버가 중계하는 **일반 브라우저 페이지 presence**에만 근거한다.
 // 이 값만으로 OBS CEF, 오디오 믹서, 녹화/송출 경로를 확인했다고 말하면 안 된다.
@@ -213,6 +216,11 @@ export default function PlaybackPanel({
     targetMode: failedSelectionMode ?? transitionTargetMode,
     targetCandidateState,
     reasonCode: outputSwitchReasonCode,
+  });
+  const outputNextActionKey = derivePlaybackOutputNextAction({
+    statusKey: activeOutputStatus.key,
+    targetMode: failedSelectionMode ?? transitionTargetMode ?? selectedOutputMode,
+    confirmedOutputMode,
   });
   const outputNeedsAttention = isOnAirInvalid
     || outputRouteStateUnknown
@@ -655,6 +663,9 @@ export default function PlaybackPanel({
               )}
             </button>
           </div>
+          <p className="output-route-next-action" role="note">
+            <span>{t('onair.output.nextAction.label')}:</span> {t(outputNextActionKey)}
+          </p>
         </div>
       </div>
 

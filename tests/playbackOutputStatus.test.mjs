@@ -1,7 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { derivePlaybackOutputStatus } from '../src/lib/playbackOutputStatus.js';
+import {
+  derivePlaybackOutputNextAction,
+  derivePlaybackOutputStatus,
+} from '../src/lib/playbackOutputStatus.js';
+
+test('output status always maps to a concrete next action', () => {
+  assert.equal(
+    derivePlaybackOutputNextAction({ statusKey: 'onair.output.header.active.speaker' }),
+    'onair.output.nextAction.speaker.active',
+  );
+  assert.equal(
+    derivePlaybackOutputNextAction({
+      statusKey: 'onair.output.header.blocked.obs.none',
+      targetMode: 'obs',
+    }),
+    'onair.output.nextAction.obs.candidate',
+  );
+  assert.equal(
+    derivePlaybackOutputNextAction({
+      statusKey: 'onair.output.header.active.attention',
+      targetMode: 'obs',
+    }),
+    'onair.output.nextAction.obs.recover',
+  );
+});
 
 test('stable routes identify the selected output path even while no song is playing', () => {
   assert.deepEqual(
