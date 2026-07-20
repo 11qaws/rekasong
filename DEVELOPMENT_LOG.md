@@ -361,3 +361,9 @@
 
 - Speaker players send heartbeats every 5 seconds so mobile/background/PiP playback is not forced to stop, but the Worker was excluding every stale heartbeat after 2 seconds. A live speaker socket therefore disappeared from `eligibleCandidates` even while its player was ready, causing route selection to fall back to “output route needs confirmation”.
 - Speaker candidate eligibility now uses the live WebSocket and `sourceActive !== false`; OBS retains the strict 2-second heartbeat and runtime attestation gate. Added a regression test for a speaker candidate at the stale boundary.
+
+## 2026-07-21 (Codex) — Output status bar and speaker-first dashboard layout
+
+- Separated the current playback card from output status. The yellow area directly below the Rekasong header now carries the compact On-Air/output status and the settings gear, styled as a right-side hairpin accent.
+- Moved Speaker/OBS route switching, authoritative route details, OBS audio check, recovery and session controls into the settings dialog. The playback card no longer carries route controls.
+- A fresh web-player dashboard now queues Speaker as the default route once output control is ready, while an existing route or explicit user intent is preserved.

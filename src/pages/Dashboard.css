@@ -969,7 +969,57 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* Live-console-first layout: the active broadcast and queue own the screen,
    while adding a song is a focused secondary composer.
    (그리드 자체의 정의는 상단 .dashboard-grid 한 곳에서만 한다) */
-.dashboard-header { margin-bottom: 1rem; padding: 1.15rem 2rem 1.4rem; }
+.dashboard-header { margin-bottom: 1rem; padding: 1.15rem 2rem 0; }
+.dashboard-branding { display: flex; flex-direction: column; align-items: center; }
+.dashboard-output-route-bar {
+  position: relative;
+  display: flex;
+  width: calc(100% + 4rem);
+  min-height: 48px;
+  margin: 1rem -2rem 0;
+  padding: 0.45rem 2rem;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--chr-hair);
+  border-top: 1px solid rgba(58, 68, 76, 0.18);
+  color: var(--chr-hat);
+}
+.dashboard-output-route-bar::after {
+  content: '';
+  position: absolute;
+  right: 1.2rem;
+  top: 0.35rem;
+  width: 3.5rem;
+  height: 0.55rem;
+  border-top: 3px solid rgba(58, 68, 76, 0.45);
+  border-bottom: 3px solid rgba(58, 68, 76, 0.45);
+  border-radius: 999px;
+  transform: rotate(-9deg);
+  pointer-events: none;
+}
+.dashboard-output-route-bar-inner {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-right: 4.2rem;
+}
+.dashboard-output-route-bar .on-air-badge,
+.dashboard-output-route-bar .output-route-live-status {
+  border-color: rgba(58, 68, 76, 0.34);
+  background: rgba(255, 255, 255, 0.46);
+  color: var(--chr-hat);
+}
+.dashboard-output-route-bar .output-route-live-status.is-speaker { color: #0d6b5f; background: rgba(16, 185, 129, 0.14); }
+.dashboard-output-route-bar .output-route-live-status.is-obs { color: #285c7d; background: rgba(109, 154, 189, 0.16); }
+.dashboard-output-route-bar .output-route-live-status.is-attention { color: #a52828; background: rgba(220, 38, 38, 0.12); }
+.dashboard-output-route-bar .output-settings-button { color: var(--chr-hat); }
+.dashboard-output-route-bar .output-settings-button:hover,
+.dashboard-output-route-bar .output-settings-button:focus-visible { background: rgba(255, 255, 255, 0.52); }
 .playback-area { grid-area: playback; min-width: 0; }
 /* 2행 영역은 flex로 자식 패널을 셀 높이에 정확히 채운다 (뷰포트 잠금 체인의 시작) */
 .queue-area { grid-area: queue; min-width: 0; min-height: 0; display: flex; }
@@ -1180,7 +1230,10 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* ---- Compact (<=768px): 모바일 밀도. 패딩·타이포 축소 (구 768/650 블록 통합) ---- */
 @media (max-width: 768px) {
   .dashboard-container { padding: 0.75rem; }
-  .dashboard-header { margin: -0.75rem -0.75rem 0.75rem; padding: 0.8rem 1rem 1rem; }
+  .dashboard-header { margin: -0.75rem -0.75rem 0.75rem; padding: 0.8rem 1rem 0; }
+  .dashboard-output-route-bar { width: calc(100% + 2rem); margin: 0.75rem -1rem 0; padding-inline: 1rem; }
+  .dashboard-output-route-bar::after { right: 0.7rem; }
+  .dashboard-output-route-bar-inner { margin-right: 3.3rem; }
   .dashboard-header::before, .dashboard-header::after { display: none; } /* 좁은 폭에서 단추 장식 생략 */
   .dashboard-header .logo { font-size: 1.5rem; }
   .logo::after { right: -26px; bottom: 7px; transform: scale(0.75) rotate(28deg); }

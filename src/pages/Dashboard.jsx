@@ -972,6 +972,36 @@ export default function Dashboard() {
     });
   }, [outputControlRecoveryRequired, outputControlSessionKey]);
 
+  // A normal dashboard is a web player first. Once output control is ready,
+  // make the speaker route the first choice unless an existing route or an
+  // explicit user intent already exists. OBS remains opt-in through settings.
+  const defaultSpeakerSelectionSessionRef = useRef(null);
+  useEffect(() => {
+    if (!useOnAirPlayer
+      || !outputControllerReady
+      || actualOutputMode
+      || outputSwitchInFlight
+      || queuedOutputIntent
+      || outputControlConflict
+      || outputControlUnavailable
+      || outputControlRecoveryRequired
+      || !outputControlSessionKey
+      || defaultSpeakerSelectionSessionRef.current === outputControlSessionKey) return;
+    defaultSpeakerSelectionSessionRef.current = outputControlSessionKey;
+    handleSelectOutputMode('speaker');
+  }, [
+    actualOutputMode,
+    handleSelectOutputMode,
+    outputControlConflict,
+    outputControlRecoveryRequired,
+    outputControlSessionKey,
+    outputControlUnavailable,
+    outputControllerReady,
+    outputSwitchInFlight,
+    queuedOutputIntent,
+    useOnAirPlayer,
+  ]);
+
   useEffect(() => {
     if (!queuedOutputIntent) return;
     if (outputControlConflict
@@ -2074,8 +2104,11 @@ export default function Dashboard() {
   return (
     <div className={`dashboard-container ${stagedItem ? 'staging-active' : ''}`}>
       <header className="dashboard-header">
-        <h1 className="logo">Rekasong</h1>
+        <div className="dashboard-branding">
+          <h1 className="logo">Rekasong</h1>
         <p className="subtitle">방송용 노래 검색 · 재생 · OBS 위젯 제어</p>
+        </div>
+        <div id="dashboard-output-route-bar" className="dashboard-output-route-bar" aria-label={t('onair.output.region.label')} />
       </header>
 
       <div className="dashboard-grid">

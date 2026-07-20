@@ -74,20 +74,23 @@ test('PlaybackPanel references only existing output catalog keys', async () => {
   assert.deepEqual(missing, []);
 });
 
-test('PlaybackPanel keeps compact route controls in the header and diagnostics in settings', async () => {
+test('PlaybackPanel keeps only output status in the header and route controls in settings', async () => {
   const source = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
   const headerStart = source.indexOf('className="playback-panel-header"');
   const playbackBodyStart = source.indexOf('{currentSong ? (', headerStart);
   const modalStart = source.indexOf('{isObsSetupOpen && (');
   const detailsStart = source.indexOf('className="output-route-details"');
+  const portalStart = source.indexOf('className="dashboard-output-route-bar-inner"');
 
   assert.ok(headerStart >= 0 && playbackBodyStart > headerStart, 'playback header must remain identifiable');
   const headerSource = source.slice(headerStart, playbackBodyStart);
-  assert.match(headerSource, /className="playback-live-badges"/);
-  assert.match(headerSource, /className="output-route-switch"/);
-  assert.match(headerSource, /className="output-route-actions"/);
+  assert.doesNotMatch(headerSource, /playback-live-badges|output-route-switch|output-route-actions/);
+  assert.ok(portalStart >= 0 && portalStart < modalStart, 'the compact status bar must render in the dashboard header portal');
+  assert.match(source.slice(portalStart, modalStart), /output-route-live-status/);
+  assert.match(source.slice(portalStart, modalStart), /output-settings-button/);
   assert.doesNotMatch(source, /className="output-selector"/);
   assert.ok(modalStart >= 0 && detailsStart > modalStart, 'route diagnostics must render inside the settings dialog');
+  assert.match(source.slice(detailsStart), /className="output-route-switch"/);
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.selected/);
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.actual/);
   assert.match(source.slice(detailsStart), /outputView\?\.messageKey/);

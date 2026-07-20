@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 import { getOutputMessage as t } from '../copy/outputMessages';
 import {
@@ -117,6 +118,7 @@ export default function PlaybackPanel({
   const [isResettingOutputControl, setIsResettingOutputControl] = useState(false);
   const [controlTransferPhase, setControlTransferPhase] = useState('idle');
   const [isRetryingOutputControl, setIsRetryingOutputControl] = useState(false);
+  const [outputRoutePortalTarget, setOutputRoutePortalTarget] = useState(null);
   const obsSetupTriggerRef = useRef(null);
   const obsDialogRef = useRef(null);
   const obsDialogTitleRef = useRef(null);
@@ -127,6 +129,11 @@ export default function PlaybackPanel({
   const retryOutputControlRef = useRef(onRetryOutputControl);
   showToastRef.current = showToast;
   retryOutputControlRef.current = onRetryOutputControl;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    setOutputRoutePortalTarget(document.getElementById('dashboard-output-route-bar'));
+  }, []);
   const isMuted = volume === 0;
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
@@ -612,86 +619,54 @@ export default function PlaybackPanel({
     }
   };
 
+  const outputRoutePortal = outputRoutePortalTarget
+    ? createPortal(
+      <div className="dashboard-output-route-bar-inner">
+        {currentSong && (
+          <span className={`on-air-badge ${isPlaying && !controlsLocked ? '' : 'is-paused'}`}>
+            {phaseBadgeText}
+          </span>
+        )}
+        <span
+          id="output-route-live-status"
+          className={`output-route-live-status is-${activeOutputStatus.tone}`}
+          role="status"
+          aria-live="polite"
+        >
+          {activeOutputStatus.mode === 'speaker' && <Volume2 size={14} aria-hidden="true" />}
+          {activeOutputStatus.mode === 'obs' && <Radio size={14} aria-hidden="true" />}
+          {!activeOutputStatus.mode && <span className="obs-status-dot" aria-hidden="true" />}
+          {t(activeOutputStatus.key)}
+        </span>
+        <button
+          ref={obsSetupTriggerRef}
+          type="button"
+          onClick={() => setIsObsSetupOpen(true)}
+          className={`btn-icon output-settings-button${outputNeedsAttention ? ' has-attention' : ''}`}
+          title={t(outputNeedsAttention
+            ? 'obs.setup.openLabelAttention'
+            : 'obs.setup.openLabel')}
+          aria-label={t(outputNeedsAttention
+            ? 'obs.setup.openLabelAttention'
+            : 'obs.setup.openLabel')}
+          aria-haspopup="dialog"
+          aria-expanded={isObsSetupOpen}
+          aria-controls="obs-setup-dialog"
+        >
+          <Settings size={16} />
+          {outputNeedsAttention && <span className="output-settings-alert-dot" aria-hidden="true" />}
+        </button>
+      </div>,
+      outputRoutePortalTarget,
+    )
+    : null;
+
   return (
-    <section className="panel playback-panel glass-card" aria-label={t('playback.region.label')}>
+    <>
+      {outputRoutePortal}
+      <section className="panel playback-panel glass-card" aria-label={t('playback.region.label')}>
       <div className="playback-panel-header">
         <div className="playback-heading"><ListMusic size={17} /> {t('playback.heading')}</div>
-        <div className="playback-header-actions">
-          <div className="playback-live-badges">
-            {currentSong && <span className={`on-air-badge ${isPlaying && !controlsLocked ? '' : 'is-paused'}`}>{phaseBadgeText}</span>}
-            <span
-              id="output-route-live-status"
-              className={`output-route-live-status is-${activeOutputStatus.tone}`}
-              role="status"
-              aria-live="polite"
-            >
-              {activeOutputStatus.mode === 'speaker' && <Volume2 size={14} aria-hidden="true" />}
-              {activeOutputStatus.mode === 'obs' && <Radio size={14} aria-hidden="true" />}
-              {!activeOutputStatus.mode && <span className="obs-status-dot" aria-hidden="true" />}
-              {t(activeOutputStatus.key)}
-            </span>
-          </div>
-          <div className="output-route-actions">
-            <div
-              className="output-route-switch"
-              role="radiogroup"
-              aria-label={t('onair.output.region.label')}
-              aria-disabled={outputSelectionLocked}
-            >
-              {['speaker', 'obs'].map((mode) => {
-                const isSelected = selectedOutputMode === mode;
-                const isPending = normalizedOutputSwitchState === 'connecting'
-                  && pendingSelectionMode === mode;
-                const isOptionDisabled = outputSelectionLocked;
-                return (
-                  <button
-                    key={mode}
-                    ref={(element) => { outputOptionRefs.current[mode] = element; }}
-                    type="button"
-                    role="radio"
-                    aria-checked={isSelected}
-                    aria-busy={isPending || undefined}
-                    aria-disabled={isOptionDisabled}
-                    aria-describedby="output-route-live-status"
-                    title={isOptionDisabled ? t(outputSelectionLockMessageKey) : undefined}
-                    tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
-                    className={`output-route-button${isSelected ? ' is-selected' : ''}${isPending ? ' is-pending' : ''}`}
-                    onClick={() => selectOutputMode(mode)}
-                    onKeyDown={(event) => handleOutputOptionKeyDown(event, mode)}
-                  >
-                    {mode === 'speaker'
-                      ? <Volume2 size={15} aria-hidden="true" />
-                      : <Radio size={15} aria-hidden="true" />}
-                    <span>{outputModeLabel(mode)}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <button
-              ref={obsSetupTriggerRef}
-              type="button"
-              onClick={() => setIsObsSetupOpen(true)}
-              className={`btn-icon output-settings-button${outputNeedsAttention ? ' has-attention' : ''}`}
-              title={t(outputNeedsAttention
-                ? 'obs.setup.openLabelAttention'
-                : 'obs.setup.openLabel')}
-              aria-label={t(outputNeedsAttention
-                ? 'obs.setup.openLabelAttention'
-                : 'obs.setup.openLabel')}
-              aria-haspopup="dialog"
-              aria-expanded={isObsSetupOpen}
-              aria-controls="obs-setup-dialog"
-            >
-              <Settings size={16} />
-              {outputNeedsAttention && (
-                <span className="output-settings-alert-dot" aria-hidden="true" />
-              )}
-            </button>
-          </div>
-          <p className="output-route-next-action" role="note">
-            <span>{t('onair.output.nextAction.label')}:</span> {t(outputNextActionKey)}
-          </p>
-        </div>
       </div>
 
       {currentSong ? (
@@ -774,6 +749,41 @@ export default function PlaybackPanel({
             </p>
 
             <section className="output-route-details" aria-labelledby="output-route-details-title">
+              <div
+                className="output-route-switch"
+                role="radiogroup"
+                aria-label={t('onair.output.region.label')}
+                aria-disabled={outputSelectionLocked}
+              >
+                {['speaker', 'obs'].map((mode) => {
+                  const isSelected = selectedOutputMode === mode;
+                  const isPending = normalizedOutputSwitchState === 'connecting'
+                    && pendingSelectionMode === mode;
+                  const isOptionDisabled = outputSelectionLocked;
+                  return (
+                    <button
+                      key={mode}
+                      ref={(element) => { outputOptionRefs.current[mode] = element; }}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      aria-busy={isPending || undefined}
+                      aria-disabled={isOptionDisabled}
+                      aria-describedby="output-route-live-status output-route-details-title"
+                      title={isOptionDisabled ? t(outputSelectionLockMessageKey) : undefined}
+                      tabIndex={isSelected || (!selectedOutputMode && mode === 'speaker') ? 0 : -1}
+                      className={`output-route-button${isSelected ? ' is-selected' : ''}${isPending ? ' is-pending' : ''}`}
+                      onClick={() => selectOutputMode(mode)}
+                      onKeyDown={(event) => handleOutputOptionKeyDown(event, mode)}
+                    >
+                      {mode === 'speaker'
+                        ? <Volume2 size={15} aria-hidden="true" />
+                        : <Radio size={15} aria-hidden="true" />}
+                      <span>{outputModeLabel(mode)}</span>
+                    </button>
+                  );
+                })}
+              </div>
               <header>
                 <div>
                   <h3 id="output-route-details-title">{t('onair.output.details.title')}</h3>
@@ -819,6 +829,9 @@ export default function PlaybackPanel({
               {outputView?.messageKey && (
                 <p className="output-route-authoritative-detail">{t(outputView.messageKey)}</p>
               )}
+              <p className="output-route-next-action" role="note">
+                <span>{t('onair.output.nextAction.label')}:</span> {t(outputNextActionKey)}
+              </p>
               {confirmedOutputMode === 'obs' && (
                 <p className="output-route-obs-silence-note" role="note">
                   {t('obs.audioCheck.localSpeakerSilent')}
@@ -1142,6 +1155,7 @@ export default function PlaybackPanel({
           </section>
         </div>
       )}
-    </section>
+      </section>
+    </>
   );
 }
