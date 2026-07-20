@@ -537,12 +537,14 @@ export default function PlaybackPanel({
       Promise.resolve(onResetOutputControl())
         .then(() => showToast?.(t('obs.setup.recovery.resetComplete'), 'info'))
         .catch((error) => {
-          showToast?.(error?.message || t('obs.setup.recovery.resetFailed'), 'error');
+          console.warn('Output route reset did not complete', error);
+          showToast?.(t('obs.setup.recovery.resetFailed'), 'error');
         })
         .finally(() => setIsResettingOutputControl(false));
     } catch (error) {
       setIsResettingOutputControl(false);
-      showToast?.(error?.message || t('obs.setup.recovery.resetFailed'), 'error');
+      console.warn('Output route reset could not start', error);
+      showToast?.(t('obs.setup.recovery.resetFailed'), 'error');
     }
   };
 

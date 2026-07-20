@@ -890,6 +890,34 @@ test('outcome_unknown is a sticky local lock and commands are never retried auto
   assert.equal(connection.commands.length, 1);
 });
 
+test('waitForCommandResult resolves only after the matching terminal command result', async () => {
+  const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
+  const request = coordinator.publishDisplayState({ text: 'reset-check' });
+  const waiting = coordinator.waitForCommandResult(request.command.commandId, { timeoutMs: 100 });
+
+  let settled = false;
+  waiting.then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  connection.result({
+    status: 'acknowledged',
+    entry: { commandId: request.command.commandId, state: 'acknowledged' },
+  });
+  assert.deepEqual(await waiting, {
+    commandId: request.command.commandId,
+    status: 'acknowledged',
+  });
+});
+
+test('waitForCommandResult times out without inventing an acknowledgement', async () => {
+  const { coordinator } = createHarness({ snapshot: readyOutputSnapshot() });
+  await assert.rejects(
+    coordinator.waitForCommandResult('missing-command', { timeoutMs: 1 }),
+    (error) => error?.code === ON_AIR_CONTROL_COORDINATOR_CODES.COMMAND_RESULT_TIMEOUT,
+  );
+});
+
 test('async outcome_unknown callback locks pending work without retry or fallback', () => {
   const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
   const load = coordinator.load({ song: { id: 'song-a', type: 'local' } });

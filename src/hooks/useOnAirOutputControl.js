@@ -32,6 +32,7 @@ export const ON_AIR_OUTPUT_CONTROL_CODES = Object.freeze({
   SWITCH_PENDING: 'output_control_switch_pending',
   LEASE_NOT_SWITCHABLE: 'output_control_lease_not_switchable',
   TARGET_IDENTITY_MISMATCH: 'output_control_target_identity_mismatch',
+  COMMAND_REQUEST_FAILED: 'output_control_command_request_failed',
   COMMAND_UNSUPPORTED: 'output_control_command_unsupported',
   RUN_IDENTITY_REQUIRED: 'output_control_run_identity_required',
   RUN_IDENTITY_MISMATCH: 'output_control_run_identity_mismatch',
@@ -375,9 +376,29 @@ export class OnAirOutputController {
   async resetOutputControl() {
     this.#assertUsable();
     // A full reset is destructive by design: first request a session-wide
-    // emergency stop and wait for its result, then rebuild the control socket.
-    // If the stop cannot be proven, do not discard the coordinator state.
-    await this.emergencyStop();
+    // emergency stop and wait for its command result, then rebuild the
+    // control socket. If the stop outcome is unknown or rejected, do not
+    // discard the coordinator state.
+    const dispatched = this.emergencyStop();
+    const commandId = dispatched?.command?.commandId;
+    if (!isIdentifier(commandId) || typeof this.#coordinator.waitForCommandResult !== 'function') {
+      throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.COMMAND_REQUEST_FAILED, {
+        operation: 'emergency_stop_result_wait',
+      });
+    }
+    if (dispatched?.result?.status === 'outcome_unknown'
+      || dispatched?.result?.entry?.state === 'outcome_unknown') {
+      throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.COMMAND_REQUEST_FAILED, {
+        operation: 'emergency_stop_outcome_unknown',
+      });
+    }
+    const outcome = await this.#coordinator.waitForCommandResult(commandId);
+    if (outcome?.status !== 'acknowledged') {
+      throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.COMMAND_REQUEST_FAILED, {
+        operation: 'emergency_stop_not_acknowledged',
+        status: outcome?.status ?? null,
+      });
+    }
     return this.retryConnection();
   }
 

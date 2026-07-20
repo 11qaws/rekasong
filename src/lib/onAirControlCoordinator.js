@@ -38,6 +38,7 @@ export const ON_AIR_CONTROL_COORDINATOR_CODES = Object.freeze({
   CONNECTION_LOST: 'control_coordinator_connection_lost',
   OUTCOME_UNKNOWN: 'control_coordinator_outcome_unknown',
   COMMAND_REQUEST_FAILED: 'control_coordinator_command_request_failed',
+  COMMAND_RESULT_TIMEOUT: 'control_coordinator_command_result_timeout',
   OUTGOING_INVALID: 'control_coordinator_outgoing_invalid',
   INVALID_OUTPUT_MODE: 'control_coordinator_invalid_output_mode',
   OUTPUT_CANDIDATE_COUNT: 'control_coordinator_output_candidate_count',
@@ -265,6 +266,8 @@ export class OnAirControlCoordinatorError extends Error {
 
 export class OnAirControlCoordinator {
   #connection;
+  #commandResultHistory = new Map();
+  #commandResultWaiters = new Map();
   #sessionId;
   #idFactory;
   #callbacks;
@@ -412,6 +415,13 @@ export class OnAirControlCoordinator {
   dispose() {
     if (this.#disposed) return;
     this.close(1000, 'control_coordinator_disposed');
+    for (const waiters of this.#commandResultWaiters.values()) {
+      for (const waiter of waiters) waiter({
+        commandId: null,
+        status: 'outcome_unknown',
+      });
+    }
+    this.#commandResultWaiters.clear();
     this.#disposed = true;
     this.#connectionState = ON_AIR_V2_CONNECTION_STATES.CLOSED;
     this.#publish();
@@ -1057,6 +1067,45 @@ export class OnAirControlCoordinator {
       }
       throw error;
     }
+  }
+
+  waitForCommandResult(commandId, { timeoutMs = 10_000 } = {}) {
+    this.#assertUsable();
+    if (!isIdentifier(commandId)) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.INVALID_ARGUMENT,
+        { field: 'commandId', kind: 'identifier' },
+      );
+    }
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.INVALID_ARGUMENT,
+        { field: 'timeoutMs', kind: 'positive_number' },
+      );
+    }
+    const existing = this.#commandResultHistory.get(commandId);
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve, reject) => {
+      let waiter;
+      const timer = setTimeout(() => {
+        const waiters = this.#commandResultWaiters.get(commandId);
+        if (waiters) {
+          waiters.delete(waiter);
+          if (waiters.size === 0) this.#commandResultWaiters.delete(commandId);
+        }
+        reject(new OnAirControlCoordinatorError(
+          ON_AIR_CONTROL_COORDINATOR_CODES.COMMAND_RESULT_TIMEOUT,
+          { commandId, timeoutMs },
+        ));
+      }, timeoutMs);
+      waiter = (outcome) => {
+        clearTimeout(timer);
+        resolve(outcome);
+      };
+      const waiters = this.#commandResultWaiters.get(commandId) ?? new Set();
+      waiters.add(waiter);
+      this.#commandResultWaiters.set(commandId, waiters);
+    });
   }
 
   takeOverControl() {
@@ -1921,6 +1970,23 @@ export class OnAirControlCoordinator {
 
   #handleCommandResult(result) {
     const commandId = result?.entry?.commandId;
+    if (isIdentifier(commandId)) {
+      const outcome = immutable({
+        commandId,
+        status: typeof result?.status === 'string'
+          ? result.status
+          : typeof result?.entry?.state === 'string' ? result.entry.state : 'unknown',
+      });
+      this.#commandResultHistory.set(commandId, outcome);
+      while (this.#commandResultHistory.size > 64) {
+        this.#commandResultHistory.delete(this.#commandResultHistory.keys().next().value);
+      }
+      const waiters = this.#commandResultWaiters.get(commandId);
+      if (waiters) {
+        this.#commandResultWaiters.delete(commandId);
+        for (const waiter of waiters) waiter(outcome);
+      }
+    }
     const metadata = isIdentifier(commandId) ? this.#pendingCommands.get(commandId) : null;
     if (result?.status === 'outcome_unknown' || result?.entry?.state === 'outcome_unknown') {
       if (metadata?.kind === 'takeover' && this.#pendingTakeover?.commandId === commandId) {

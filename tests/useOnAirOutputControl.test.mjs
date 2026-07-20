@@ -201,7 +201,16 @@ class FakeCoordinator {
 
   emergencyStop() {
     this.calls.push(['emergencyStop']);
-    return { status: 'created', operation: 'emergencyStop' };
+    return {
+      status: 'created',
+      operation: 'emergencyStop',
+      command: { commandId: 'fake-emergency-command' },
+    };
+  }
+
+  waitForCommandResult(commandId) {
+    this.calls.push(['waitForCommandResult', commandId]);
+    return Promise.resolve({ commandId, status: 'acknowledged' });
   }
 
   startTest(options) {
@@ -721,7 +730,11 @@ test('full output reset stops every output before rebuilding control', async () 
 
   await controller.resetOutputControl();
 
-  assert.deepEqual(oldCoordinator.calls, [['emergencyStop'], ['dispose']]);
+  assert.deepEqual(oldCoordinator.calls, [
+    ['emergencyStop'],
+    ['waitForCommandResult', 'fake-emergency-command'],
+    ['dispose'],
+  ]);
   assert.equal(coordinators.length, 2);
   assert.equal(coordinators[1].connectCalls, 1);
 });
@@ -752,7 +765,11 @@ test('speaker route button retries deactivation when a disconnected speaker rout
   coordinator.emit(coordinatorSnapshot(unknownProtocol, { routeUnknown: true }));
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING);
 
-  assert.deepEqual(controller.emergencyStop(), { status: 'created', operation: 'emergencyStop' });
+  assert.deepEqual(controller.emergencyStop(), {
+    status: 'created',
+    operation: 'emergencyStop',
+    command: { commandId: 'fake-emergency-command' },
+  });
   assert.deepEqual(coordinator.calls, [['deactivateOutput'], ['emergencyStop']]);
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
 
