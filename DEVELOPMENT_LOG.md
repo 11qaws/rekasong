@@ -367,3 +367,8 @@
 - Separated the current playback card from output status. The yellow area directly below the Rekasong header now carries the compact On-Air/output status and the settings gear, styled as a right-side hairpin accent.
 - Moved Speaker/OBS route switching, authoritative route details, OBS audio check, recovery and session controls into the settings dialog. The playback card no longer carries route controls.
 - A fresh web-player dashboard now queues Speaker as the default route once output control is ready, while an existing route or explicit user intent is preserved.
+
+## 2026-07-21 (Codex) — Speaker route remains open with white hairpin controls
+
+- Removed the full-width yellow output strip. `ON AIR`, the active output label, and settings now sit in one compact white hairpin-like control block at the right of the header.
+- Speaker candidates may coexist without the OBS-style exact-one candidate gate. Speaker route readiness and playback continuity accept the page-owned player among multiple speaker candidates; OBS still requires exactly one eligible browser source.

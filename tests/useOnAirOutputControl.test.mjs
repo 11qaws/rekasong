@@ -578,7 +578,7 @@ test('a missing page-owned speaker candidate times out visibly without sending a
   );
 });
 
-test('a duplicate speaker candidate fails closed while the first-click intent is waiting', () => {
+test('multiple speaker candidates do not block the first-click intent while the owned player is joining', () => {
   const timers = createTimerHarness();
   const { controller, coordinators } = createHarness(coordinatorSnapshot(playerSnapshot({
     eligibleCandidates: { speaker: [] },
@@ -597,12 +597,12 @@ test('a duplicate speaker candidate fails closed while the first-click intent is
   })));
 
   assert.deepEqual(controller.getState().outputSwitchState, {
-    status: ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED,
+    status: ON_AIR_OUTPUT_SWITCH_STATUSES.ACTIVATING,
     targetMode: 'speaker',
-    reasonCode: ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT,
+    reasonCode: null,
   });
   assert.deepEqual(coordinators[0].calls, []);
-  assert.equal(timers.size, 0);
+  assert.equal(timers.size, 1);
 });
 
 test('speaker activation requires the exact Dashboard-owned player identity', () => {
@@ -1067,7 +1067,10 @@ test('identity-matched terminal LOAD evidence cancels auto-PLAY and permits a st
         runId: 'run-c',
         reasonCode: null,
       });
-      assert.equal(coordinator.calls.filter(([name]) => name === 'play').length, 0);
+      assert.equal(
+        coordinator.calls.filter(([name]) => name === 'play').length,
+        0,
+      );
       assert.equal(coordinator.calls.filter(([name]) => name === 'stop').length, 1);
     });
   }
@@ -1280,21 +1283,27 @@ test('pending post-LOAD PLAY is cancelled by unknown, reconnect, identity mismat
       });
       const cancellation = fixture.snapshot();
       coordinator.emit(cancellation);
-      assert.deepEqual(controller.getState().playbackTransitionState, {
-        status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.FAILED,
-        entryId: 'entry-b',
-        runId: 'run-b',
-        reasonCode: fixture.reasonCode,
-      });
+      const expectedTransition = fixture.name === 'route loss'
+        ? {
+          status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.LOADING,
+          entryId: 'entry-b',
+          runId: 'run-b',
+          reasonCode: null,
+        }
+        : {
+          status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.FAILED,
+          entryId: 'entry-b',
+          runId: 'run-b',
+          reasonCode: fixture.reasonCode,
+        };
+      assert.deepEqual(controller.getState().playbackTransitionState, expectedTransition);
       coordinator.emit(cancellation);
       coordinator.emit(loadedReadySnapshot());
-      assert.deepEqual(controller.getState().playbackTransitionState, {
-        status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.FAILED,
-        entryId: 'entry-b',
-        runId: 'run-b',
-        reasonCode: fixture.reasonCode,
-      });
-      assert.equal(coordinator.calls.filter(([name]) => name === 'play').length, 0);
+      assert.deepEqual(controller.getState().playbackTransitionState, expectedTransition);
+      assert.equal(
+        coordinator.calls.filter(([name]) => name === 'play').length,
+        fixture.name === 'route loss' ? 1 : 0,
+      );
     });
   }
 });
@@ -1373,7 +1382,7 @@ test('cancels a queued next LOAD if authority becomes unknown before stop proof'
   assert.deepEqual(coordinator.calls, [['stop']]);
 });
 
-test('cancels a queued next LOAD if the leased player is no longer the sole candidate', () => {
+test('keeps a queued next LOAD when an additional speaker candidate appears', () => {
   const activeRun = { entryId: 'entry-a', runId: 'run-a' };
   const activeProtocol = readyRoute('speaker', {
     activeFamily: { family: 'run', entryId: 'entry-a', runId: 'run-a' },
@@ -1393,10 +1402,10 @@ test('cancels a queued next LOAD if the leased player is no longer the sole cand
   }), { activeRun });
   coordinator.emit(routeLoss);
   assert.deepEqual(controller.getState().playbackTransitionState, {
-    status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.FAILED,
+    status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.STOPPING,
     entryId: 'entry-b',
     runId: 'run-b',
-    reasonCode: ON_AIR_PLAYBACK_TRANSITION_REASONS.OUTPUT_ROUTE_LOST,
+    reasonCode: null,
   });
   coordinator.emit(routeLoss);
   coordinator.emit(coordinatorSnapshot(readyRoute('speaker', {
@@ -1409,12 +1418,12 @@ test('cancels a queued next LOAD if the leased player is no longer the sole cand
     },
   })));
 
-  assert.deepEqual(coordinator.calls, [['stop']]);
+  assert.deepEqual(coordinator.calls.map(([name]) => name), ['stop', 'load']);
   assert.deepEqual(controller.getState().playbackTransitionState, {
-    status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.FAILED,
+    status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.LOADING,
     entryId: 'entry-b',
     runId: 'run-b',
-    reasonCode: ON_AIR_PLAYBACK_TRANSITION_REASONS.OUTPUT_ROUTE_LOST,
+    reasonCode: null,
   });
 });
 

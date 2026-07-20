@@ -2450,18 +2450,18 @@ export class SessionRoom {
 
       const candidates = [...new Set(this.eligiblePlayerRecords(outputMode)
         .map(({ attachment }) => attachment.playerInstanceId))];
-      if (candidates.length !== 1) {
+      if (candidates.length === 0 || (outputMode !== 'speaker' && candidates.length !== 1)) {
         return this.rejectV2Command(socket, command, 'output_candidate_count', {
           outputMode,
           count: candidates.length,
           candidates: candidates.slice(0, 16)
         });
       }
-      if (candidates[0] !== targetPlayerInstanceId) {
+      if (!candidates.includes(targetPlayerInstanceId)) {
         return this.rejectV2Command(socket, command, 'target_not_eligible', {
           outputMode,
           targetPlayerInstanceId,
-          eligibleTarget: candidates[0]
+          eligibleTarget: outputMode === 'speaker' ? candidates : candidates[0]
         });
       }
 

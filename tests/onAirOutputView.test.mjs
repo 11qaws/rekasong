@@ -182,11 +182,7 @@ test('output switching validates the destination candidate rather than the curre
     speakerCandidates: ['player-speaker', 'player-speaker-duplicate'],
   }));
   assert.equal(unstableCurrentRoute.targets.obs.candidate.state, 'single');
-  assert.equal(unstableCurrentRoute.targets.obs.action.allowed, false);
-  assert.equal(
-    unstableCurrentRoute.targets.obs.action.reasonCode,
-    ON_AIR_OUTPUT_GATE_CODES.STATE_UNKNOWN,
-  );
+  assert.equal(unstableCurrentRoute.targets.obs.action.allowed, true);
 });
 
 test('zero and multiple eligible candidates are explicit and block activation or switching', () => {
@@ -203,6 +199,15 @@ test('zero and multiple eligible candidates are explicit and block activation or
   assert.equal(missing.actions.retry.allowed, true);
 
   assert.equal(duplicate.statusCode, 'candidate_duplicate');
+
+  const speakerDuplicate = derive(makeSnapshot({
+    mode: 'speaker',
+    speakerCandidates: ['player-speaker', 'player-speaker-copy'],
+    leaseClientKind: 'dashboard-speaker',
+    leaseTarget: 'player-speaker',
+  }));
+  assert.equal(speakerDuplicate.statusCode, 'route_ready');
+  assert.equal(speakerDuplicate.actions.activate.allowed, false);
   assert.deepEqual(
     { state: duplicate.candidate.state, count: duplicate.candidate.count },
     { state: ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE, count: 2 },

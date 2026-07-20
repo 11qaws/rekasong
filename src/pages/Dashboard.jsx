@@ -337,8 +337,10 @@ export default function Dashboard() {
     && outputControl.requestedOutputMode === actualOutputMode
     && outputSwitchStatus === 'idle'
     && Array.isArray(activeOutputCandidates)
-    && activeOutputCandidates.length === 1
-    && activeOutputCandidates[0] === activeOutputLease?.leaseTarget
+    && (actualOutputMode === 'speaker'
+      ? activeOutputCandidates.includes(activeOutputLease?.leaseTarget)
+      : activeOutputCandidates.length === 1
+        && activeOutputCandidates[0] === activeOutputLease?.leaseTarget)
   );
   const outputSwitchUiState = outputControlConflict
     ? 'conflict'
@@ -1279,7 +1281,7 @@ export default function Dashboard() {
     // 진실성 게이트(모든 재생 시작 경로 공통 — 대기열 바로 재생·재시도·자동 다음
     // 곡 포함): player 위젯이 실제로 연결돼 있지 않으면 run 을 만들지 않는다.
     // 모든 호출자가 catch→토스트로 처리한다.
-    if (useOnAirPlayer && !outputRouteStable) {
+    if (useOnAirPlayer && actualOutputMode !== 'speaker' && !outputRouteStable) {
       throw new Error(t('onair.output.playback.routeNotConfirmed'));
     }
     const runId = newId();

@@ -260,6 +260,7 @@ function candidateView(mode, eligibleCandidates) {
       state: ON_AIR_OUTPUT_CANDIDATE_STATES.NONE,
       count: 0,
       playerInstanceId: null,
+      playerInstanceIds: [],
       messageKey: CANDIDATE_MESSAGE_KEYS.none,
     };
   }
@@ -269,6 +270,7 @@ function candidateView(mode, eligibleCandidates) {
       state: ON_AIR_OUTPUT_CANDIDATE_STATES.UNKNOWN,
       count: null,
       playerInstanceId: null,
+      playerInstanceIds: [],
       messageKey: CANDIDATE_MESSAGE_KEYS.unknown,
     };
   }
@@ -281,6 +283,7 @@ function candidateView(mode, eligibleCandidates) {
     state,
     count: list.length,
     playerInstanceId: state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE ? list[0] : null,
+    playerInstanceIds: [...list],
     messageKey: CANDIDATE_MESSAGE_KEYS[state],
   };
 }
@@ -685,8 +688,10 @@ export function deriveOnAirOutputView(input = {}) {
     && ACTIVE_LEASE_STATES.has(rawLeaseStatus)
     && leaseMode !== selectedOutputMode;
   const candidateTargetMismatch = ['activating', 'ready', 'audible'].includes(rawLeaseStatus)
-    && candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
-    && candidate.playerInstanceId !== leaseTarget;
+    && (selectedOutputMode === ON_AIR_OUTPUT_MODES.SPEAKER
+      ? !candidate.playerInstanceIds.includes(leaseTarget)
+      : candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
+        && candidate.playerInstanceId !== leaseTarget);
   const playbackInconsistent = (rawLeaseStatus === 'audible' && confirmedStatus !== 'playing')
     || (confirmedStatus === 'playing' && rawLeaseStatus !== 'audible');
   const adapterInconsistent = adapter.available && (
@@ -707,7 +712,8 @@ export function deriveOnAirOutputView(input = {}) {
     statusCode = 'output_deactivating';
   } else if (candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.NONE && selectedOutputMode !== null) {
     statusCode = 'candidate_missing';
-  } else if (candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE) {
+  } else if (candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
+    && selectedOutputMode !== ON_AIR_OUTPUT_MODES.SPEAKER) {
     statusCode = 'candidate_duplicate';
   } else if (leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.ACTIVATING) {
     statusCode = 'output_activating';
@@ -745,7 +751,10 @@ export function deriveOnAirOutputView(input = {}) {
     'activation_failed',
     'emergency_stopping',
   ].includes(statusCode);
-  const candidateSingle = candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
+  const candidateSingle = selectedOutputMode === ON_AIR_OUTPUT_MODES.SPEAKER
+    ? candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
+      || candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
+    : candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
   const currentRouteStable = leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
     || (candidateSingle && !modeMismatch && !candidateTargetMismatch);
   const alternateOutputMode = selectedOutputMode === ON_AIR_OUTPUT_MODES.SPEAKER
@@ -754,7 +763,10 @@ export function deriveOnAirOutputView(input = {}) {
       ? ON_AIR_OUTPUT_MODES.SPEAKER
       : null;
   const switchCandidate = alternateOutputMode === null ? null : candidates[alternateOutputMode];
-  const switchCandidateSingle = switchCandidate?.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
+  const switchCandidateSingle = alternateOutputMode === ON_AIR_OUTPUT_MODES.SPEAKER
+    ? switchCandidate?.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
+      || switchCandidate?.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
+    : switchCandidate?.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
   const stableLease = ['ready', 'inactive'].includes(leaseStatus);
   const safeStopped = inputValid
     && !unknownState
@@ -818,8 +830,10 @@ export function deriveOnAirOutputView(input = {}) {
 
   const targets = Object.fromEntries(Object.values(ON_AIR_OUTPUT_MODES).map((mode) => {
     const targetCandidate = candidates[mode];
-    const targetCandidateSingle = targetCandidate.state
-      === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
+    const targetCandidateSingle = mode === ON_AIR_OUTPUT_MODES.SPEAKER
+      ? targetCandidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
+        || targetCandidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
+      : targetCandidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
     const targetActivateAllowed = !unknownState
       && leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
       && targetCandidateSingle
@@ -892,7 +906,7 @@ export function deriveOnAirOutputView(input = {}) {
     ),
     [ON_AIR_OUTPUT_ACTIONS.RETRY]: gate(
       ON_AIR_OUTPUT_ACTIONS.RETRY,
-      retryAllowed,
+      retryAllowed && selectedOutputMode !== ON_AIR_OUTPUT_MODES.SPEAKER,
       ON_AIR_OUTPUT_GATE_CODES.NOT_NEEDED,
     ),
     [ON_AIR_OUTPUT_ACTIONS.RESUME]: gate(

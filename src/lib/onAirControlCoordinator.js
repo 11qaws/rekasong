@@ -271,6 +271,7 @@ export class OnAirControlCoordinator {
   #sessionId;
   #idFactory;
   #callbacks;
+  #dashboardSpeakerPlayerInstanceId = null;
   #subscribers = new Set();
   #connectionState = ON_AIR_V2_CONNECTION_STATES.IDLE;
   #welcome = null;
@@ -301,6 +302,7 @@ export class OnAirControlCoordinator {
     setIntervalFn,
     clearIntervalFn,
     callbacks = {},
+    dashboardSpeakerPlayerInstanceId = null,
   } = {}) {
     requireConfiguration(isRecord(transport), 'transport', 'record');
     requireConfiguration(typeof transport.url === 'string' && transport.url.trim().length > 0,
@@ -314,6 +316,9 @@ export class OnAirControlCoordinator {
     requireConfiguration(typeof idFactory === 'function', 'idFactory', 'function');
     requireConfiguration(typeof connectionFactory === 'function', 'connectionFactory', 'function');
     requireConfiguration(isRecord(callbacks), 'callbacks', 'record');
+    requireConfiguration(dashboardSpeakerPlayerInstanceId === null
+      || isIdentifier(dashboardSpeakerPlayerInstanceId),
+    'dashboardSpeakerPlayerInstanceId', 'identifier');
     const urlSessionId = sessionIdFromTransportUrl(transport.url);
     requireConfiguration(urlSessionId === null || urlSessionId === transport.sessionId,
       'transport.sessionId', 'url_session_match');
@@ -325,6 +330,7 @@ export class OnAirControlCoordinator {
     this.#sessionId = transport.sessionId;
     this.#idFactory = idFactory;
     this.#callbacks = callbacks;
+    this.#dashboardSpeakerPlayerInstanceId = dashboardSpeakerPlayerInstanceId;
     let connection;
     try {
       connection = connectionFactory({
@@ -758,7 +764,13 @@ export class OnAirControlCoordinator {
       );
     }
     const candidates = this.#playerSnapshot.eligibleCandidates[mode];
-    if (candidates.length !== 1) {
+    const targetPlayerInstanceId = mode === 'speaker'
+      && this.#dashboardSpeakerPlayerInstanceId
+      && candidates.includes(this.#dashboardSpeakerPlayerInstanceId)
+      ? this.#dashboardSpeakerPlayerInstanceId
+      : candidates.length === 1 ? candidates[0] : null;
+    if (candidates.length === 0 || (mode !== 'speaker' && candidates.length !== 1)
+      || !targetPlayerInstanceId) {
       throw new OnAirControlCoordinatorError(
         ON_AIR_CONTROL_COORDINATOR_CODES.OUTPUT_CANDIDATE_COUNT,
         { mode, count: candidates.length, candidates: candidates.slice(0, 8) },
@@ -770,7 +782,7 @@ export class OnAirControlCoordinator {
       commandId: this.#newId('control-command'),
       switchId,
       leaseEpoch: lease.epoch,
-      targetPlayerInstanceId: candidates[0],
+      targetPlayerInstanceId,
       controlEpoch: this.#playerSnapshot.controlLease.controlEpoch,
       payload: { outputMode: mode },
     };
@@ -779,7 +791,7 @@ export class OnAirControlCoordinator {
       switchId,
       commandId: command.commandId,
       mode,
-      targetPlayerInstanceId: candidates[0],
+      targetPlayerInstanceId,
     });
     try {
       return this.#request(command, { kind: 'activate', switchId });

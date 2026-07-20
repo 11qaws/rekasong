@@ -202,6 +202,7 @@ function createCoordinator({
   webSocketFactory,
   coordinatorFactory,
   controlIdentity,
+  dashboardSpeakerPlayerInstanceId,
 }) {
   return coordinatorFactory({
     transport: {
@@ -212,6 +213,7 @@ function createCoordinator({
       capabilities: {},
       identity: controlIdentity,
     },
+    dashboardSpeakerPlayerInstanceId,
   });
 }
 
@@ -563,6 +565,7 @@ export class OnAirOutputController {
       webSocketFactory: this.#webSocketFactory,
       coordinatorFactory: this.#coordinatorFactory,
       controlIdentity: this.#controlIdentity,
+      dashboardSpeakerPlayerInstanceId: this.#dashboardSpeakerPlayerInstanceId,
     });
     for (const method of [
       'connect',
@@ -657,9 +660,9 @@ export class OnAirOutputController {
       if (intent.awaitingCandidate === true) {
         const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
         reasonCode = Array.isArray(candidates)
-          && candidates.length === 1
+          && candidates.length > 0
           && this.#dashboardSpeakerPlayerInstanceId !== null
-          && candidates[0] !== this.#dashboardSpeakerPlayerInstanceId
+          && !candidates.includes(this.#dashboardSpeakerPlayerInstanceId)
           ? ON_AIR_OUTPUT_CONTROL_CODES.TARGET_IDENTITY_MISMATCH
           : ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT;
       }
@@ -704,7 +707,8 @@ export class OnAirOutputController {
 
   #assertSingleCandidate(mode) {
     const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[mode];
-    if (!Array.isArray(candidates) || candidates.length !== 1) {
+    if (!Array.isArray(candidates) || candidates.length === 0
+      || (mode !== ON_AIR_OUTPUT_MODES.SPEAKER && candidates.length !== 1)) {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT, {
         mode,
         count: Array.isArray(candidates) ? candidates.length : null,
@@ -712,14 +716,16 @@ export class OnAirOutputController {
     }
     if (mode === ON_AIR_OUTPUT_MODES.SPEAKER
       && this.#dashboardSpeakerPlayerInstanceId !== null
-      && candidates[0] !== this.#dashboardSpeakerPlayerInstanceId) {
+      && !candidates.includes(this.#dashboardSpeakerPlayerInstanceId)) {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.TARGET_IDENTITY_MISMATCH, {
         mode,
         expectedPlayerInstanceId: this.#dashboardSpeakerPlayerInstanceId,
         actualPlayerInstanceId: candidates[0],
       });
     }
-    return candidates[0];
+    return mode === ON_AIR_OUTPUT_MODES.SPEAKER && this.#dashboardSpeakerPlayerInstanceId !== null
+      ? this.#dashboardSpeakerPlayerInstanceId
+      : candidates[0];
   }
 
   #assertLegacyRunTarget(command) {
@@ -922,8 +928,10 @@ export class OnAirOutputController {
     return lease?.status === 'ready'
       && mode !== null
       && Array.isArray(candidates)
-      && candidates.length === 1
-      && candidates[0] === lease.leaseTarget;
+      && (mode === ON_AIR_OUTPUT_MODES.SPEAKER
+        ? candidates.includes(lease.leaseTarget)
+        : candidates.length === 1 && candidates[0] === lease.leaseTarget)
+      ;
   }
 
   #currentRouteCandidateStable() {
@@ -933,8 +941,9 @@ export class OnAirOutputController {
     const candidates = mode ? protocol?.eligibleCandidates?.[mode] : null;
     return mode !== null
       && Array.isArray(candidates)
-      && candidates.length === 1
-      && candidates[0] === lease.leaseTarget;
+      && (mode === ON_AIR_OUTPUT_MODES.SPEAKER
+        ? candidates.includes(lease.leaseTarget)
+        : candidates.length === 1 && candidates[0] === lease.leaseTarget);
   }
 
   #reconcilePendingLoad() {
@@ -1122,7 +1131,6 @@ export class OnAirOutputController {
           if (intent.targetMode === ON_AIR_OUTPUT_MODES.SPEAKER
             && this.#dashboardSpeakerPlayerInstanceId !== null
             && Array.isArray(candidates)
-            && candidates.length <= 1
             && !candidates.includes(this.#dashboardSpeakerPlayerInstanceId)) {
             this.#waitForDashboardSpeakerCandidate(intent.targetMode);
             return;
@@ -1165,16 +1173,19 @@ export class OnAirOutputController {
         }
         this.#assertNoActiveWork();
         const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
-        if (!Array.isArray(candidates) || candidates.length > 1) {
+        if (!Array.isArray(candidates)
+          || candidates.length === 0
+          || (intent.targetMode !== ON_AIR_OUTPUT_MODES.SPEAKER && candidates.length > 1)) {
           this.#failSwitch(ON_AIR_OUTPUT_CONTROL_CODES.CANDIDATE_COUNT);
           return;
         }
         if (candidates.length === 0) return;
-        // A sole speaker from an older/reconnecting tab is not this page's
-        // lazy player. Keep the original click pending so the old owner can
-        // retire; never activate a foreign candidate just because it arrived
-        // first. If both remain, the duplicate branch above fails closed.
-        if (candidates[0] !== this.#dashboardSpeakerPlayerInstanceId) return;
+        // A speaker from another page is not this page's player. Keep the
+        // original click pending until this page's own player appears, while
+        // allowing multiple ordinary speaker candidates in the same session.
+        if (intent.targetMode === ON_AIR_OUTPUT_MODES.SPEAKER
+          && this.#dashboardSpeakerPlayerInstanceId !== null
+          && !candidates.includes(this.#dashboardSpeakerPlayerInstanceId)) return;
 
         this.#switchIntent = {
           targetMode: intent.targetMode,
