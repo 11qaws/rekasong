@@ -733,6 +733,12 @@ test('speaker route button retries deactivation when a disconnected speaker rout
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING);
   assert.deepEqual(coordinator.calls, [['deactivateOutput']]);
 
+  // The server can publish the same unknown lease while the returning
+  // speaker is processing the deactivation. That interim snapshot must not
+  // erase the user-initiated recovery intent.
+  coordinator.emit(coordinatorSnapshot(unknownProtocol, { routeUnknown: true }));
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING);
+
   assert.deepEqual(controller.emergencyStop(), { status: 'created', operation: 'emergencyStop' });
   assert.deepEqual(coordinator.calls, [['deactivateOutput'], ['emergencyStop']]);
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);

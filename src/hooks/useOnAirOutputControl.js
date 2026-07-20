@@ -1061,10 +1061,22 @@ export class OnAirOutputController {
     const intent = this.#switchIntent;
     if (!intent) return;
     try {
-      this.#assertControlReady();
+      // A disconnected dashboard speaker is the one recoverable unknown
+      // route: the user explicitly pressed the same speaker route again and
+      // the Worker can still accept a strong deactivation on the returning
+      // player. Do not let the interim unknown snapshot turn that recovery
+      // command into a blocked state before its terminal route proof arrives.
+      const observedLease = this.#snapshot?.playerSnapshot?.lease;
+      const allowSpeakerRecovery = intent.targetMode === ON_AIR_OUTPUT_MODES.SPEAKER
+        && intent.phase === ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING
+        && observedLease?.clientKind === 'dashboard-speaker'
+        && UNKNOWN_LEASE_STATES.has(observedLease?.status)
+        && isIdentifier(observedLease?.leaseTarget);
+      this.#assertControlReady({ allowSpeakerRecovery });
       const lease = this.#snapshot.playerSnapshot.lease;
       if (intent.phase === ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING) {
         if (UNKNOWN_LEASE_STATES.has(lease.status)) {
+          if (allowSpeakerRecovery) return;
           this.#failSwitch(ON_AIR_OUTPUT_CONTROL_CODES.STATE_UNKNOWN);
           return;
         }

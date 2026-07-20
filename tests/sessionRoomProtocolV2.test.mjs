@@ -5931,7 +5931,7 @@ test('stale or disconnected active output durably refuses every run and test com
   assert.equal(disconnected.session.protocolV2.leaseStatus, 'unknown');
 });
 
-test('a late active heartbeat latches unknown and only deactivate then reactivate restores readiness', async () => {
+test('a late active heartbeat latches unknown and a healthy OBS heartbeat restores the route without playback', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5964,9 +5964,12 @@ test('a late active heartbeat latches unknown and only deactivate then reactivat
   assert.ok(findMessage(control, (message) => message.type === 'player_heartbeat'));
 
   await harness.send(player, { ...heartbeat, sequence: 1, monotonicTimeMs: 2 });
-  assert.equal(harness.storage.puts.length, putsBefore + 1);
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+  assert.equal(harness.storage.puts.length, putsBefore + 2);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_reconnected');
+  assert.equal(harness.session.transport.status, 'ready');
+  assert.equal(harness.session.protocolV2.activeFamily, null);
+  assert.equal(harness.session.protocolV2.desiredTransport.status, 'idle');
   assert.equal(player.deserializeAttachment().sequenceHighWater.heartbeat, 1);
 
   await harness.send(control, {
@@ -6041,6 +6044,53 @@ test('speaker heartbeat throttling does not make the active media route unknown'
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
   assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
   assert.notEqual(harness.session.transport.status, 'unknown');
+});
+
+test('speaker reconnect stays unknown until the same route is explicitly deactivated', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const speaker = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, speaker, {
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+  });
+  const leaseEpoch = await activateOutput(harness, control, 'player-a', 'speaker');
+  await confirmOutputReady(harness, speaker, 'player-a', leaseEpoch);
+
+  speaker.close();
+  await harness.room.webSocketClose(speaker);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_disconnected');
+
+  const replacement = harness.socket('player');
+  await registerPlayer(harness, replacement, {
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+
+  const deactivation = await deactivateOutput(harness, control, {
+    playerInstanceId: 'player-a',
+    commandId: 'speaker-reconnect-deactivate',
+    switchId: 'speaker-reconnect-deactivate-switch',
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'deactivating');
+  const connectionId = replacement.deserializeAttachment().connectionId;
+  await harness.send(replacement, {
+    type: 'route_event',
+    event: 'output_deactivated',
+    eventId: 'speaker-reconnect-deactivated',
+    sequence: 1,
+    playerInstanceId: 'player-a',
+    connectionId,
+    leaseEpoch: deactivation.leaseEpoch,
+    switchId: deactivation.switchId,
+    monotonicTimeMs: 2,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+  assert.equal(harness.session.transport.status, 'idle');
 });
 
 test('OBS eligibility requires sourceActive true while speaker eligibility keeps its prior missing-runtime behavior', async () => {

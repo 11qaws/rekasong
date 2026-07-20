@@ -1204,6 +1204,44 @@ export class SessionRoom {
     }
   }
 
+  async restoreObsOutputAfterReconnect(session, attachment, { mutationLockHeld = false } = {}) {
+    const release = mutationLockHeld
+      ? null
+      : await this.acquireV2PlayerQueue(V2_DURABLE_MUTATION_QUEUE_KEY);
+    try {
+      const protocol = this.ensureProtocolV2(session);
+      const reasonCode = protocol.confirmedPlayback?.reasonCode;
+      const recoverableReason = reasonCode === 'target_disconnected'
+        || reasonCode === 'target_heartbeat_stale';
+      const sourceProven = attachment?.runtime?.sourceActive === true;
+      const obsCapable = attachment?.capabilities?.obsRuntime === true
+        || attachment?.capabilities?.obsStudioBinding === true;
+      if (protocol.leaseStatus !== 'unknown'
+        || protocol.leaseClientKind !== 'obs-browser-source'
+        || protocol.leaseTarget !== attachment?.playerInstanceId
+        || !recoverableReason || !sourceProven || !obsCapable) return false;
+
+      const candidate = structuredClone(session);
+      const candidateProtocol = this.ensureProtocolV2(candidate);
+      candidateProtocol.leaseStatus = 'ready';
+      candidateProtocol.confirmedPlayback = {
+        status: 'unknown',
+        reasonCode: 'output_reconnected',
+        playerInstanceId: attachment.playerInstanceId,
+        leaseEpoch: candidateProtocol.leaseEpoch,
+        lastSeenAt: Date.now(),
+      };
+      if (candidate.transport?.status === 'unknown') {
+        candidate.transport = { ...candidate.transport, status: 'ready' };
+      }
+      await this.ctx.storage.put('session', candidate);
+      this.adoptPersistedSession(session, candidate);
+      return true;
+    } finally {
+      if (release) release();
+    }
+  }
+
   async persistRouteTransitionTimeout(session, expiredTransition, { mutationLockHeld = false } = {}) {
     const release = mutationLockHeld
       ? null
@@ -2980,7 +3018,7 @@ export class SessionRoom {
     const playerInstanceId = protocolId(message.playerInstanceId) || 'unknown_player';
     const release = await this.acquireV2PlayerQueue(playerInstanceId);
     try {
-      const protocol = this.ensureProtocolV2(session);
+      let protocol = this.ensureProtocolV2(session);
       const hasForeignIdentity = [
         'entryId', 'runId', 'switchId', 'checkId', 'controlEpoch', 'targetPlayerInstanceId',
         'targetConnectionId'
@@ -3017,6 +3055,11 @@ export class SessionRoom {
         };
       }
 
+      const reconnected = await this.restoreObsOutputAfterReconnect(session, nextAttachment, {
+        mutationLockHeld: true,
+      });
+      if (reconnected) protocol = this.ensureProtocolV2(session);
+
       let issue = null;
       const activeTarget = protocol.leaseTarget === identity.playerInstanceId
         && ['activating', 'ready', 'audible'].includes(protocol.leaseStatus);
@@ -3031,6 +3074,7 @@ export class SessionRoom {
           sourceActive: false
         };
       } else if (activeTarget && priorHealth.heartbeatStale
+        && !reconnected
         && protocol.leaseClientKind !== 'dashboard-speaker') {
         issue = {
           reasonCode: 'target_heartbeat_stale',

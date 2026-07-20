@@ -1012,7 +1012,7 @@ test('emergency aborts a hanging output-path probe so a later explicit activatio
   assert.equal(harness.adapter.snapshot().safetyLocked, false);
 });
 
-test('losing a READY connection performs a local safety stop and remains unknown after reconnect', async () => {
+test('losing a READY connection keeps the local graph alive and waits for reconnect', async () => {
   const harness = createHarness();
   await activate(harness);
   harness.commands.length = 0;
@@ -1024,9 +1024,10 @@ test('losing a READY connection performs a local safety stop and remains unknown
   });
   await Promise.resolve();
 
-  assert.equal(harness.commands[0].type, PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP);
-  assert.equal(harness.adapter.snapshot().routeState, 'unknown');
-  assert.equal(harness.adapter.snapshot().confirmation, 'unknown');
+  assert.deepEqual(harness.commands, []);
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.adapter.snapshot().connectionRecovering, true);
   assert.equal(harness.adapter.snapshot().autoResumeAllowed, false);
 
   harness.connectionCallbacks.onStateChange({
@@ -1034,8 +1035,9 @@ test('losing a READY connection performs a local safety stop and remains unknown
     state: ON_AIR_V2_CONNECTION_STATES.READY,
     detail: {},
   });
-  assert.equal(harness.adapter.snapshot().routeState, 'unknown');
-  assert.equal(harness.adapter.snapshot().safetyLocked, true);
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.adapter.snapshot().connectionRecovering, false);
 });
 
 test('speaker connection loss is recoverable and does not stop the local media graph', async () => {
@@ -1057,7 +1059,7 @@ test('speaker connection loss is recoverable and does not stop the local media g
   assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
   assert.equal(harness.adapter.snapshot().safetyLocked, false);
   assert.equal(harness.adapter.snapshot().safetyProfile, ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER);
-  assert.equal(harness.adapter.snapshot().lastError.code, 'playback_adapter_speaker_connection_reconnecting');
+  assert.equal(harness.adapter.snapshot().lastError.code, 'playback_adapter_connection_reconnecting');
 
   harness.connectionCallbacks.onStateChange({
     previous: ON_AIR_V2_CONNECTION_STATES.NEGOTIATING,

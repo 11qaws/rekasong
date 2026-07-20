@@ -245,6 +245,7 @@ export class OnAirPlaybackAdapterError extends Error {
 
 export class OnAirPlaybackAdapter {
   #safetyProfile = ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT;
+  #connectionRecovering = false;
   #sourceResolver;
   #prefetchSources;
   #testFixtureFactory;
@@ -399,7 +400,8 @@ export class OnAirPlaybackAdapter {
       },
       onEventResult: (result) => {
         const testResultHandled = this.#handleTestEventResult(result);
-        if (!testResultHandled && result?.status === 'outcome_unknown') {
+        if (!testResultHandled && result?.status === 'outcome_unknown'
+          && !(this.#connectionRecovering && !this.#runtimeSourceLossRequiresEmergency)) {
           this.#markUnknown(
             ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
             { eventId: result.entry?.eventId ?? null },
@@ -553,6 +555,7 @@ export class OnAirPlaybackAdapter {
       confirmation: this.#confirmation,
       safetyLocked: this.#safetyLocked,
       safetyProfile: this.#safetyProfile,
+      connectionRecovering: this.#connectionRecovering,
       autoResumeAllowed: false,
       activeEntryId: this.#activeEntryId,
       activeRunId: this.#activeRunId,
@@ -993,32 +996,36 @@ export class OnAirPlaybackAdapter {
     }
     if (change?.previous === ON_AIR_V2_CONNECTION_STATES.READY
       && change.state !== ON_AIR_V2_CONNECTION_STATES.READY) {
-      if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
-        // A dashboard speaker is an ordinary local media player. Mobile
-        // backgrounding, PiP and BFCache can briefly suspend a WebSocket
-        // without making the HTMLMediaElement unsafe or inaudible. Keep the
-        // local route usable and let the next reconnect reconcile the wire.
-        this.#lastError = immutableJson({
-          code: 'playback_adapter_speaker_connection_reconnecting',
-          detail: {
-            state: change.state,
-            reason: change.detail?.reason ?? null,
-            autoResumeAllowed: false,
-          },
+      if (this.#activeTest && this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT) {
+        // A verification fixture cannot produce trustworthy markers across a
+        // transport gap. Abort the fixture and prove a local stop, while the
+        // normal song graph remains connection-first below.
+        this.#preemptForSafety(`connection_${change.state}`);
+        this.#markUnknown('playback_adapter_connection_lost', {
+          state: change.state,
+          reason: change.detail?.reason ?? null,
+          testAborted: true,
         });
-        this.#emitSnapshot();
         return;
       }
-      this.#preemptForSafety(`connection_${change.state}`);
-      this.#markUnknown('playback_adapter_connection_lost', {
-        state: change.state,
-        reason: change.detail?.reason ?? null,
+      // Transport loss is not the same proof as OBS source loss. Keep the
+      // local media graph alive while the player reconnects; sourceActive /
+      // sourceVisible callbacks remain the strict physical safety boundary.
+      this.#connectionRecovering = true;
+      this.#lastError = immutableJson({
+        code: 'playback_adapter_connection_reconnecting',
+        detail: {
+          state: change.state,
+          reason: change.detail?.reason ?? null,
+          autoResumeAllowed: false,
+        },
       });
+      this.#emitSnapshot();
       return;
     }
-    if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER
-      && change?.state === ON_AIR_V2_CONNECTION_STATES.READY) {
-      this.#lastError = null;
+    if (change?.state === ON_AIR_V2_CONNECTION_STATES.READY) {
+      this.#connectionRecovering = false;
+      if (!this.#runtimeSourceLossRequiresEmergency) this.#lastError = null;
     }
     this.#emitSnapshot();
   }
@@ -1229,10 +1236,17 @@ export class OnAirPlaybackAdapter {
       const result = this.connection.emitEvent(draft);
       const after = this.connection.snapshot();
       if (!sameReadyConnection(before, after)) {
-        if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+        if (this.#connectionRecovering) {
+          if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT
+            && draft.type === ON_AIR_MESSAGE_TYPES.TEST_EVENT) {
+            this.#markUnknown(
+              ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+              { type: draft.type, event: draft.event ?? null, reason: 'connection_reconnecting' },
+            );
+          }
           this.#lastError = immutableJson({
             code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
-            detail: { type: draft.type, event: draft.event ?? null, reason: 'connection_changed_during_send' },
+            detail: { type: draft.type, event: draft.event ?? null, reason: 'connection_reconnecting' },
           });
           this.#emitSnapshot();
           return false;
@@ -1247,10 +1261,10 @@ export class OnAirPlaybackAdapter {
         return false;
       }
       if (result?.status === 'outcome_unknown') {
-        if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+        if (this.#connectionRecovering && !this.#runtimeSourceLossRequiresEmergency) {
           this.#lastError = immutableJson({
             code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
-            detail: { type: draft.type, event: draft.event ?? null },
+            detail: { type: draft.type, event: draft.event ?? null, reason: 'connection_reconnecting' },
           });
           this.#emitSnapshot();
           return false;
@@ -1265,7 +1279,7 @@ export class OnAirPlaybackAdapter {
       if (result?.status === 'dropped') return telemetry;
       return true;
     } catch (error) {
-      if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+      if (this.#connectionRecovering) {
         this.#lastError = immutableJson({
           code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
           detail: safeErrorDetail(error),

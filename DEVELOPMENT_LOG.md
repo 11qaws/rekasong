@@ -1,5 +1,11 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-20 (Codex) — 연결 우선 복구와 스피커 재연결 UX
+- OBS 모드에서는 WebSocket·heartbeat·명령 전달이 일시적으로 모호해져도 연결된 재생 그래프를 즉시 파괴하지 않는다. `sourceActive=false`/`sourceVisible=false` 같은 실제 소스 상실 증거만 긴급 정지 대상으로 유지했다.
+- 같은 OBS 플레이어가 `sourceActive=true`와 OBS 런타임 capability를 다시 보고하면 lease를 `ready`로 복원하되 자동 재생은 하지 않는다.
+- 스피커 모드에서 연결이 `unknown`으로 꼬인 뒤 같은 스피커 버튼을 다시 누르면 즉시 실패 고정하지 않고 명시적 해제 확인을 기다려 복구할 수 있게 했다. 재연결만으로는 성공으로 간주하지 않는다.
+- Worker 프로토콜 테스트에 스피커 소켓 종료→재연결→명시적 `deactivate_output`→`output_deactivated` 확인 시나리오를 추가했다.
+
 ## 2026-07-18 — On-Air 위젯 프리버퍼(pre-buffer): 다음 곡 미리 받기
 
 대기열의 다가오는 곡(준비 완료된 YouTube 곡, 최대 2개)을 On-Air 위젯이 미리 blob으로 통째로 받아 두어 곡 전환이 즉시 되게 했다. 순수 최적화·복원력 작업으로, 프리페치 실패·미스는 항상 기존 스트리밍 재생으로 무손실 폴백된다(기능 변경·회귀 없음).

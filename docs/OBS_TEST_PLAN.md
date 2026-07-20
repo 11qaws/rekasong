@@ -1,5 +1,17 @@
 # WEB ↔ OBS 송출 통합 테스트 계획
 
+## 2026-07-20 연결 우선 복구 규칙
+
+OBS 모드의 검증은 송출 경로를 지키기 위한 것이지, 일시적인 WebSocket 지연으로 로컬 재생을 끊기 위한 것이 아니다.
+
+- 브라우저 소스의 `sourceActive=false` 또는 `sourceVisible=false`는 실제 OBS 소스가 사라진 증거이므로 기존 strict 안전 정지를 적용한다.
+- WebSocket 재연결, heartbeat 지연, 명령 응답 유실만으로는 로컬 오디오를 즉시 정지하지 않는다. 현재 오디오 그래프와 재생 위치는 유지하고, 화면에는 “OBS 연결을 다시 확인하는 중”을 표시한다.
+- 재연결 중 명령은 성공으로 간주하지 않는다. 자동 재생·스피커 fallback·다른 소스로의 자동 전환은 하지 않는다.
+- 동일한 OBS player ID가 돌아와 `sourceActive=true`와 OBS capability를 다시 보고하면 Worker lease만 `ready`로 복원한다. `confirmedPlayback`은 `output_reconnected`로 남기며 재생은 사용자가 다시 누를 때만 시작한다.
+- 스피커는 OBS attestation을 요구하지 않는다. 끊겼다가 돌아온 스피커가 `unknown`이면 같은 스피커 버튼을 다시 누르는 것이 “먼저 deactivate 증거를 만든 뒤 다시 연결”하는 복구 동작이어야 하며, 중간 snapshot 때문에 버튼이 잠기면 안 된다.
+
+이 규칙은 연결이 잠깐 흔들릴 때 방송을 끊지 않으면서도, 실제 OBS 소스 소실은 놓치지 않는 경계다.
+
 > 목표는 “플레이어가 연결됐다”가 아니라, 반주 PCM이 OBS 최종 출력에 들어가고 라이브 마이크와의 상대 싱크가 방송 내내 유지된다는 사실을 증명하는 것이다.
 
 실제 장비에서 이 계획을 실행할 때는 `OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md`의 G0–G6 관문과 증거 기록 양식을 사용한다. 2026-07-20의 실행 결과와 잔여 검증은 `OBS_VALIDATION_STATUS_2026-07-20.md`, 제품·상태 설계 기준은 `AUDIO_OUTPUT_OBS_MASTER_PLAN_2026-07-19.md`를 우선한다.
