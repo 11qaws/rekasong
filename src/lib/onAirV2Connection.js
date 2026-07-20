@@ -77,7 +77,13 @@ export const ON_AIR_V2_CONNECTION_CODES = Object.freeze({
   STALE_NEGOTIATION_COMPLETION: 'v2_connection_stale_negotiation_completion',
 });
 
+// Protocol tests keep the historical 250ms default, while production players
+// choose a slower cadence by client kind. Heartbeats are liveness hints, not
+// an audio clock; four frames per second from every idle source needlessly
+// consumes the Worker WebSocket message budget.
 export const ON_AIR_V2_HEARTBEAT_INTERVAL_MS = 250;
+export const ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS = 1_000;
+export const ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS = 5_000;
 export const ON_AIR_V2_LIVENESS_WARNING_MS = 500;
 export const ON_AIR_V2_LIVENESS_UNKNOWN_MS = 2_000;
 
@@ -181,6 +187,7 @@ export class OnAirV2Connection {
   #lastEvidenceAt = null;
   #lastObservedNow = 0;
   #heartbeatTimer = null;
+  #heartbeatIntervalMs = ON_AIR_V2_HEARTBEAT_INTERVAL_MS;
   #heartbeatLastSentSequence = null;
   #heartbeatLastAckSequence = null;
   #heartbeatLastAckAt = null;
@@ -212,6 +219,7 @@ export class OnAirV2Connection {
     eventHistoryLimit = 256,
     diagnosticLimit = 64,
     heartbeatPayload = null,
+    heartbeatIntervalMs = ON_AIR_V2_HEARTBEAT_INTERVAL_MS,
     onPlayerCommand = null,
     onFrame = null,
     onCommandResult = null,
@@ -231,6 +239,8 @@ export class OnAirV2Connection {
     requireConfiguration(isRecord(capabilities), 'capabilities', 'record');
     requireConfiguration(isRecord(runtime), 'runtime', 'record');
     requireConfiguration(Number.isSafeInteger(diagnosticLimit) && diagnosticLimit > 0, 'diagnosticLimit', 'positive_safe_integer');
+    requireConfiguration(Number.isSafeInteger(heartbeatIntervalMs) && heartbeatIntervalMs >= 250,
+      'heartbeatIntervalMs', 'safe_integer_at_least_250');
     if (role === 'player') {
       requireConfiguration(typeof clientKind === 'string' && clientKind.length > 0, 'clientKind', 'identifier');
     }
@@ -246,6 +256,7 @@ export class OnAirV2Connection {
     this.#clientKind = clientKind;
     this.#runtime = immutableJson(runtime);
     this.#diagnosticLimit = diagnosticLimit;
+    this.#heartbeatIntervalMs = heartbeatIntervalMs;
     this.#callbacks = {
       heartbeatPayload,
       onPlayerCommand,
@@ -1029,7 +1040,7 @@ export class OnAirV2Connection {
     this.#stopHeartbeat();
     this.#heartbeatTimer = this.#setInterval(
       () => this.#emitHeartbeat(),
-      ON_AIR_V2_HEARTBEAT_INTERVAL_MS,
+      this.#heartbeatIntervalMs,
     );
   }
 

@@ -11,7 +11,11 @@ import {
 import { evaluateOnAirPlayerOutputPath } from '../lib/onAirPlayerOutputPath';
 import { PLAYER_CLIENT_KINDS, SERVER_MESSAGE_TYPES } from '../lib/onAirProtocol';
 import { createOnAirSourceResolver } from '../lib/onAirSourceResolver';
-import { ON_AIR_V2_CONNECTION_STATES } from '../lib/onAirV2Connection';
+import {
+  ON_AIR_V2_CONNECTION_STATES,
+  ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS,
+  ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS,
+} from '../lib/onAirV2Connection';
 import { createObsRuntimeAttestation } from '../lib/obsRuntimeAttestation';
 
 const BUILD_ID = String(import.meta.env.VITE_APP_BUILD_ID || 'rekasong-web-v2');
@@ -143,6 +147,9 @@ export default function OnAirPlayerV2({
               obsStudioBinding: false,
             }),
           },
+          heartbeatIntervalMs: isDashboardSpeaker
+            ? ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS
+            : ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS,
           onStateChange(change) {
             setLocalState(change.state);
             safeNotify(callbacksRef.current.onStateChange, change);

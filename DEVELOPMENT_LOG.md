@@ -1,5 +1,9 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-20 (Codex) — Worker WebSocket heartbeat 빈도 절감
+- Protocol v2 기본 테스트 cadence는 보존하되 실제 플레이어는 OBS 1초, 대시보드 스피커 5초 주기로 heartbeat를 보낸다. 250ms 전송은 오디오 시계가 아니며 유휴 브라우저 소켓마다 불필요한 Cloudflare `websocket:message`를 만든다.
+- heartbeat는 연결 유지·OBS 런타임 증명의 보조 신호일 뿐 재생 자체의 시간축이 아니다. OBS 소스 상실은 기존 로컬 런타임 콜백이 즉시 처리하고, 서버 heartbeat는 재연결/상태 복구용으로 남긴다.
+
 ## 2026-07-20 (Codex) — 연결 우선 복구와 스피커 재연결 UX
 - OBS 모드에서는 WebSocket·heartbeat·명령 전달이 일시적으로 모호해져도 연결된 재생 그래프를 즉시 파괴하지 않는다. `sourceActive=false`/`sourceVisible=false` 같은 실제 소스 상실 증거만 긴급 정지 대상으로 유지했다.
 - 같은 OBS 플레이어가 `sourceActive=true`와 OBS 런타임 capability를 다시 보고하면 lease를 `ready`로 복원하되 자동 재생은 하지 않는다.
