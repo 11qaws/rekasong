@@ -233,6 +233,12 @@ test('initial output choice stays clickable and is queued until writable authori
     'only explicitly identified first bootstrap may bypass the normal connecting lock',
   );
   assert.match(dashboardSource, /const \[queuedOutputIntent, setQueuedOutputIntent\] = useState\(null\);/);
+  assert.match(dashboardSource, /const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;/);
+  assert.match(
+    dashboardSource,
+    /setQueuedOutputIntent\(\(current\) => \(current\?\.id === intentId \? null : current\)\)[\s\S]*?setOutputControlRecoveryRequired\(true\)/,
+    'a queued route intent must expire and expose explicit control recovery',
+  );
   assert.match(dashboardSource, /const \[outputControllerEverReady, setOutputControllerEverReady\] = useState\(false\);/);
   assert.match(dashboardSource, /!outputControllerEverReady\s+&& !outputControllerReady/);
   assert.match(

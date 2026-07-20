@@ -37,12 +37,13 @@ import {
   songPrepareState
 } from '../lib/preparePipeline';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
-
 import PlaybackPanel from '../components/PlaybackPanel';
 import QueuePanel from '../components/QueuePanel';
 import SongComposer from '../components/SongComposer';
 import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
+
+const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;
 
 const DashboardSpeakerPlayerV2 = lazy(() => import('../components/DashboardSpeakerPlayerV2'));
 
@@ -109,6 +110,7 @@ export default function Dashboard() {
 
   const [state, setSharedState, syncLoadNotice] = useSyncState();
   const [queuedOutputIntent, setQueuedOutputIntent] = useState(null);
+  const [outputControlRecoveryRequired, setOutputControlRecoveryRequired] = useState(false);
   const [outputControllerEverReady, setOutputControllerEverReady] = useState(false);
   const outputIntentSequenceRef = useRef(0);
   const claimedOutputIntentRef = useRef(null);
@@ -183,6 +185,29 @@ export default function Dashboard() {
   useEffect(() => {
     if (outputControllerReady) setOutputControllerEverReady(true);
   }, [outputControllerReady]);
+
+  // A route click may arrive before the control socket has produced an
+  // authoritative writable observation. Keep the intent bounded: without a
+  // watchdog it remains queued forever and every subsequent click is a
+  // no-op. Reconnect once and surface the concrete recovery action instead.
+  useEffect(() => {
+    if (outputControllerReady) {
+      setOutputControlRecoveryRequired(false);
+      return undefined;
+    }
+    if (!queuedOutputIntent) return undefined;
+    const intentId = queuedOutputIntent.id;
+    const timer = window.setTimeout(() => {
+      setQueuedOutputIntent((current) => (current?.id === intentId ? null : current));
+      setOutputControlRecoveryRequired(true);
+      try {
+        retryOnAirOutputControl();
+      } catch {
+        // The settings panel remains the explicit manual recovery path.
+      }
+    }, OUTPUT_INTENT_WAIT_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [outputControllerReady, queuedOutputIntent, retryOnAirOutputControl]);
 
   // A control-socket rebuild must not tear down a healthy speaker player that
   // this page already owned. A page that has never held authority still cannot
@@ -935,6 +960,7 @@ export default function Dashboard() {
 
   const handleSelectOutputMode = useCallback((mode) => {
     if (!['speaker', 'obs'].includes(mode)) return;
+    if (outputControlRecoveryRequired) return;
     outputIntentSequenceRef.current += 1;
     // Accept the user's route choice during the first session/control
     // bootstrap. It stays a visibly pending intent, never an aria-checked
@@ -944,7 +970,7 @@ export default function Dashboard() {
       mode,
       sessionKey: outputControlSessionKey,
     });
-  }, [outputControlSessionKey]);
+  }, [outputControlRecoveryRequired, outputControlSessionKey]);
 
   useEffect(() => {
     if (!queuedOutputIntent) return;
@@ -2093,6 +2119,7 @@ export default function Dashboard() {
             outputControlRecoveryReason={outputControlRecoveryReason}
             outputControlSafeToTakeOver={outputControlSafeToTakeOver}
             outputControlTakeover={outputControl.snapshot?.pendingTakeover ?? null}
+            outputControlRecoveryRequired={outputControlRecoveryRequired}
             outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
             outputSwitchReasonCode={outputControl.outputSwitchState?.reasonCode ?? null}
@@ -2102,6 +2129,7 @@ export default function Dashboard() {
               && !outputControlConflict
               && !outputControlUnavailable
               && (outputControllerReady || outputBootstrapSelectionAvailable)
+              && !outputControlRecoveryRequired
               ? handleSelectOutputMode
               : undefined}
             onStartObsAudioCheck={outputControl.startTest}

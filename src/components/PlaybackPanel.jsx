@@ -72,6 +72,7 @@ export default function PlaybackPanel({
   outputControlRecoveryReason = null,
   outputControlSafeToTakeOver = false,
   outputControlTakeover = null,
+  outputControlRecoveryRequired = false,
   outputRouteStable = false,
   outputSwitchState = 'idle',
   outputSwitchReasonCode = null,
@@ -152,6 +153,7 @@ export default function PlaybackPanel({
     : 'blocked';
   const outputSelectionLocked = ['conflict', 'switching'].includes(normalizedOutputSwitchState)
     || (normalizedOutputSwitchState === 'connecting' && !allowOutputSelectionWhileConnecting)
+    || outputControlRecoveryRequired
     || typeof onSelectOutputMode !== 'function';
   const outputRecoveryTitleMessageKey = outputControlRecoveryReason === 'connection_timeout'
     ? 'onair.control.recovery.connectionTimeout.title'
@@ -221,10 +223,12 @@ export default function PlaybackPanel({
     statusKey: activeOutputStatus.key,
     targetMode: failedSelectionMode ?? transitionTargetMode ?? selectedOutputMode,
     confirmedOutputMode,
+    controlRecoveryRequired: outputControlRecoveryRequired,
   });
   const outputNeedsAttention = isOnAirInvalid
     || outputRouteStateUnknown
-    || normalizedOutputSwitchState === 'blocked';
+    || normalizedOutputSwitchState === 'blocked'
+    || outputControlRecoveryRequired;
   const obsAudioCheckStage = obsAudioCheck?.stage ?? 'unknown';
   const obsAudioCheckMarkerSeconds = ((obsAudioCheck?.markerTimeMs ?? 0) / 1_000).toFixed(1);
   const obsAudioCheckDurationSeconds = ((obsAudioCheck?.durationMs ?? 0) / 1_000).toFixed(0);

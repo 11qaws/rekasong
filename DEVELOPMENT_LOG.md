@@ -1,5 +1,10 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-20 (Codex) output intent watchdog
+
+- A route click queued before writable output-control authority is proven now expires after 8 seconds, triggers one reconnect, and exposes settings recovery instead of remaining indefinitely pending.
+- The compact output selector disables repeated no-op clicks while recovery is required and uses localized `onair.output.nextAction.control` guidance.
+
 ## 2026-07-20 (Codex) — Worker WebSocket heartbeat 빈도 절감
 - Protocol v2 기본 테스트 cadence는 보존하되 실제 플레이어는 OBS 1초, 대시보드 스피커 5초 주기로 heartbeat를 보낸다. 250ms 전송은 오디오 시계가 아니며 유휴 브라우저 소켓마다 불필요한 Cloudflare `websocket:message`를 만든다.
 - heartbeat는 연결 유지·OBS 런타임 증명의 보조 신호일 뿐 재생 자체의 시간축이 아니다. OBS 소스 상실은 기존 로컬 런타임 콜백이 즉시 처리하고, 서버 heartbeat는 재연결/상태 복구용으로 남긴다.

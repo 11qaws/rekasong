@@ -25,6 +25,14 @@ test('output status always maps to a concrete next action', () => {
     }),
     'onair.output.nextAction.obs.recover',
   );
+  assert.equal(
+    derivePlaybackOutputNextAction({
+      statusKey: 'onair.output.header.active.attention',
+      targetMode: 'speaker',
+      controlRecoveryRequired: true,
+    }),
+    'onair.output.nextAction.control',
+  );
 });
 
 test('stable routes identify the selected output path even while no song is playing', () => {

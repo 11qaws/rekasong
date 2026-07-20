@@ -5,12 +5,14 @@ export function derivePlaybackOutputNextAction({
   statusKey,
   targetMode = null,
   confirmedOutputMode = null,
+  controlRecoveryRequired = false,
 } = {}) {
   const mode = targetMode === 'speaker' || targetMode === 'obs'
     ? targetMode
     : confirmedOutputMode === 'speaker' || confirmedOutputMode === 'obs'
       ? confirmedOutputMode
       : null;
+  if (controlRecoveryRequired) return 'onair.output.nextAction.control';
   if (statusKey === 'onair.output.header.active.speaker') return 'onair.output.nextAction.speaker.active';
   if (statusKey === 'onair.output.header.active.obs') return 'onair.output.nextAction.obs.active';
   if (statusKey === 'onair.output.header.connecting.speaker') return 'onair.output.nextAction.speaker.connecting';
