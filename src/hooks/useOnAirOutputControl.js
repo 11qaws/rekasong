@@ -1085,13 +1085,15 @@ export class OnAirOutputController {
           const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
           // Recovery from a disconnected speaker lease can reach `inactive`
           // before this page's replacement player has finished registering.
-          // Treat that short window as a pending speaker intent, just like a
-          // first-click activation. Failing closed here strands the session
-          // even though the page-owned player is already reconnecting.
+          // An older page can also remain as one foreign candidate for a short
+          // time. Treat both transient shapes as a pending speaker intent,
+          // just like a first-click activation. Failing closed here strands
+          // the session even though the page-owned player is reconnecting.
           if (intent.targetMode === ON_AIR_OUTPUT_MODES.SPEAKER
             && this.#dashboardSpeakerPlayerInstanceId !== null
             && Array.isArray(candidates)
-            && candidates.length === 0) {
+            && candidates.length <= 1
+            && !candidates.includes(this.#dashboardSpeakerPlayerInstanceId)) {
             this.#waitForDashboardSpeakerCandidate(intent.targetMode);
             return;
           }
