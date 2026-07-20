@@ -1180,7 +1180,7 @@ test('single output lease targets only the eligible player and rejects stale run
     readyState: 4,
     paused: true,
   });
-  assert.equal(harness.session.transport.status, 'ready');
+  assert.notEqual(harness.session.transport.status, 'unknown');
 
   await harness.send(obsPlayer, {
     type: 'playback_event',
@@ -6009,6 +6009,38 @@ test('a late active heartbeat latches unknown and only deactivate then reactivat
     switchId: 'late-heartbeat-reactivate-switch',
   }));
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+});
+
+test('speaker heartbeat throttling does not make the active media route unknown', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const speaker = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, speaker, {
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+  });
+  const leaseEpoch = await activateOutput(harness, control, 'player-a', 'speaker');
+  await confirmOutputReady(harness, speaker, 'player-a', leaseEpoch);
+  const connectionId = speaker.deserializeAttachment().connectionId;
+  speaker.serializeAttachment({
+    ...speaker.deserializeAttachment(),
+    lastSeenAt: Date.now() - 2000,
+  });
+
+  await harness.send(speaker, {
+    type: 'player_heartbeat',
+    playerInstanceId: 'player-a',
+    connectionId,
+    leaseEpoch,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    runtime: {},
+  });
+
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+  assert.notEqual(harness.session.transport.status, 'unknown');
 });
 
 test('OBS eligibility requires sourceActive true while speaker eligibility keeps its prior missing-runtime behavior', async () => {

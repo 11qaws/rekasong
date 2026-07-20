@@ -317,3 +317,10 @@
 - 무료 티어 DO 쓰기 한도는 **매일(UTC) 리셋** → 자동 복구. 현재는 소진 상태라 On-Air/prepare 500.
 - 최적화 후 실사용은 곡당 상태변경 몇 회(로드/재생/일시정지/종료)만 쓰므로 한도 근처도 안 간다. 테스트가 소진의 주범이었음.
 - 다중 스트리머·완전한 안정성이 필요하면 **Workers Paid($5/월)** 로 무료 티어 한도 자체를 제거하는 것이 근본책(사용자 결정).
+## 2026-07-20 (Codex) — speaker/OBS 안전 정책 경계 분리
+
+- 스피커는 음악 감상용 일반 플레이어로 취급하고, 모바일 창 전환·PiP·백그라운드 heartbeat 지연만으로 로컬 오디오를 emergency stop/영구 unknown 잠금하지 않도록 `OnAirPlaybackAdapter` 안전 프로필을 분리했다.
+- OBS 브라우저 소스는 기존 strict 프로필을 유지한다. sourceActive/sourceVisible 손실, 연결 중 authoritative event ambiguity, safety stop 실패는 기존 fail-closed 규칙을 그대로 적용한다.
+- Worker는 dashboard-speaker에 한해 heartbeat throttling을 active output unknown으로 승격하지 않는다. 실제 소켓 단절과 route 전환의 inactive 증거 요구는 유지한다.
+- unknown 스피커에서 같은 송출경로 버튼을 다시 누르면 deactivation을 먼저 시도해 inactive 증거를 만들고 재활성화할 수 있다. OBS로 자동 전환하거나 재생을 자동 재개하지 않는다.
+- 회귀 테스트: adapter 55개, output controller 48개, Worker Protocol v2 106개 중 변경 시나리오 포함 전부 통과. 상세 설계와 수동 모바일/OBS 확인 항목은 `docs/SPEAKER_OBS_SAFETY_BOUNDARY_2026-07-20.md`에 기록했다.

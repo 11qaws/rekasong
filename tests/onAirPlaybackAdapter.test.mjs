@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   ON_AIR_PLAYBACK_ADAPTER_CODES,
   ON_AIR_PLAYBACK_TEST_WATCHDOG_MS,
+  ON_AIR_PLAYBACK_SAFETY_PROFILES,
   OnAirPlaybackAdapter,
 } from '../src/lib/onAirPlaybackAdapter.js';
 import {
@@ -91,6 +92,7 @@ function createHarness({
   testFixtureFactory = () => ({ kind: 'blob', blob: new Blob(['fixture']) }),
   outputPathProbe = () => true,
   clientKind = 'obs-browser-source',
+  safetyProfile,
   onSnapshot = null,
   onFrame = null,
   autoAcknowledgeTestMarkers = true,
@@ -268,6 +270,7 @@ function createHarness({
     })(),
     ...(setTimeoutFn ? { setTimeoutFn } : {}),
     ...(clearTimeoutFn ? { clearTimeoutFn } : {}),
+    ...(safetyProfile ? { safetyProfile } : {}),
     onSnapshot,
   });
 
@@ -1033,6 +1036,37 @@ test('losing a READY connection performs a local safety stop and remains unknown
   });
   assert.equal(harness.adapter.snapshot().routeState, 'unknown');
   assert.equal(harness.adapter.snapshot().safetyLocked, true);
+});
+
+test('speaker connection loss is recoverable and does not stop the local media graph', async () => {
+  const harness = createHarness({
+    clientKind: 'dashboard-speaker',
+    safetyProfile: ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER,
+  });
+  await activate(harness, { payload: { outputMode: 'speaker' } });
+  harness.commands.length = 0;
+
+  harness.connectionCallbacks.onStateChange({
+    previous: ON_AIR_V2_CONNECTION_STATES.READY,
+    state: ON_AIR_V2_CONNECTION_STATES.DISCONNECTED,
+    detail: { reason: 'mobile_background' },
+  });
+  await Promise.resolve();
+
+  assert.deepEqual(harness.commands, []);
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.adapter.snapshot().safetyProfile, ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER);
+  assert.equal(harness.adapter.snapshot().lastError.code, 'playback_adapter_speaker_connection_reconnecting');
+
+  harness.connectionCallbacks.onStateChange({
+    previous: ON_AIR_V2_CONNECTION_STATES.NEGOTIATING,
+    state: ON_AIR_V2_CONNECTION_STATES.READY,
+    detail: {},
+  });
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.adapter.snapshot().lastError, null);
 });
 
 test('session_ended is terminal: it emergency-stops local audio, clears test work, and forbids reconnect', async () => {

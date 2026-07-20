@@ -1153,7 +1153,11 @@ export class SessionRoom {
     if (selected.attachment.runtime?.sourceActive === false) {
       return { reasonCode: 'target_source_inactive', ...detail };
     }
-    if (selected.health.heartbeatStale) {
+    // Dashboard speaker is a normal media player. Mobile background tabs,
+    // PiP and BFCache can throttle heartbeats while audio keeps playing. Do
+    // not turn that temporary silence into an unknown lease; a real socket
+    // disconnect is still treated as unavailable below.
+    if (selected.health.heartbeatStale && protocol.leaseClientKind !== 'dashboard-speaker') {
       return { reasonCode: 'target_heartbeat_stale', ...detail };
     }
     if (retainedUnknown) {
@@ -3026,7 +3030,8 @@ export class SessionRoom {
           heartbeatStale: priorHealth.heartbeatStale,
           sourceActive: false
         };
-      } else if (activeTarget && priorHealth.heartbeatStale) {
+      } else if (activeTarget && priorHealth.heartbeatStale
+        && protocol.leaseClientKind !== 'dashboard-speaker') {
         issue = {
           reasonCode: 'target_heartbeat_stale',
           targetPlayerInstanceId: identity.playerInstanceId,

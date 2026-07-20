@@ -399,12 +399,30 @@ export class OnAirOutputController {
     }
 
     try {
-      this.#assertControlReady();
+      const observedLease = this.#snapshot?.playerSnapshot?.lease;
+      const speakerRecovery = mode === ON_AIR_OUTPUT_MODES.SPEAKER
+        && observedLease?.clientKind === 'dashboard-speaker'
+        && UNKNOWN_LEASE_STATES.has(observedLease?.status)
+        && isIdentifier(observedLease?.leaseTarget);
+      this.#assertControlReady({ allowSpeakerRecovery: speakerRecovery });
       if (this.#switchIntent || this.#snapshot.pendingSwitch) {
         throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_PENDING, {});
       }
       const lease = this.#snapshot.playerSnapshot.lease;
       const leaseMode = modeForClientKind(lease.clientKind);
+      if (speakerRecovery) {
+        this.#assertNoActiveWork({ allowSpeakerRecovery: true });
+        this.#switchIntent = { targetMode: mode, phase: ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING };
+        this.#switchState = outputSwitchState(ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING, mode);
+        this.#armSwitchWatchdog(mode, ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING);
+        this.#publish();
+        try {
+          return this.#coordinator.deactivateOutput();
+        } catch (error) {
+          this.#failSwitch(error?.code || ON_AIR_OUTPUT_CONTROL_CODES.STATE_UNKNOWN);
+          throw error;
+        }
+      }
       if (ACTIVE_LEASE_STATES.has(lease.status) && leaseMode === mode) {
         this.#switchIntent = null;
         this.#clearSwitchWatchdog();
@@ -627,17 +645,26 @@ export class OnAirOutputController {
     this.#switchWatchdogTimer = null;
   }
 
-  #assertControlReady() {
+  #assertControlReady({ allowSpeakerRecovery = false } = {}) {
     const snapshot = this.#snapshot;
     if (!snapshot?.ready) throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.NOT_READY, {});
     if (!snapshot.writable) throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.NOT_WRITABLE, {});
-    if (snapshot.authorityUnknown || snapshot.routeUnknown || UNKNOWN_LEASE_STATES.has(snapshot.playerSnapshot?.lease?.status)) {
+    const lease = snapshot.playerSnapshot?.lease;
+    const speakerRecovery = allowSpeakerRecovery
+      && lease?.clientKind === 'dashboard-speaker'
+      && UNKNOWN_LEASE_STATES.has(lease?.status)
+      && isIdentifier(lease?.leaseTarget);
+    if (snapshot.authorityUnknown || (!speakerRecovery
+      && (snapshot.routeUnknown || UNKNOWN_LEASE_STATES.has(lease?.status)))) {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.STATE_UNKNOWN, {});
     }
   }
 
-  #assertNoActiveWork() {
+  #assertNoActiveWork({ allowSpeakerRecovery = false } = {}) {
     const protocol = this.#snapshot?.playerSnapshot;
+    if (allowSpeakerRecovery
+      && protocol?.lease?.clientKind === 'dashboard-speaker'
+      && UNKNOWN_LEASE_STATES.has(protocol.lease.status)) return;
     if (this.#snapshot?.activeRun || this.#snapshot?.pendingTest || this.#pendingLoadAfterStop
       || this.#pendingPlayAfterLoad
       || protocol?.activeFamily !== null || protocol?.activeCheckId !== null) {

@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-import { OnAirPlaybackAdapter } from '../lib/onAirPlaybackAdapter';
+import {
+  OnAirPlaybackAdapter,
+  ON_AIR_PLAYBACK_SAFETY_PROFILES,
+} from '../lib/onAirPlaybackAdapter';
 import {
   createOnAirPrefetchCache,
   ON_AIR_PREFETCH_MAX_CACHED_BYTES,
@@ -160,6 +163,9 @@ export default function OnAirPlayerV2({
         sourceResolver: prefetchCache.resolveSource,
         prefetchSources: prefetchCache.prefetch,
         runtimeProbe: () => runtime?.runtime() || {},
+        safetyProfile: isDashboardSpeaker
+          ? ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER
+          : ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT,
         outputPathProbe: ({ engine, signal }) => evaluateOnAirPlayerOutputPath({
           clientKind,
           audio,

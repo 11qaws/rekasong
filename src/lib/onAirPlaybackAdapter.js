@@ -57,6 +57,11 @@ export const ON_AIR_PLAYBACK_ADAPTER_CODES = Object.freeze({
   LOCAL_SAFETY_STOP_FAILED: 'playback_adapter_local_safety_stop_failed',
 });
 
+export const ON_AIR_PLAYBACK_SAFETY_PROFILES = Object.freeze({
+  STRICT: 'strict',
+  SPEAKER: 'speaker',
+});
+
 const RUNTIME_BOOLEAN_FIELDS = new Set([
   'sourceActive',
   'sourceVisible',
@@ -239,6 +244,7 @@ export class OnAirPlaybackAdapterError extends Error {
 }
 
 export class OnAirPlaybackAdapter {
+  #safetyProfile = ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT;
   #sourceResolver;
   #prefetchSources;
   #testFixtureFactory;
@@ -287,6 +293,7 @@ export class OnAirPlaybackAdapter {
     setTimeoutFn = (callback, delay) => globalThis.setTimeout(callback, delay),
     clearTimeoutFn = (handle) => globalThis.clearTimeout(handle),
     onSnapshot = null,
+    safetyProfile = ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT,
   } = {}) {
     requireConfiguration(isRecord(connectionOptions), 'connectionOptions', 'record');
     requireConfiguration(isRecord(engineOptions), 'engineOptions', 'record');
@@ -302,7 +309,13 @@ export class OnAirPlaybackAdapter {
     requireConfiguration(typeof setTimeoutFn === 'function', 'setTimeoutFn', 'function');
     requireConfiguration(typeof clearTimeoutFn === 'function', 'clearTimeoutFn', 'function');
     requireConfiguration(onSnapshot === null || typeof onSnapshot === 'function', 'onSnapshot', 'function_or_null');
+    requireConfiguration(
+      Object.values(ON_AIR_PLAYBACK_SAFETY_PROFILES).includes(safetyProfile),
+      'safetyProfile',
+      'supported_profile',
+    );
 
+    this.#safetyProfile = safetyProfile;
     this.#sourceResolver = sourceResolver;
     this.#prefetchSources = prefetchSources;
     this.#testFixtureFactory = testFixtureFactory;
@@ -539,6 +552,7 @@ export class OnAirPlaybackAdapter {
       routeState: this.#routeState,
       confirmation: this.#confirmation,
       safetyLocked: this.#safetyLocked,
+      safetyProfile: this.#safetyProfile,
       autoResumeAllowed: false,
       activeEntryId: this.#activeEntryId,
       activeRunId: this.#activeRunId,
@@ -979,12 +993,32 @@ export class OnAirPlaybackAdapter {
     }
     if (change?.previous === ON_AIR_V2_CONNECTION_STATES.READY
       && change.state !== ON_AIR_V2_CONNECTION_STATES.READY) {
+      if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+        // A dashboard speaker is an ordinary local media player. Mobile
+        // backgrounding, PiP and BFCache can briefly suspend a WebSocket
+        // without making the HTMLMediaElement unsafe or inaudible. Keep the
+        // local route usable and let the next reconnect reconcile the wire.
+        this.#lastError = immutableJson({
+          code: 'playback_adapter_speaker_connection_reconnecting',
+          detail: {
+            state: change.state,
+            reason: change.detail?.reason ?? null,
+            autoResumeAllowed: false,
+          },
+        });
+        this.#emitSnapshot();
+        return;
+      }
       this.#preemptForSafety(`connection_${change.state}`);
       this.#markUnknown('playback_adapter_connection_lost', {
         state: change.state,
         reason: change.detail?.reason ?? null,
       });
       return;
+    }
+    if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER
+      && change?.state === ON_AIR_V2_CONNECTION_STATES.READY) {
+      this.#lastError = null;
     }
     this.#emitSnapshot();
   }
@@ -1195,6 +1229,14 @@ export class OnAirPlaybackAdapter {
       const result = this.connection.emitEvent(draft);
       const after = this.connection.snapshot();
       if (!sameReadyConnection(before, after)) {
+        if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+          this.#lastError = immutableJson({
+            code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+            detail: { type: draft.type, event: draft.event ?? null, reason: 'connection_changed_during_send' },
+          });
+          this.#emitSnapshot();
+          return false;
+        }
         if (this.#routeState !== 'unknown') {
           this.#markUnknown(
             ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
@@ -1205,6 +1247,14 @@ export class OnAirPlaybackAdapter {
         return false;
       }
       if (result?.status === 'outcome_unknown') {
+        if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+          this.#lastError = immutableJson({
+            code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+            detail: { type: draft.type, event: draft.event ?? null },
+          });
+          this.#emitSnapshot();
+          return false;
+        }
         this.#markUnknown(
           ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
           { type: draft.type, event: draft.event ?? null },
@@ -1215,6 +1265,14 @@ export class OnAirPlaybackAdapter {
       if (result?.status === 'dropped') return telemetry;
       return true;
     } catch (error) {
+      if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER) {
+        this.#lastError = immutableJson({
+          code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+          detail: safeErrorDetail(error),
+        });
+        this.#emitSnapshot();
+        return false;
+      }
       this.#markUnknown(
         ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
         safeErrorDetail(error),
