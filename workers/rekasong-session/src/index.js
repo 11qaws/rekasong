@@ -1028,12 +1028,18 @@ export class SessionRoom {
   eligiblePlayerRecords(mode, excluded) {
     const now = Date.now();
     return this.livePlayerRecords(excluded).filter(({ attachment }) => {
-      if (this.playerHeartbeatHealth(attachment, now).heartbeatStale) return false;
       if (mode === 'speaker') {
+        // Speaker playback is a normal browser media route. Mobile background
+        // tabs, PiP and BFCache can pause/throttle its 5s heartbeat while the
+        // WebSocket and audio element remain alive. Candidate eligibility is
+        // therefore based on the live socket for speakers; OBS keeps the
+        // strict heartbeat gate below because its browser-source attestation
+        // is part of the broadcast safety contract.
         return attachment.clientKind === 'dashboard-speaker'
           && attachment.runtime?.sourceActive !== false;
       }
       if (mode === 'obs') {
+        if (this.playerHeartbeatHealth(attachment, now).heartbeatStale) return false;
         return attachment.clientKind === 'obs-browser-source'
           && attachment.runtime?.sourceActive === true
           && (attachment.capabilities?.obsRuntime === true || attachment.capabilities?.obsStudioBinding === true);

@@ -5008,6 +5008,35 @@ test('heartbeat warning and stale thresholds use exact 499/500/1999/2000ms bound
   assert.equal(harness.storage.puts.length, putsBeforeSnapshot);
 });
 
+test('speaker candidate remains eligible while its live socket heartbeat is throttled', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const speaker = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, speaker, {
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+  });
+
+  const originalNow = Date.now;
+  const fixedNow = originalNow() + 10_000;
+  try {
+    Date.now = () => fixedNow;
+    speaker.serializeAttachment({
+      ...speaker.deserializeAttachment(),
+      lastSeenAt: fixedNow - 2_000,
+      runtime: {},
+    });
+    assert.equal(harness.room.eligiblePlayerRecords('speaker').length, 1);
+    assert.deepEqual(
+      harness.room.protocolV2Snapshot(harness.session).eligibleCandidates.speaker,
+      ['player-a'],
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test('active output watchdog arms at the exact stale deadline without postponing an earlier alarm', async () => {
   const harness = createHarness();
   const control = harness.socket('control');

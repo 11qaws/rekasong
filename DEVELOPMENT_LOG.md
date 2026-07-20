@@ -357,3 +357,7 @@
 - 송출 헤더에 상태만 표시하지 않고 `다음 행동` 안내를 항상 함께 표시한다.
 - 스피커/OBS 활성·연결 중·후보 없음·제어권 충돌·복구 필요 상태마다 사용자가 눌러야 할 버튼이나 확인할 위치를 한국어/영어 번역 키로 제공한다.
 - 상태 계산과 행동 안내 키를 분리해 기존의 authoritative 상태 판정은 유지하고, 안내 문구만 독립적으로 번역·테스트할 수 있게 했다.
+## 2026-07-21 (Codex) — Speaker heartbeat candidate eligibility
+
+- Speaker players send heartbeats every 5 seconds so mobile/background/PiP playback is not forced to stop, but the Worker was excluding every stale heartbeat after 2 seconds. A live speaker socket therefore disappeared from `eligibleCandidates` even while its player was ready, causing route selection to fall back to “output route needs confirmation”.
+- Speaker candidate eligibility now uses the live WebSocket and `sourceActive !== false`; OBS retains the strict 2-second heartbeat and runtime attestation gate. Added a regression test for a speaker candidate at the stale boundary.
