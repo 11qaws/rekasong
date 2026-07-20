@@ -73,6 +73,7 @@ export default function PlaybackPanel({
   outputControlSafeToTakeOver = false,
   outputControlTakeover = null,
   outputControlRecoveryRequired = false,
+  onResetOutputControl,
   outputRouteStable = false,
   outputSwitchState = 'idle',
   outputSwitchReasonCode = null,
@@ -113,6 +114,7 @@ export default function PlaybackPanel({
   const [preparedDisplayUrl, setPreparedDisplayUrl] = useState('');
   const [isRecoveringOnAir, setIsRecoveringOnAir] = useState(false);
   const [isEmergencyStoppingOutput, setIsEmergencyStoppingOutput] = useState(false);
+  const [isResettingOutputControl, setIsResettingOutputControl] = useState(false);
   const [controlTransferPhase, setControlTransferPhase] = useState('idle');
   const [isRetryingOutputControl, setIsRetryingOutputControl] = useState(false);
   const obsSetupTriggerRef = useRef(null);
@@ -524,6 +526,23 @@ export default function PlaybackPanel({
     } catch (error) {
       setIsEmergencyStoppingOutput(false);
       showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
+    }
+  };
+
+  const resetOutputControl = () => {
+    if (isResettingOutputControl || typeof onResetOutputControl !== 'function') return;
+    if (!window.confirm(t('obs.setup.recovery.resetConfirm'))) return;
+    setIsResettingOutputControl(true);
+    try {
+      Promise.resolve(onResetOutputControl())
+        .then(() => showToast?.(t('obs.setup.recovery.resetComplete'), 'info'))
+        .catch((error) => {
+          showToast?.(error?.message || t('obs.setup.recovery.resetFailed'), 'error');
+        })
+        .finally(() => setIsResettingOutputControl(false));
+    } catch (error) {
+      setIsResettingOutputControl(false);
+      showToast?.(error?.message || t('obs.setup.recovery.resetFailed'), 'error');
     }
   };
 
@@ -963,6 +982,26 @@ export default function PlaybackPanel({
                   {isRetryingOutputControl
                     ? t('onair.control.unavailable.inProgress')
                     : t('onair.control.unavailable.action')}
+                </button>
+              </div>
+            )}
+
+            {outputNeedsAttention && !isOnAirInvalid && !outputControlUnavailable && (
+              <div className="obs-control-transfer" role="status">
+                <div>
+                  <strong>{t('obs.setup.recovery.resetTitle')}</strong>
+                  <p>{t('obs.setup.recovery.resetDescription')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary obs-recovery-action"
+                  onClick={resetOutputControl}
+                  disabled={isResettingOutputControl || typeof onResetOutputControl !== 'function'}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  {isResettingOutputControl
+                    ? t('obs.setup.recovery.resetInProgress')
+                    : t('obs.setup.recovery.resetAction')}
                 </button>
               </div>
             )}

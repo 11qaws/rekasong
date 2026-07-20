@@ -715,6 +715,17 @@ test('blocks zero or duplicate candidates, active work, and unknown authority', 
   }
 });
 
+test('full output reset stops every output before rebuilding control', async () => {
+  const { controller, coordinators } = createHarness(readyRoute('obs'));
+  const oldCoordinator = coordinators[0];
+
+  await controller.resetOutputControl();
+
+  assert.deepEqual(oldCoordinator.calls, [['emergencyStop'], ['dispose']]);
+  assert.equal(coordinators.length, 2);
+  assert.equal(coordinators[1].connectCalls, 1);
+});
+
 test('speaker route button retries deactivation when a disconnected speaker route is unknown', () => {
   const unknownProtocol = readyRoute('speaker', {
     lease: {

@@ -2135,6 +2135,7 @@ export default function Dashboard() {
             onStartObsAudioCheck={outputControl.startTest}
             onStopObsAudioCheck={outputControl.stopTest}
             onEmergencyStopOutput={outputControl.emergencyStop}
+            onResetOutputControl={outputControl.resetOutputControl}
             onTakeOverOutputControl={outputControl.takeOverControl}
             onRetryOutputControl={retryOutputControlNow}
           />

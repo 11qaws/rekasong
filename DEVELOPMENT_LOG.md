@@ -1,5 +1,10 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-20 (Codex) 송출 경로 완전 초기화
+
+- 송출 경로가 막혔거나 선택/실제 경로를 확인할 수 없을 때 설정에서 전체 출력을 정지하고 송출 제어 연결을 다시 시작하는 명시적 초기화 동작을 추가했다.
+- 긴급 정지 결과를 확인하지 못하면 상태를 성공으로 지우지 않고 실패 안내를 유지한다. 초기화가 성공한 뒤에는 사용자가 스피커 또는 OBS 경로를 다시 선택한다.
+
 ## 2026-07-20 (Codex) output intent watchdog
 
 - A route click queued before writable output-control authority is proven now expires after 8 seconds, triggers one reconnect, and exposes settings recovery instead of remaining indefinitely pending.

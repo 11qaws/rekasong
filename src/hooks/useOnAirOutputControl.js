@@ -372,6 +372,15 @@ export class OnAirOutputController {
     return result;
   }
 
+  async resetOutputControl() {
+    this.#assertUsable();
+    // A full reset is destructive by design: first request a session-wide
+    // emergency stop and wait for its result, then rebuild the control socket.
+    // If the stop cannot be proven, do not discard the coordinator state.
+    await this.emergencyStop();
+    return this.retryConnection();
+  }
+
   takeOverControl() {
     this.#assertUsable();
     const result = this.#coordinator.takeOverControl();
@@ -1369,6 +1378,10 @@ export function useOnAirOutputControl({
     () => requireController().emergencyStop(),
     [requireController],
   );
+  const resetOutputControl = useCallback(
+    () => requireController().resetOutputControl(),
+    [requireController],
+  );
   const takeOverControl = useCallback(
     () => requireController().takeOverControl(),
     [requireController],
@@ -1388,6 +1401,7 @@ export function useOnAirOutputControl({
     sendCommand,
     retryConnection,
     emergencyStop,
+    resetOutputControl,
     takeOverControl,
     startTest,
     stopTest,
