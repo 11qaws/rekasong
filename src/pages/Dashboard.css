@@ -969,7 +969,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* Live-console-first layout: the active broadcast and queue own the screen,
    while adding a song is a focused secondary composer.
    (그리드 자체의 정의는 상단 .dashboard-grid 한 곳에서만 한다) */
-.dashboard-header { margin-bottom: 1rem; padding: 1.15rem 2rem 0; border-bottom: 0; }
+.dashboard-header { margin-bottom: 1rem; padding: 1.15rem 2rem 0; border-bottom: 6px solid var(--chr-hair); }
 .dashboard-branding { display: flex; flex-direction: column; align-items: center; }
 .dashboard-output-route-bar {
   position: relative;
@@ -1235,7 +1235,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* ---- Compact (<=768px): 모바일 밀도. 패딩·타이포 축소 (구 768/650 블록 통합) ---- */
 @media (max-width: 768px) {
   .dashboard-container { padding: 0.75rem; }
-  .dashboard-header { margin: -0.75rem -0.75rem 0.75rem; padding: 0.8rem 1rem 0; border-bottom: 0; }
+  .dashboard-header { margin: -0.75rem -0.75rem 0.75rem; padding: 0.8rem 1rem 0; border-bottom: 6px solid var(--chr-hair); }
   .dashboard-output-route-bar { width: calc(100% + 2rem); margin: 0.75rem -1rem 0; padding-inline: 1rem; }
   .dashboard-output-route-bar-inner { max-width: calc(100% - 1rem); }
   .dashboard-header::before, .dashboard-header::after { display: none; } /* 좁은 폭에서 단추 장식 생략 */
@@ -1329,6 +1329,7 @@ body.dashboard-page #root {
   flex: 0 0 auto;
   margin: 0 0 1rem;
   padding: 1.15rem 2rem 1.4rem;
+  border-bottom: 6px solid var(--chr-hair);
 }
 
 .dashboard-grid,
