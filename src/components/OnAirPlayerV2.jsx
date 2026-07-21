@@ -83,9 +83,10 @@ export default function OnAirPlayerV2({
       : createObsRuntimeAttestation({
         windowObject: window,
         onChange(snapshot) {
-          // OBS source loss is a local media-safety interrupt, not merely
-          // heartbeat telemetry. The adapter keeps server truth unknown until
-          // an authenticated emergency-stop command proves global recovery.
+          // OBS active/visible callbacks describe scene state. Forward them
+          // immediately for observability, but the adapter keeps an established
+          // media graph alive; an actual browser-source teardown closes the
+          // socket and explicit stop commands remain authoritative.
           void adapter?.handleRuntimeAttestation(snapshot, { phase: 'obs_callback' });
         },
       });

@@ -188,7 +188,7 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
   assert.match(outputMessageCatalog.en['obs.audioCheck.block.activeWork'], /Finish or remove/);
 });
 
-test('route buttons reflect authoritative output and every blocked route remains recoverable', async () => {
+test('Speaker is a local choice while every blocked OBS route remains recoverable', async () => {
   const [dashboardSource, panelSource] = await Promise.all([
     readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
@@ -196,24 +196,22 @@ test('route buttons reflect authoritative output and every blocked route remains
 
   assert.match(
     dashboardSource,
-    /const outputSwitchInFlight = Boolean\(\s+outputSwitchTargetMode\s+&& \['deactivating', 'activating'\]\.includes\(outputSwitchStatus\),\s+\);/,
-    'only an authoritative deactivation/activation may preview a target route',
-  );
-  assert.match(
-    dashboardSource,
-    /const selectedOutputMode = outputSwitchInFlight\s+\? outputSwitchTargetMode\s+: actualOutputMode === 'obs'\s+\? 'obs'\s+: outputModePreference;/,
-    'OBS remains authoritative while an inactive server route falls back to the local speaker preference',
+    /const selectedOutputMode = outputModePreference;/,
+    'the browser-local Speaker choice must not be replaced by a retained OBS lease',
   );
   assert.match(
     dashboardSource,
     /const failedOutputMode = outputSwitchStatus === 'blocked'\s+\? outputSwitchTargetMode\s+: null;/,
     'a rejected target remains diagnostic information without becoming checked',
   );
-  assert.match(panelSource, /const isOptionDisabled = outputSelectionLocked;/);
+  assert.match(
+    panelSource,
+    /const isOptionDisabled = typeof onSelectOutputMode !== 'function'\s+\|\| \(mode === 'obs' && outputSelectionLocked\);/,
+  );
   assert.doesNotMatch(
     panelSource,
-    /const isOptionDisabled =[^;]*normalizedOutputSwitchState === 'blocked'/,
-    'blocked output choices must never disable the other recovery route',
+    /const isOptionDisabled =[^;]*mode === 'speaker'[^;]*outputSelectionLocked/,
+    'an OBS failure must never disable the local Speaker route',
   );
   assert.match(
     panelSource,
@@ -256,9 +254,13 @@ test('speaker stays clickable while OBS intent waits for writable authority', as
   );
   assert.match(
     dashboardSource,
-    /if \(mode === 'speaker'\) \{[\s\S]*?if \(!actualOutputMode\) return;[\s\S]*?selectLocalSpeakerMode\(\)/,
-    'speaker selection is immediate unless a real server-routed output must first be deactivated',
+    /if \(mode === 'speaker'\) \{[\s\S]*?setOutputModePreference\('speaker'\);[\s\S]*?setQueuedOutputIntent\(null\);[\s\S]*?return;/,
+    'speaker selection is immediate and never waits for a server-routed output to deactivate',
   );
+  const speakerSelectionStart = dashboardSource.indexOf("if (mode === 'speaker') {");
+  const obsSelectionStart = dashboardSource.indexOf('} else {', speakerSelectionStart);
+  const speakerSelection = dashboardSource.slice(speakerSelectionStart, obsSelectionStart);
+  assert.doesNotMatch(speakerSelection, /selectLocalSpeakerMode|outputControllerReady|outputControlConflict/);
   assert.match(
     dashboardSource,
     /else \{[\s\S]*?outputControlRecoveryRequired \|\| outputControlConflict[\s\S]*?showToast\(t\('onair\.output\.selector\.locked\.unavailable'\)/,
@@ -287,7 +289,7 @@ test('safety-locked output clicks explain themselves instead of failing silently
     assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English lock explanation for ${key}`);
   }
 
-  assert.match(source, /if \(outputSelectionLocked\) \{[\s\S]*?showToast\?\.\([\s\S]*?t\(outputSelectionLockMessageKey\)/);
+  assert.match(source, /if \(mode === 'obs' && outputSelectionLocked\) \{[\s\S]*?showToast\?\.\([\s\S]*?t\(outputSelectionLockMessageKey\)/);
   assert.match(source, /title=\{isOptionDisabled \? t\(outputSelectionLockMessageKey\) : undefined\}/);
   assert.ok(outputMessageCatalog.ko['onair.output.selector.status.blockedTarget']?.includes('{{mode}}'));
   assert.ok(outputMessageCatalog.en['onair.output.selector.status.blockedTarget']?.includes('{{mode}}'));
@@ -390,11 +392,11 @@ test('route refusal, watchdog recovery, and takeover timeout copy is localized a
   assert.ok(outputMessageCatalog.en['obs.setup.player.candidate.duplicate'].includes('{{count}}'));
 });
 
-test('read-only and reconnecting tabs disable every transport mutation', async () => {
+test('read-only and reconnecting tabs disable OBS mutations but never local Speaker transport', async () => {
   const source = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
   assert.match(
     source,
-    /const outputAuthorityLocked = normalizedOutputSwitchState === 'connecting'[\s\S]*?\|\| outputControlConflict[\s\S]*?\|\| outputControlUnavailable;/,
+    /const outputAuthorityLocked = selectedOutputMode === 'obs' && \([\s\S]*?normalizedOutputSwitchState === 'connecting'[\s\S]*?\|\| outputControlConflict[\s\S]*?\|\| outputControlUnavailable[\s\S]*?\);/,
   );
   assert.match(source, /const transportControlsLocked = isStarting \|\| controlsLocked \|\| outputAuthorityLocked;/);
   assert.match(source, /onClick=\{toggleMute\}[\s\S]*?disabled=\{transportControlsLocked\}/);

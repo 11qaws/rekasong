@@ -99,9 +99,14 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
 
 test('dashboard speaker is browser-local while OBS control reconnect stays bounded', async () => {
   const dashboardPath = fileURLToPath(new URL('../src/pages/Dashboard.jsx', import.meta.url));
-  const source = await readFile(dashboardPath, 'utf8');
+  const playbackPanelPath = fileURLToPath(new URL('../src/components/PlaybackPanel.jsx', import.meta.url));
+  const [source, playbackPanel] = await Promise.all([
+    readFile(dashboardPath, 'utf8'),
+    readFile(playbackPanelPath, 'utf8'),
+  ]);
 
   await transformWithOxc(source, dashboardPath, { lang: 'jsx' });
+  await transformWithOxc(playbackPanel, playbackPanelPath, { lang: 'jsx' });
 
   assert.match(source, /const outputControllerReady = outputControlAuthority\.writable;/);
   assert.doesNotMatch(source, /dashboardSpeakerIdentityRef|createPlayerPageIdentity/);
@@ -114,14 +119,48 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
     /<DashboardLocalSpeaker[\s\S]*?ref=\{localSpeakerRef\}[\s\S]*?onEvidence=\{handleLocalSpeakerEvidence\}/,
     'the dashboard must host its own local player without a Worker route lease',
   );
+  assert.match(
+    source,
+    /pendingLocalSpeakerCommandsRef\.current\.push\(\{ command, resolve, reject \}\)[\s\S]*?localSpeakerState === 'ready'[\s\S]*?pendingLocalSpeakerCommandsRef\.current\.splice\(0\)/,
+    'a first Speaker click must wait for the local element instead of surfacing a route lock',
+  );
   assert.doesNotMatch(source, /DashboardSpeakerPlayerV2|shouldHostDashboardSpeaker|rekasong-output-owner/);
-  assert.match(source, /const selectLocalSpeakerMode = outputControl\.selectLocalSpeakerMode;/);
+  assert.doesNotMatch(source, /const selectLocalSpeakerMode = outputControl\.selectLocalSpeakerMode;/);
+  assert.match(source, /const selectedOutputMode = outputModePreference;/);
+  assert.match(source, /const speakerPlayerMode = selectedOutputMode === 'speaker';/);
+  assert.match(
+    source,
+    /const establishedObsRouteConnected = Boolean\([\s\S]*?\['ready', 'audible'\]\.includes\(activeOutputLease\?\.status\)[\s\S]*?activeOutputPlayer\?\.clientKind === 'obs-browser-source'/,
+    'an established live OBS route must depend on the live leased socket, not scene telemetry',
+  );
+  assert.match(
+    source,
+    /establishedObsRouteConnected && activeOutputPlayer\?\.heartbeatStale[\s\S]*?onair\.output\.status\.obs\.heartbeatDelayed/,
+    'delayed OBS telemetry must be shown without replacing the established route',
+  );
+  assert.match(
+    source,
+    /const obsSourceTemporarilyInactive[\s\S]*?onair\.output\.status\.obs\.sceneInactive/,
+    'scene visibility must be reported without disconnecting an established route',
+  );
   assert.match(
     source,
     /const handleSeek = \(time\) => \{[\s\S]*?if \(useOnAirPlayer\) \{[\s\S]*?dispatchPlaybackCommand\(\{[\s\S]*?type: 'seek'/,
     'local speaker seek must use the local transport instead of the legacy hidden media ref',
   );
-  assert.match(source, /if \(!actualOutputMode\) return;[\s\S]*?Promise\.resolve\(selectLocalSpeakerMode\(\)\)/);
+  const speakerSelectionStart = source.indexOf("if (mode === 'speaker') {");
+  const obsSelectionStart = source.indexOf('} else {', speakerSelectionStart);
+  const speakerSelection = source.slice(speakerSelectionStart, obsSelectionStart);
+  assert.doesNotMatch(
+    speakerSelection,
+    /outputControllerReady|outputControlConflict|outputControlUnavailable|selectLocalSpeakerMode/,
+    'Speaker selection must never wait for OBS authority or a server route transition',
+  );
+  assert.match(
+    source,
+    /const runOutputMode = outputMode === 'obs' \|\| outputMode === 'speaker'[\s\S]*?outputModePreference === 'obs' \? 'obs' : 'speaker'/,
+    'new playback must follow the local route choice instead of a stale OBS lease',
+  );
   assert.match(
     source,
     /if \(actualOutputMode !== 'obs' && activeRef\.current\?\.outputMode !== 'obs'\) return;/,
@@ -150,5 +189,24 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
     source,
     /if \(outputControl\.snapshot\?\.ready === true\) \{[\s\S]*?window\.setTimeout\(\(\) => \{[\s\S]*?attempts = 0;[\s\S]*?\}, 10_000\);/,
     'a flapping READY state must not replenish the bounded reconnect budget immediately',
+  );
+  assert.match(
+    playbackPanel,
+    /const isSelectedRouteInvalid = selectedOutputMode === 'obs' && isOnAirInvalid;/,
+    'an expired OBS session must not poison the browser-local Speaker status',
+  );
+  assert.match(
+    playbackPanel,
+    /isSessionInvalid: isSelectedRouteInvalid \|\| outputRouteStateUnknown/,
+  );
+  assert.match(
+    playbackPanel,
+    /const outputAuthorityLocked = selectedOutputMode === 'obs' && \(/,
+    'OBS authority loss must not disable normal Speaker transport controls',
+  );
+  assert.match(
+    playbackPanel,
+    /const isOptionDisabled = typeof onSelectOutputMode !== 'function'[\s\S]*?mode === 'obs' && outputSelectionLocked/,
+    'Speaker must remain selectable even when the OBS option is locked',
   );
 });

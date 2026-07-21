@@ -62,13 +62,13 @@ test('stable routes identify the selected output path even while no song is play
   );
 });
 
-test('speaker startup and candidate failures use compact target-specific labels', () => {
+test('Speaker ignores server startup, candidate, ownership, and route failures', () => {
   assert.deepEqual(
     derivePlaybackOutputStatus({
       outputSwitchState: 'connecting',
       targetMode: 'speaker',
     }),
-    { key: 'onair.output.header.connecting.speaker', tone: 'pending', mode: null },
+    { key: 'onair.output.header.active.speaker', tone: 'speaker', mode: 'speaker' },
   );
   assert.deepEqual(
     derivePlaybackOutputStatus({
@@ -83,7 +83,7 @@ test('speaker startup and candidate failures use compact target-specific labels'
       targetMode: 'speaker',
       targetCandidateState: 'none',
     }),
-    { key: 'onair.output.header.connecting.speaker', tone: 'pending', mode: null },
+    { key: 'onair.output.header.active.speaker', tone: 'speaker', mode: 'speaker' },
   );
   assert.deepEqual(
     derivePlaybackOutputStatus({
@@ -108,7 +108,16 @@ test('speaker startup and candidate failures use compact target-specific labels'
       targetCandidateState: 'single',
       reasonCode: 'output_control_target_identity_mismatch',
     }),
-    { key: 'onair.output.header.blocked.speaker.foreign', tone: 'attention', mode: null },
+    { key: 'onair.output.header.active.speaker', tone: 'speaker', mode: 'speaker' },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      confirmedOutputMode: 'speaker',
+      outputSwitchState: 'conflict',
+      isSessionInvalid: true,
+      isRouteStable: false,
+    }),
+    { key: 'onair.output.header.active.speaker', tone: 'speaker', mode: 'speaker' },
   );
 });
 

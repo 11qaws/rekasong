@@ -4,13 +4,13 @@
 
 OBS 모드의 검증은 송출 경로를 지키기 위한 것이지, 일시적인 WebSocket 지연으로 로컬 재생을 끊기 위한 것이 아니다.
 
-- 브라우저 소스의 `sourceActive=false` 또는 `sourceVisible=false`는 실제 OBS 소스가 사라진 증거이므로 기존 strict 안전 정지를 적용한다.
-- WebSocket 재연결, heartbeat 지연, 명령 응답 유실만으로는 로컬 오디오를 즉시 정지하지 않는다. 현재 오디오 그래프와 재생 위치는 유지하고, 화면에는 “OBS 연결을 다시 확인하는 중”을 표시한다.
+- 브라우저 소스의 `sourceActive=false` 또는 `sourceVisible=false`는 장면 전환에서도 정상적으로 발생한다. 이미 연결된 플레이어의 media graph를 정지하거나 lease를 unknown으로 내리지 않고, OBS 믹서 확인 안내만 표시한다.
+- WebSocket 재연결, heartbeat 지연, 명령 응답 유실만으로는 로컬 오디오를 즉시 정지하지 않는다. 현재 오디오 그래프와 재생 위치는 유지하고, 화면에는 연결 유지 또는 확인 중인 사실을 표시한다.
 - 재연결 중 명령은 성공으로 간주하지 않는다. 자동 재생·스피커 fallback·다른 소스로의 자동 전환은 하지 않는다.
-- 동일한 OBS player ID가 돌아와 `sourceActive=true`와 OBS capability를 다시 보고하면 Worker lease만 `ready`로 복원한다. `confirmedPlayback`은 `output_reconnected`로 남기며 재생은 사용자가 다시 누를 때만 시작한다.
-- 스피커는 OBS attestation을 요구하지 않는다. 끊겼다가 돌아온 스피커가 `unknown`이면 같은 스피커 버튼을 다시 누르는 것이 “먼저 deactivate 증거를 만든 뒤 다시 연결”하는 복구 동작이어야 하며, 중간 snapshot 때문에 버튼이 잠기면 안 된다.
+- 동일한 OBS player ID와 OBS capability가 다시 연결되면 현재 장면 visibility와 무관하게 Worker lease를 `ready`로 복원한다. `confirmedPlayback`은 `output_reconnected`로 남기며 재생은 사용자가 다시 누를 때만 시작한다.
+- 스피커는 서버 player 후보·lease·heartbeat·control owner를 사용하지 않는다. 모든 탭의 로컬 Speaker가 독립적으로 즉시 선택·조작 가능해야 한다.
 
-이 규칙은 연결이 잠깐 흔들릴 때 방송을 끊지 않으면서도, 실제 OBS 소스 소실은 놓치지 않는 경계다.
+이 규칙은 연결이나 장면 상태가 잠깐 흔들릴 때 방송을 끊지 않으면서도, 실제 socket 종료와 명시적 정지 결과는 놓치지 않는 경계다.
 
 > 목표는 “플레이어가 연결됐다”가 아니라, 반주 PCM이 OBS 최종 출력에 들어가고 라이브 마이크와의 상대 싱크가 방송 내내 유지된다는 사실을 증명하는 것이다.
 

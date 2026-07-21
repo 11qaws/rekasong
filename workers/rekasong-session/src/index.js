@@ -1,14 +1,19 @@
-const SESSION_GRACE_MS = 2 * 60 * 1000;
+// A broadcast/browser-source restart can easily take longer than two minutes
+// (OBS update, PC sleep, network handover). Keep the same URL recoverable for
+// thirty minutes after the last dashboard/player leaves; explicit End Session
+// remains the immediate cleanup path.
+const SESSION_RECONNECT_GRACE_MS = 30 * 60 * 1000;
 const SESSION_INITIAL_GRACE_MS = 30 * 60 * 1000;
 const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 const PREPARE_LEASE_MS = 120 * 1000;
 const PROTOCOL_V2 = 2;
-// Heartbeats are a half-open-transport fallback, not an audio clock. Native
-// WebSocket close and OBS source-active callbacks remain immediate signals;
-// allowing six missed 10s beats prevents throttling from tearing down a live
-// broadcast and cuts idle Worker messages by 90%.
+// Heartbeats are observability, not an audio clock or a playback kill switch.
+// Native WebSocket delivery remains the control and continuity signal. OBS
+// active/visible callbacks describe scene state. A delayed heartbeat may
+// exclude a standby source from a new activation, but it must never tear down
+// an established route while its socket is still live.
 const PLAYER_HEARTBEAT_WARNING_MS = 30 * 1000;
 const PLAYER_HEARTBEAT_STALE_MS = 60 * 1000;
 // The dashboard gives a route switch 12 seconds before surfacing a local
@@ -994,9 +999,8 @@ export class SessionRoom {
     return this.currentRouteTransition(session)?.deadlineAt ?? null;
   }
 
-  outputSafetyAlarmDeadline(session, options = {}) {
+  outputSafetyAlarmDeadline(session) {
     const deadlines = [
-      this.activeOutputHeartbeatDeadline(session, options),
       this.routeTransitionDeadline(session)
     ].filter((deadline) => deadline !== null);
     return deadlines.length > 0 ? Math.min(...deadlines) : null;
@@ -1014,8 +1018,10 @@ export class SessionRoom {
       this.activeOutputHeartbeatAlarmKnown = true;
       return deadline;
     }
-    // An earlier initial-grace, reconnect-grace, cleanup, heartbeat, or route
-    // transition alarm must never be postponed by safety maintenance.
+    // An earlier initial-grace, reconnect-grace, cleanup, or route transition
+    // alarm must never be postponed by safety maintenance. Heartbeat age is
+    // deliberately absent: it is displayed as health telemetry and does not
+    // own a destructive deadline for an already-established OBS route.
     this.activeOutputHeartbeatAlarmKnown = true;
     return currentAlarm;
   }
@@ -1160,16 +1166,11 @@ export class SessionRoom {
       heartbeatStale: selected.health.heartbeatStale,
       sourceActive: selected.attachment.runtime?.sourceActive ?? null
     };
-    if (selected.attachment.runtime?.sourceActive === false) {
-      return { reasonCode: 'target_source_inactive', ...detail };
-    }
-    // Dashboard speaker is a normal media player. Mobile background tabs,
-    // PiP and BFCache can throttle heartbeats while audio keeps playing. Do
-    // not turn that temporary silence into an unknown lease; a real socket
-    // disconnect is still treated as unavailable below.
-    if (selected.health.heartbeatStale && protocol.leaseClientKind !== 'dashboard-speaker') {
-      return { reasonCode: 'target_heartbeat_stale', ...detail };
-    }
+    // A delayed heartbeat or OBS scene visibility change is not proof that the
+    // media graph stopped. When the negotiated socket is still present, keep
+    // the established route commandable. Standby activation remains strict in
+    // eligiblePlayerRecords(); an actual send failure or socket close is the
+    // hard continuity boundary.
     if (retainedUnknown) {
       return { reasonCode: protocol.confirmedPlayback.reasonCode, ...detail };
     }
@@ -1222,14 +1223,14 @@ export class SessionRoom {
       const protocol = this.ensureProtocolV2(session);
       const reasonCode = protocol.confirmedPlayback?.reasonCode;
       const recoverableReason = reasonCode === 'target_disconnected'
-        || reasonCode === 'target_heartbeat_stale';
-      const sourceProven = attachment?.runtime?.sourceActive === true;
+        || reasonCode === 'target_heartbeat_stale'
+        || reasonCode === 'target_source_inactive';
       const obsCapable = attachment?.capabilities?.obsRuntime === true
         || attachment?.capabilities?.obsStudioBinding === true;
       if (protocol.leaseStatus !== 'unknown'
         || protocol.leaseClientKind !== 'obs-browser-source'
         || protocol.leaseTarget !== attachment?.playerInstanceId
-        || !recoverableReason || !sourceProven || !obsCapable) return false;
+        || !recoverableReason || !obsCapable) return false;
 
       const candidate = structuredClone(session);
       const candidateProtocol = this.ensureProtocolV2(candidate);
@@ -2179,6 +2180,10 @@ export class SessionRoom {
         capabilities: boundedRecord(message.capabilities, ['outputRouting', 'verificationUi']),
         lastSeenAt: Date.now()
       });
+      // A live dashboard is an active session participant even when it is in
+      // browser-local Speaker mode and no OBS player exists. Cancel an initial
+      // or reconnect grace alarm unless a real route transition still owns it.
+      await this.reconcileConnectedPlayerAlarm(session);
       this.replaceSocketWithLatestInstance(socket, 'controlInstanceId', controlInstanceId);
       this.send(socket, {
         type: 'control_welcome',
@@ -3044,7 +3049,6 @@ export class SessionRoom {
       }
 
       const observedAt = Date.now();
-      const priorHealth = this.playerHeartbeatHealth(identity.attachment, observedAt);
       const sequence = this.stageV2Sequence(
         identity.attachment,
         v2EventSequenceNamespace(message),
@@ -3070,37 +3074,10 @@ export class SessionRoom {
       });
       if (reconnected) protocol = this.ensureProtocolV2(session);
 
-      let issue = null;
-      const activeTarget = protocol.leaseTarget === identity.playerInstanceId
-        && ['activating', 'ready', 'audible'].includes(protocol.leaseStatus);
-      if (activeTarget && nextAttachment.runtime?.sourceActive === false) {
-        issue = {
-          reasonCode: 'target_source_inactive',
-          targetPlayerInstanceId: identity.playerInstanceId,
-          connected: true,
-          heartbeatAgeMs: priorHealth.heartbeatAgeMs,
-          heartbeatWarning: priorHealth.heartbeatWarning,
-          heartbeatStale: priorHealth.heartbeatStale,
-          sourceActive: false
-        };
-      } else if (activeTarget && priorHealth.heartbeatStale
-        && !reconnected
-        && protocol.leaseClientKind !== 'dashboard-speaker') {
-        issue = {
-          reasonCode: 'target_heartbeat_stale',
-          targetPlayerInstanceId: identity.playerInstanceId,
-          connected: true,
-          heartbeatAgeMs: priorHealth.heartbeatAgeMs,
-          heartbeatWarning: true,
-          heartbeatStale: true,
-          sourceActive: nextAttachment.runtime?.sourceActive ?? null
-        };
-      } else {
-        issue = this.activeOutputLivenessIssue(session, identity.playerInstanceId, {
-          now: observedAt,
-          overrideAttachment: nextAttachment
-        });
-      }
+      const issue = this.activeOutputLivenessIssue(session, identity.playerInstanceId, {
+        now: observedAt,
+        overrideAttachment: nextAttachment
+      });
       if (!issue && !this.activeOutputHeartbeatAlarmKnown) {
         await this.ensureActiveOutputHeartbeatAlarm(session, {
           now: observedAt,
@@ -4004,7 +3981,7 @@ export class SessionRoom {
           shouldPersist = true;
         }
       }
-      if (!this.hasConnectedPlayer(socket)) {
+      if (!this.hasConnectedSessionParticipant(socket)) {
         // A disconnected media element did not prove that it paused. Preserve
         // uncertainty explicitly instead of manufacturing a paused confirmation.
         if (candidateSession && ['loading', 'playing', 'buffering'].includes(candidateSession.transport?.status)) {
@@ -4012,7 +3989,7 @@ export class SessionRoom {
           shouldPersist = true;
           transportChanged = true;
         }
-        await this.ctx.storage.setAlarm(Date.now() + SESSION_GRACE_MS);
+        await this.ctx.storage.setAlarm(Date.now() + SESSION_RECONNECT_GRACE_MS);
         this.activeOutputHeartbeatAlarmKnown = false;
       }
       if (session && shouldPersist) {
@@ -4057,7 +4034,7 @@ export class SessionRoom {
         await this.deleteAssets(session);
         return;
       }
-      if (!this.hasConnectedPlayer()) {
+      if (!this.hasConnectedSessionParticipant()) {
         await this.endSessionWhileDurableQueueHeld(session, 'player_disconnected');
         return;
       }
@@ -4173,6 +4150,20 @@ export class SessionRoom {
         const attachment = socket.deserializeAttachment() || {};
         return attachment.role === 'player' && attachment.negotiationState !== 'unnegotiated';
       });
+  }
+
+  // A dashboard control is the owner of an active listening/broadcast setup.
+  // Speaker mode intentionally has no server-side player, so session lifetime
+  // must follow either a negotiated control or a negotiated player instead of
+  // requiring a player at all times. Display-only widgets do not keep abandoned
+  // sessions alive indefinitely.
+  hasConnectedSessionParticipant(excluded) {
+    return this.ctx.getWebSockets().some((socket) => {
+      if (socket === excluded) return false;
+      const attachment = socket.deserializeAttachment() || {};
+      return ['control', 'player'].includes(attachment.role)
+        && attachment.negotiationState !== 'unnegotiated';
+    });
   }
 
   // 스냅숏용 presence 집계 — 위젯 두 역할의 "지금 실제 연결" 여부.

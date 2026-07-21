@@ -5,6 +5,17 @@
 - 송출 경로가 막혔거나 선택/실제 경로를 확인할 수 없을 때 설정에서 전체 출력을 정지하고 송출 제어 연결을 다시 시작하는 명시적 초기화 동작을 추가했다.
 - 긴급 정지의 ACK 결과를 확인한 경우에만 기존 제어 연결을 폐기하고 새 연결을 만든다. 결과가 불명확하거나 제한 시간 안에 오지 않으면 상태를 성공으로 지우지 않고 실패 안내를 유지한다. 초기화가 성공한 뒤에는 사용자가 스피커 또는 OBS 경로를 다시 선택한다.
 
+## 2026-07-22 (Codex) — v0.2.1 unrestricted Speaker / connection-first OBS
+
+- Speaker 선택은 이제 Worker 출력 lease, 정확히 한 후보, control owner, heartbeat, OBS route 상태와 완전히 분리된다. 설정에서 Speaker는 항상 선택할 수 있고, 읽기 전용·재연결·unknown인 OBS 상태도 로컬 play/pause/seek/volume/skip을 잠그지 않는다.
+- 공용 헤더 상태 판정도 Speaker를 서버의 `connecting`·`duplicate`·`foreign owner`·`blocked`로 되돌릴 수 없게 고정했다. 남아 있던 복구 문구도 OBS 전용으로 바꿔, 스피커 화면에는 단일 경로 제한이나 다른 탭 제어 안내가 다시 나타나지 않는다.
+- lazy local player가 아직 마운트 중인 첫 클릭은 명령을 버리거나 “경로 확인 필요”로 실패시키지 않고 탭 내부 큐에서 순서대로 실행한다. 각 탭·창의 local controller는 독립적이며 server Speaker player나 heartbeat를 만들지 않는다.
+- OBS→Speaker는 로컬 선택을 즉시 반영한다. 기존 OBS run에는 STOP을 best-effort로 보내고 같은 곡을 현재 위치에서 새 local run으로 명시적으로 옮기지만, STOP ACK·제어권·route 전이 결과가 Speaker 사용을 막지 않는다. 준비된 OBS route는 재접속 비용 없이 silent-ready로 남을 수 있다.
+- OBS `sourceActive/sourceVisible=false`는 장면 전환 telemetry로 취급한다. 연결된 socket과 media graph를 강제 detach하거나 lease를 unknown으로 만들지 않는다. 새 OBS 활성화는 계속 정확히 한 active OBS Browser Source만 허용하고, 실제 socket close·send failure·명시적 STOP/deactivate/emergency·terminal teardown은 강한 경계로 유지한다.
+- OBS heartbeat는 10초 상태 관측이며 established route의 destructive alarm, durable write, 재생 차단 근거가 아니다. dashboard control만 연결된 Speaker 세션도 살아 있고, 모든 control/player가 사라진 뒤에는 30분 reconnect grace를 둔다.
+- 번역을 고려해 새 사용자 문구는 `ko/en` semantic key로 함께 추가했다. 전체 locale selector와 기존 하드코딩 문구 이관은 후속 범위다.
+- 검증: 567 tests pass, production build pass, OBS bundle raw 379,303B / gzip 115,427B (budgets 460,800B / 133,120B), Worker syntax pass. 실제 OBS mixer/recording/scene-switch/G3~G6 증거는 수동 검증 전까지 미완료다.
+
 ## 2026-07-20 (Codex) output intent watchdog
 
 - A route click queued before writable output-control authority is proven now expires after 8 seconds, triggers one reconnect, and exposes settings recovery instead of remaining indefinitely pending.

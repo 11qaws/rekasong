@@ -52,6 +52,16 @@ export function derivePlaybackOutputStatus({
   const normalizedTargetMode = VALID_OUTPUT_MODES.has(targetMode) ? targetMode : null;
   const switchState = VALID_SWITCH_STATES.has(outputSwitchState) ? outputSwitchState : 'blocked';
 
+  // Speaker is a browser-local listening choice, not a server route.  Old
+  // Worker lease/conflict/candidate state can still arrive while the user is
+  // selecting Speaker, but it must never turn the local player into a
+  // connecting, duplicate, foreign-owner, or blocked state.  OBS transitions
+  // still take precedence when OBS is the explicit target.
+  if (normalizedTargetMode === 'speaker'
+    || (normalizedTargetMode === null && mode === 'speaker')) {
+    return { key: 'onair.output.header.active.speaker', tone: 'speaker', mode: 'speaker' };
+  }
+
   if (isSessionInvalid) {
     return { key: 'onair.output.header.active.attention', tone: 'attention', mode: null };
   }

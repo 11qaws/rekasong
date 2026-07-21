@@ -9,14 +9,15 @@
 
 - **Speaker**는 일반 웹 플레이어다. 각 탭이 독립적으로 재생하고, Worker player 후보·단일 lease·heartbeat·다른 탭 control 상태 때문에 버튼이나 transport를 잠그지 않는다.
 - **OBS**만 서버가 관리하는 단일 출력 경로다. 정확히 한 OBS Browser Source, runtime sourceActive, 출력 lease, 실제 playback/stop 증거를 요구한다.
-- Speaker→OBS는 현재 로컬 곡을 끝내거나 버린 뒤에만 허용한다. OBS→Speaker는 OBS를 deactivate한 뒤 로컬 Speaker를 즉시 사용하며 서버 Speaker 경로를 새로 활성화하지 않는다.
-- OBS 제어 소켓이 일시적으로 끊겨도 재생 중인 로컬 media graph를 멈추지 않는다. 실제 OBS sourceActive/sourceVisible 상실은 즉시 물리 정지한다.
-- OBS heartbeat는 10초 간격, Worker stale은 60초다. heartbeat는 오디오 clock이 아니라 half-open 소켓 fallback이다.
+- Speaker→OBS는 현재 로컬 곡을 끝내거나 버린 뒤에만 허용한다. OBS→Speaker는 즉시 로컬 선택으로 바꾸고, 기존 OBS run에는 STOP을 best-effort로 보내되 그 결과로 Speaker를 잠그지 않는다. 준비된 OBS 연결은 silent-ready로 유지할 수 있다.
+- OBS 제어 소켓이 일시적으로 끊기거나 장면 전환으로 sourceActive/sourceVisible이 false가 되어도 재생 중인 media graph를 멈추지 않는다. 실제 Browser Source 종료는 socket close, 명령 전달 실패, terminal teardown으로 판별한다.
+- OBS heartbeat는 10초 간격의 관측 정보다. warning/stale 표시는 가능하지만 established route의 해제·재생 차단·durable watchdog 근거로 쓰지 않는다.
 
 사용자 관점에서 현재 확정된 것:
 
 - 앱을 열면 복잡한 서버 경로 선택 없이 `스피커 송출 중`으로 시작한다.
 - Speaker는 여러 탭·창에서 각각 재생할 수 있고 한 탭의 충돌/복구 상태가 다른 탭을 잠그지 않는다.
+- OBS 제어권이 읽기 전용·재연결·unknown이어도 Speaker 버튼과 로컬 재생·일시정지·탐색·볼륨은 잠기지 않는다.
 - 헤더에는 현재 출력과 설정만 남고, 경로 선택·OBS 점검·복구는 설정 안에 있다.
 - YouTube/Search/List/Setlink/Meloming 탭과 곡 목록은 키보드와 클릭으로 조작할 수 있다.
 

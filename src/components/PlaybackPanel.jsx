@@ -143,6 +143,10 @@ export default function PlaybackPanel({
   const isDirectMode = onAirStatus === 'unconfigured';
   const isOnAirInvalid = onAirStatus === 'invalid' || onAirStatus === 'ended';
   const selectedOutputMode = outputMode === 'speaker' || outputMode === 'obs' ? outputMode : null;
+  // An expired/missing broadcast session is an OBS setup problem, not a
+  // Speaker playback failure. Keep the compact header and local transport
+  // calm while the settings dialog offers a fresh OBS connection.
+  const isSelectedRouteInvalid = selectedOutputMode === 'obs' && isOnAirInvalid;
   const confirmedOutputMode = actualOutputMode === 'speaker' || actualOutputMode === 'obs'
     ? actualOutputMode
     : null;
@@ -195,9 +199,14 @@ export default function PlaybackPanel({
   const isFailed = activePhase === 'failed';
   const isStarting = activePhase === 'starting';
   const controlsLocked = isFinishing || isDiscarding || isFailed;
-  const outputAuthorityLocked = normalizedOutputSwitchState === 'connecting'
+  // Speaker transport is a normal browser-local player. OBS authority,
+  // reconnect, takeover, and route-switch state must never disable its play,
+  // seek, volume, skip, retry, or discard controls.
+  const outputAuthorityLocked = selectedOutputMode === 'obs' && (
+    normalizedOutputSwitchState === 'connecting'
     || outputControlConflict
-    || outputControlUnavailable;
+    || outputControlUnavailable
+  );
   const transportControlsLocked = isStarting || controlsLocked || outputAuthorityLocked;
   const phaseBadgeText = isStarting ? t('playback.phase.preparing')
     : isFinishing ? t('playback.phase.skipping')
@@ -222,7 +231,7 @@ export default function PlaybackPanel({
   const activeOutputStatus = derivePlaybackOutputStatus({
     confirmedOutputMode,
     outputSwitchState: normalizedOutputSwitchState,
-    isSessionInvalid: isOnAirInvalid || outputRouteStateUnknown,
+    isSessionInvalid: isSelectedRouteInvalid || outputRouteStateUnknown,
     isRouteStable: outputRouteStable,
     targetMode: failedSelectionMode ?? transitionTargetMode,
     targetCandidateState,
@@ -234,7 +243,7 @@ export default function PlaybackPanel({
     confirmedOutputMode,
     controlRecoveryRequired: outputControlRecoveryRequired,
   });
-  const outputNeedsAttention = isOnAirInvalid
+  const outputNeedsAttention = isSelectedRouteInvalid
     || outputRouteStateUnknown
     || normalizedOutputSwitchState === 'blocked'
     || outputControlRecoveryRequired;
@@ -248,7 +257,7 @@ export default function PlaybackPanel({
   );
 
   const selectOutputMode = (mode) => {
-    if (outputSelectionLocked) {
+    if (mode === 'obs' && outputSelectionLocked) {
       showToast?.(
         t(outputSelectionLockMessageKey),
         ['connecting', 'conflict', 'switching'].includes(normalizedOutputSwitchState)
@@ -753,13 +762,14 @@ export default function PlaybackPanel({
                 className="output-route-switch"
                 role="radiogroup"
                 aria-label={t('onair.output.region.label')}
-                aria-disabled={outputSelectionLocked}
+                aria-disabled={typeof onSelectOutputMode !== 'function'}
               >
                 {['speaker', 'obs'].map((mode) => {
                   const isSelected = selectedOutputMode === mode;
                   const isPending = normalizedOutputSwitchState === 'connecting'
                     && pendingSelectionMode === mode;
-                  const isOptionDisabled = outputSelectionLocked;
+                  const isOptionDisabled = typeof onSelectOutputMode !== 'function'
+                    || (mode === 'obs' && outputSelectionLocked);
                   return (
                     <button
                       key={mode}

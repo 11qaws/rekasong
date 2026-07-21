@@ -770,6 +770,49 @@ test('grace alarm waits for player hello and preserves the freshly reconnected s
   assert.equal(harness.room.pendingV2EventQueues.size, 0);
 });
 
+test('a live dashboard control keeps a Speaker-only session active without an OBS player', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  await registerControl(harness, control);
+
+  harness.storage.alarm = null;
+  await harness.room.alarm();
+
+  assert.equal(harness.session.status, 'active');
+  assert.equal(harness.session.endedAt, undefined);
+  assert.equal(harness.storage.alarm, null);
+  assert.equal(messagesOfType(control, 'session_ended').length, 0);
+});
+
+test('the last control arms reconnect grace and a replacement dashboard cancels it', async () => {
+  const harness = createHarness();
+  const original = harness.socket('control');
+  await registerControl(harness, original, 'control-original');
+  harness.storage.alarm = null;
+
+  original.close();
+  await harness.room.webSocketClose(original);
+  assert.ok(harness.storage.alarm >= Date.now() + (29 * 60 * 1000));
+  assert.equal(harness.session.status, 'active');
+
+  const replacement = harness.socket('control');
+  await registerControl(harness, replacement, 'control-replacement');
+  assert.equal(harness.storage.alarm, null);
+  assert.equal(harness.session.status, 'active');
+  assert.equal(messagesOfType(replacement, 'session_ended').length, 0);
+});
+
+test('an abandoned session still ends after its grace alarm when no control or player remains', async () => {
+  const harness = createHarness();
+  harness.storage.alarm = null;
+
+  await harness.room.alarm();
+
+  assert.equal(harness.session.status, 'ended');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'unknown');
+  assert.ok(Number.isFinite(harness.session.cleanupAt));
+});
+
 test('endSession queues behind control hello and commits from the latest adopted session', async () => {
   const harness = createHarness();
   const claimant = harness.socket('control');
@@ -5037,7 +5080,7 @@ test('speaker candidate remains eligible while its live socket heartbeat is thro
   }
 });
 
-test('active output watchdog arms at the exact stale deadline without postponing an earlier alarm', async () => {
+test('heartbeat age never owns a destructive alarm while route transitions retain their deadline', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5052,12 +5095,18 @@ test('active output watchdog arms at the exact stale deadline without postponing
     const leaseEpoch = await activateOutput(harness, control);
     assert.equal(leaseEpoch, 1);
     await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
-    // Simulate Cloudflare consuming the earlier route-transition alarm. Once
-    // the route is ready, the heartbeat watchdog owns the next deadline.
+    // Once the route is ready, heartbeat age is telemetry only and owns no
+    // alarm that could downgrade an otherwise live OBS source.
     harness.storage.alarm = null;
     harness.room.activeOutputHeartbeatAlarmKnown = false;
     await harness.room.ensureActiveOutputHeartbeatAlarm(harness.session);
-    assert.equal(harness.storage.alarm, fixedNow + 60_000);
+    assert.equal(harness.storage.alarm, null);
+
+    await deactivateOutput(harness, control, {
+      commandId: 'route-deadline-after-ready',
+      switchId: 'route-deadline-after-ready-switch',
+    });
+    assert.equal(harness.storage.alarm, harness.session.protocolV2.routeTransitionDeadlineAt);
 
     const earlierGraceOrCleanupAlarm = fixedNow + 250;
     harness.storage.alarm = earlierGraceOrCleanupAlarm;
@@ -5069,7 +5118,7 @@ test('active output watchdog arms at the exact stale deadline without postponing
   }
 });
 
-test('watchdog latches an open active socket unknown at 60000ms but never at 59999ms', async () => {
+test('an open active source stays commandable across heartbeat warning and stale thresholds', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5093,24 +5142,24 @@ test('watchdog latches an open active socket unknown at 60000ms but never at 599
     assert.equal(harness.session.status, 'active');
     assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
     assert.equal(harness.storage.puts.length, putsBefore);
-    assert.equal(harness.storage.alarm, observedAt + 60_000);
+    assert.equal(harness.storage.alarm, null);
 
     Date.now = () => observedAt + 60_000;
     harness.storage.alarm = null;
     await harness.room.alarm();
     assert.equal(harness.session.status, 'active');
-    assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-    assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
-    assert.equal(harness.session.transport.status, 'unknown');
-    assert.equal(harness.storage.puts.length, putsBefore + 1);
+    assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+    assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+    assert.notEqual(harness.session.transport.status, 'unknown');
+    assert.equal(harness.storage.puts.length, putsBefore);
     assert.equal(harness.storage.alarm, null);
-    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+    assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
   } finally {
     Date.now = originalNow;
   }
 });
 
-test('watchdog storage failure publishes nothing and an alarm retry commits the stale transition once', async () => {
+test('stale heartbeat telemetry performs no durable watchdog write', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5128,14 +5177,12 @@ test('watchdog storage failure publishes nothing and an alarm retry commits the 
   harness.storage.alarm = null;
   harness.storage.failNextPut = new Error('watchdog_storage_failure');
 
-  await assert.rejects(harness.room.alarm(), /watchdog_storage_failure/);
+  await harness.room.alarm();
   assert.deepEqual(harness.session, sessionBefore);
   assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
-
-  await harness.room.alarm();
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
-  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore + 1);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.storage.failNextPut?.message, 'watchdog_storage_failure');
+  harness.storage.failNextPut = null;
 });
 
 test('hibernation bootstrap preserves an earlier alarm and healthy heartbeats do not reschedule it', async () => {
@@ -5170,16 +5217,16 @@ test('hibernation bootstrap preserves an earlier alarm and healthy heartbeats do
       runtime: { sourceActive: true },
     }));
     assert.equal(harness.storage.alarm, earlierAlarm);
-    assert.equal(harness.storage.getAlarmCalls, getAlarmCallsBefore + 1);
+    assert.equal(harness.storage.getAlarmCalls, getAlarmCallsBefore);
 
-    // Simulate Cloudflare consuming the earlier grace/cleanup alarm. The open,
-    // healthy player keeps the session active and receives a new exact deadline.
+    // Simulate Cloudflare consuming the earlier grace/cleanup alarm. The open
+    // participant keeps the session active; no heartbeat watchdog is re-armed.
     Date.now = () => earlierAlarm;
     harness.storage.alarm = null;
     await rehydratedRoom.alarm();
     assert.equal(rehydratedRoom.sessionState.status, 'active');
     assert.equal(rehydratedRoom.sessionState.protocolV2.leaseStatus, 'ready');
-    assert.equal(harness.storage.alarm, observedAt + 60_100);
+    assert.equal(harness.storage.alarm, null);
     const callsAfterAlarm = harness.storage.getAlarmCalls;
 
     Date.now = () => observedAt + 300;
@@ -5193,7 +5240,7 @@ test('hibernation bootstrap preserves an earlier alarm and healthy heartbeats do
       runtime: { sourceActive: true },
     }));
     assert.equal(harness.storage.getAlarmCalls, callsAfterAlarm);
-    assert.equal(harness.storage.alarm, observedAt + 60_100);
+    assert.equal(harness.storage.alarm, null);
     assert.equal(harness.storage.puts.length, putsBefore);
   } finally {
     Date.now = originalNow;
@@ -5761,7 +5808,7 @@ test('healthy heartbeat is relayed and ACKed without storage, while invalid or d
   assert.ok(findMessage(player, (message) => message.code === 'future_lease_epoch'));
 });
 
-test('heartbeat ACK follows durable liveness commit, attachment serialization, and control relay', async () => {
+test('heartbeat ACK follows attachment serialization and control relay without a durable liveness write', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5777,11 +5824,7 @@ test('heartbeat ACK follows durable liveness commit, attachment serialization, a
   });
 
   const order = [];
-  const originalPut = harness.storage.put.bind(harness.storage);
-  harness.storage.put = async (...args) => {
-    await originalPut(...args);
-    order.push('storage_committed');
-  };
+  const putsBefore = harness.storage.puts.length;
   const originalSerialize = player.serializeAttachment.bind(player);
   player.serializeAttachment = (attachment) => {
     originalSerialize(attachment);
@@ -5798,7 +5841,7 @@ test('heartbeat ACK follows durable liveness commit, attachment serialization, a
     const message = JSON.parse(rawMessage);
     if (message.type === 'heartbeat_ack') {
       assert.equal(player.deserializeAttachment().sequenceHighWater.heartbeat, 0);
-      assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+      assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
       order.push('ack_sent');
     }
     originalPlayerSend(rawMessage);
@@ -5815,11 +5858,11 @@ test('heartbeat ACK follows durable liveness commit, attachment serialization, a
   });
 
   assert.deepEqual(order, [
-    'storage_committed',
     'attachment_serialized',
     'control_relayed',
     'ack_sent',
   ]);
+  assert.equal(harness.storage.puts.length, putsBefore);
   const ack = messagesOfType(player, 'heartbeat_ack').at(-1);
   assert.deepEqual(Object.keys(ack), [
     'type',
@@ -5886,7 +5929,7 @@ test('standby heartbeat can lag the global lease and receives the current epoch 
   assert.equal(activation.targetPlayerInstanceId, 'player-b');
 });
 
-test('stale or disconnected active output durably refuses every run and test command without delivery', async () => {
+test('stale heartbeat keeps a live source commandable while a disconnected target is refused', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5899,47 +5942,47 @@ test('stale or disconnected active output durably refuses every run and test com
     lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
-  const putsBefore = harness.storage.puts.length;
-  const runCommands = [
-    ['load', { song: { id: 'stale-song', title: 'Stale song' } }],
-    ['play', {}],
-    ['pause', {}],
-    ['seek', { position: 5 }],
-    ['volume', { volume: 50 }],
-    ['stop', {}],
-  ];
-  for (const [type, payload] of runCommands) {
-    const commandId = `stale-${type}`;
-    await harness.send(control, {
-      type,
-      commandId,
-      entryId: 'stale-entry',
-      runId: 'stale-run',
-      leaseEpoch,
-      targetPlayerInstanceId: 'player-a',
-      controlEpoch: harness.session.protocolV2.controlEpoch,
-      payload,
-    });
-    const rejection = terminalResults(control, commandId)[0];
-    assert.equal(rejection.code, 'active_output_unavailable');
-    assert.equal(rejection.detail.reasonCode, 'target_heartbeat_stale');
-    assert.equal(messagesOfType(player, type).some((message) => message.commandId === commandId), false);
-  }
   await harness.send(control, {
-    type: 'start_test',
-    commandId: 'stale-start-test',
-    checkId: 'stale-check',
+    type: 'load',
+    commandId: 'stale-but-live-load',
+    entryId: 'stale-entry',
+    runId: 'stale-run',
     leaseEpoch,
     targetPlayerInstanceId: 'player-a',
     controlEpoch: harness.session.protocolV2.controlEpoch,
+    payload: { song: { id: 'stale-song', title: 'Stale song' } },
+  });
+  assert.equal(terminalResults(control, 'stale-but-live-load')[0].type, 'command_ack');
+  assert.equal(messagesOfType(player, 'load').some((message) => (
+    message.commandId === 'stale-but-live-load'
+  )), true);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+
+  const testHarness = createHarness();
+  const testControl = testHarness.socket('control');
+  const testPlayer = testHarness.socket('player');
+  await registerControl(testHarness, testControl);
+  await registerPlayer(testHarness, testPlayer);
+  const testLease = await activateOutput(testHarness, testControl);
+  await confirmOutputReady(testHarness, testPlayer, 'player-a', testLease);
+  testPlayer.serializeAttachment({
+    ...testPlayer.deserializeAttachment(),
+    lastSeenAt: Date.now() - 60_000,
+    runtime: { sourceActive: true },
+  });
+  await testHarness.send(testControl, {
+    type: 'start_test',
+    commandId: 'stale-but-live-start-test',
+    checkId: 'stale-check',
+    leaseEpoch: testLease,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: testHarness.session.protocolV2.controlEpoch,
     payload: { fixtureId: 'pcm-pulse-v1', durationMs: 1000 },
   });
-  assert.equal(terminalResults(control, 'stale-start-test')[0].code, 'active_output_unavailable');
-  assert.equal(messagesOfType(player, 'start_test').length, 0);
-  assert.equal(harness.storage.puts.length, putsBefore + 1);
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
-  assert.equal(harness.session.transport.status, 'unknown');
+  assert.equal(terminalResults(testControl, 'stale-but-live-start-test')[0].type, 'command_ack');
+  assert.equal(messagesOfType(testPlayer, 'start_test').length, 1);
+  assert.equal(testHarness.session.protocolV2.leaseStatus, 'ready');
 
   const disconnected = createHarness();
   const disconnectedControl = disconnected.socket('control');
@@ -5966,7 +6009,7 @@ test('stale or disconnected active output durably refuses every run and test com
   assert.equal(disconnected.session.protocolV2.leaseStatus, 'unknown');
 });
 
-test('a late active heartbeat latches unknown and a healthy OBS heartbeat restores the route without playback', async () => {
+test('late active heartbeats refresh telemetry without toggling an established OBS route', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5991,18 +6034,18 @@ test('a late active heartbeat latches unknown and a healthy OBS heartbeat restor
   };
   const putsBefore = harness.storage.puts.length;
   await harness.send(player, heartbeat);
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
-  assert.equal(harness.session.transport.status, 'unknown');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
+  assert.notEqual(harness.session.transport.status, 'unknown');
   assert.equal(player.deserializeAttachment().sequenceHighWater.heartbeat, 0);
   assert.equal(player.deserializeAttachment().runtime.sourceActive, true);
   assert.ok(findMessage(control, (message) => message.type === 'player_heartbeat'));
 
   await harness.send(player, { ...heartbeat, sequence: 1, monotonicTimeMs: 2 });
-  assert.equal(harness.storage.puts.length, putsBefore + 2);
+  assert.equal(harness.storage.puts.length, putsBefore);
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_reconnected');
-  assert.equal(harness.session.transport.status, 'ready');
+  assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_reconnected');
+  assert.notEqual(harness.session.transport.status, 'unknown');
   assert.equal(harness.session.protocolV2.activeFamily, null);
   assert.equal(harness.session.protocolV2.desiredTransport.status, 'idle');
   assert.equal(player.deserializeAttachment().sequenceHighWater.heartbeat, 1);
@@ -6173,7 +6216,7 @@ test('OBS eligibility requires sourceActive true while speaker eligibility keeps
   assert.equal(messagesOfType(speaker, 'activate_output').length, 1);
 });
 
-test('sourceActive true-to-false latches only the active target and excludes standby activation candidates', async () => {
+test('scene-inactive telemetry preserves an established route while still excluding new inactive candidates', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const active = harness.socket('player');
@@ -6201,6 +6244,7 @@ test('sourceActive true-to-false latches only the active target and excludes sta
   assert.equal(harness.storage.puts.length, putsBeforeStandby);
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
 
+  const putsBeforeActive = harness.storage.puts.length;
   await harness.send(active, {
     type: 'player_heartbeat',
     playerInstanceId: 'player-a',
@@ -6210,8 +6254,22 @@ test('sourceActive true-to-false latches only the active target and excludes sta
     monotonicTimeMs: 2,
     runtime: { sourceActive: false },
   });
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_source_inactive');
+  assert.equal(harness.storage.puts.length, putsBeforeActive);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_source_inactive');
+
+  await harness.send(control, {
+    type: 'load',
+    commandId: 'scene-inactive-load',
+    entryId: 'scene-inactive-entry',
+    runId: 'scene-inactive-run',
+    leaseEpoch,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: harness.session.protocolV2.controlEpoch,
+    payload: { song: { id: 'scene-inactive-song', title: 'Scene inactive song' } },
+  });
+  assert.equal(messagesOfType(active, 'load').length, 1);
+  assert.equal(terminalResults(control, 'scene-inactive-load')[0].type, 'command_ack');
 
   const inactiveCandidate = createHarness();
   const candidateControl = inactiveCandidate.socket('control');
@@ -6232,7 +6290,39 @@ test('sourceActive true-to-false latches only the active target and excludes sta
   assert.equal(messagesOfType(candidatePlayer, 'activate_output').length, 0);
 });
 
-test('stale or source-inactive targets still receive deactivate and emergency recovery commands', async () => {
+test('an older source-inactive latch recovers on the same live OBS socket even while the scene stays hidden', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  harness.session.protocolV2.leaseStatus = 'unknown';
+  harness.session.protocolV2.confirmedPlayback = {
+    status: 'unknown',
+    reasonCode: 'target_source_inactive',
+    playerInstanceId: 'player-a',
+    leaseEpoch,
+  };
+  harness.session.transport.status = 'unknown';
+
+  await harness.send(player, {
+    type: 'player_heartbeat',
+    playerInstanceId: 'player-a',
+    connectionId: player.deserializeAttachment().connectionId,
+    leaseEpoch,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    runtime: { sourceActive: false, sourceVisible: false },
+  });
+
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_reconnected');
+  assert.equal(harness.session.transport.status, 'ready');
+});
+
+test('telemetry-delayed or scene-inactive targets still receive deactivate and emergency recovery commands', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -6272,7 +6362,7 @@ test('stale or source-inactive targets still receive deactivate and emergency re
   assert.equal(harness.session.protocolV2.leaseStatus, 'emergency_stopping');
 });
 
-test('heartbeat liveness storage failure leaves attachment and relays untouched, then retries cleanly', async () => {
+test('late heartbeat remains storage-free even when the next durable write would fail', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -6295,26 +6385,19 @@ test('heartbeat liveness storage failure leaves attachment and relays untouched,
     runtime: { sourceActive: true },
   };
   const sessionBefore = structuredClone(harness.session);
-  const attachmentBefore = structuredClone(player.deserializeAttachment());
   const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
   const relaysBefore = messagesOfType(control, 'player_heartbeat').length;
   const acknowledgementsBefore = messagesOfType(player, 'heartbeat_ack').length;
   harness.storage.failNextPut = new Error('heartbeat_liveness_storage_failure');
 
-  await assert.rejects(harness.send(player, heartbeat), /heartbeat_liveness_storage_failure/);
+  await harness.send(player, heartbeat);
   assert.deepEqual(harness.session, sessionBefore);
-  assert.deepEqual(player.deserializeAttachment(), attachmentBefore);
   assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
-  assert.equal(messagesOfType(control, 'player_heartbeat').length, relaysBefore);
-  assert.equal(messagesOfType(player, 'heartbeat_ack').length, acknowledgementsBefore);
-
-  await harness.send(player, structuredClone(heartbeat));
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_heartbeat_stale');
-  assert.equal(player.deserializeAttachment().sequenceHighWater.heartbeat, 0);
   assert.equal(messagesOfType(control, 'player_heartbeat').length, relaysBefore + 1);
-  const retryAck = messagesOfType(player, 'heartbeat_ack').at(-1);
   assert.equal(messagesOfType(player, 'heartbeat_ack').length, acknowledgementsBefore + 1);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(player.deserializeAttachment().sequenceHighWater.heartbeat, 0);
+  const retryAck = messagesOfType(player, 'heartbeat_ack').at(-1);
   assert.deepEqual(retryAck, {
     type: 'heartbeat_ack',
     protocolVersion: 2,
@@ -6323,9 +6406,11 @@ test('heartbeat liveness storage failure leaves attachment and relays untouched,
     leaseEpoch,
     sequence: 0,
   });
+  assert.equal(harness.storage.failNextPut?.message, 'heartbeat_liveness_storage_failure');
+  harness.storage.failNextPut = null;
 });
 
-test('run liveness storage failure does not reject, cache, snapshot, or dispatch before retry', async () => {
+test('run durable storage failure leaves no command ghost and a retry still reaches a stale-heartbeat source', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -6360,9 +6445,9 @@ test('run liveness storage failure does not reject, cache, snapshot, or dispatch
   assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBefore);
 
   await harness.send(control, structuredClone(command));
-  assert.equal(terminalResults(control, command.commandId)[0].code, 'active_output_unavailable');
-  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
-  assert.equal(messagesOfType(player, 'load').length, 0);
+  assert.equal(terminalResults(control, command.commandId)[0].type, 'command_ack');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(messagesOfType(player, 'load').length, 1);
 });
 
 test('active socket close latches unknown only after its durable write succeeds', async () => {
