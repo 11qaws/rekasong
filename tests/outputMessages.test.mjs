@@ -201,8 +201,8 @@ test('route buttons reflect authoritative output and every blocked route remains
   );
   assert.match(
     dashboardSource,
-    /const selectedOutputMode = outputSwitchInFlight\s+\? outputSwitchTargetMode\s+: actualOutputMode;/,
-    'idle and blocked radios must use the actual route, not a queued bootstrap request',
+    /const selectedOutputMode = outputSwitchInFlight\s+\? outputSwitchTargetMode\s+: actualOutputMode === 'obs'\s+\? 'obs'\s+: outputModePreference;/,
+    'OBS remains authoritative while an inactive server route falls back to the local speaker preference',
   );
   assert.match(
     dashboardSource,
@@ -224,7 +224,7 @@ test('route buttons reflect authoritative output and every blocked route remains
   assert.match(dashboardSource, /failedOutputMode=\{failedOutputMode\}/);
 });
 
-test('initial output choice stays clickable and is queued until writable authority arrives', async () => {
+test('speaker stays clickable while OBS intent waits for writable authority', async () => {
   const [dashboardSource, panelSource] = await Promise.all([
     readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8'),
@@ -251,8 +251,23 @@ test('initial output choice stays clickable and is queued until writable authori
   );
   assert.match(
     dashboardSource,
-    /allowOutputSelectionWhileConnecting=\{outputBootstrapSelectionAvailable\}[\s\S]*?onSelectOutputMode=\{!outputControlRecoveryReason\s+&& !outputControlConflict\s+&& !outputControlUnavailable\s+&& \(outputControllerReady \|\| outputBootstrapSelectionAvailable\)/,
-    'the handler must be available during healthy bootstrap while remaining unavailable for unsafe authority states',
+    /allowOutputSelectionWhileConnecting=\{speakerPlayerMode \|\| outputBootstrapSelectionAvailable\}[\s\S]*?onSelectOutputMode=\{handleSelectOutputMode\}/,
+    'the local speaker handler stays available even when OBS control is still connecting',
+  );
+  assert.match(
+    dashboardSource,
+    /if \(mode === 'speaker'\) \{[\s\S]*?if \(!actualOutputMode\) return;[\s\S]*?selectLocalSpeakerMode\(\)/,
+    'speaker selection is immediate unless a real server-routed output must first be deactivated',
+  );
+  assert.match(
+    dashboardSource,
+    /else \{[\s\S]*?outputControlRecoveryRequired \|\| outputControlConflict[\s\S]*?showToast\(t\('onair\.output\.selector\.locked\.unavailable'\)/,
+    'OBS activation remains authority-gated inside the route handler',
+  );
+  assert.match(
+    dashboardSource,
+    /if \(activeRef\.current\?\.outputMode === 'speaker'\) \{[\s\S]*?onair\.output\.obs\.finishLocalTrackFirst/,
+    'a local song must finish before OBS can take over without breaking sync',
   );
   assert.match(panelSource, /aria-checked=\{isSelected\}[\s\S]*?aria-busy=\{isPending \|\| undefined\}/);
   assert.match(dashboardSource, /pendingOutputMode=\{queuedOutputIntent\?\.mode \?\? null\}/);

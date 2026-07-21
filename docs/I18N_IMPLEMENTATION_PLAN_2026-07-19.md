@@ -13,6 +13,13 @@
 - 기존 Dashboard·Widget 전체 문구와 정식 locale 선택기는 아직 이관하지 않았다. 빈 영어 catalog를 사용자에게 노출하지 않는다.
 - 이번 경량화 변경은 사용자 노출 문구를 새로 만들지 않았다. `DisplayWidget` 분리는 기존 JSX copy를 의미 변경 없이 이동했고, prefetch·resolver·성능 budget은 locale-neutral code와 개발자용 진단만 사용한다.
 
+2026-07-22 진행 갱신:
+
+- Speaker/OBS 경계, 출력 전환 경고, 독립 탭 안내, YouTube 탭/검색, 노래책 선택 affordance에 새로 추가하거나 의미를 바꾼 문구는 모두 semantic key로 이관하고 `ko`/`en`을 함께 작성했다.
+- `SearchPanel` 회귀 테스트가 해당 화면의 `t('…')` 키에 한국어·영어 catalog가 모두 존재하는지 검사한다.
+- 기본 문서 언어는 실제 UI와 동일한 `<html lang="ko">`로 유지한다.
+- 아직 남은 범위는 기존 Dashboard/Search/Staging/Widget의 하드코딩 문구 전체 이관, React locale store와 무새로고침 선택기, pseudo-locale/긴 문자열 검증이다. 검수되지 않은 불완전 영어 UI를 사용자에게 먼저 노출하지 않는 원칙은 유지한다.
+
 ## 1. 결정
 
 지금부터 새로 만들거나 의미를 수정하는 사용자 노출 텍스트는 번역 가능한 구조로 작성한다. 기존 화면 전체 이관은 OBS Protocol v2 작업을 막지 않도록 화면 단위로 진행한다.

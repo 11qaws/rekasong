@@ -5,9 +5,30 @@
 > 원칙: 앱 플레이어가 소리를 재생했다는 증거와 OBS 믹서·녹화·최종 방송에 소리가 들어갔다는 증거를 섞지 않는다.
 > 자동 검증이 통과해도 실제 OBS가 필요한 G3~G6은 완료로 표시하지 않는다.
 
+## 0. 2026-07-22 기준선 변경
+
+- **Speaker**는 일반 웹 플레이어다. 각 탭이 독립적으로 재생하고, Worker player 후보·단일 lease·heartbeat·다른 탭 control 상태 때문에 버튼이나 transport를 잠그지 않는다.
+- **OBS**만 서버가 관리하는 단일 출력 경로다. 정확히 한 OBS Browser Source, runtime sourceActive, 출력 lease, 실제 playback/stop 증거를 요구한다.
+- Speaker→OBS는 현재 로컬 곡을 끝내거나 버린 뒤에만 허용한다. OBS→Speaker는 OBS를 deactivate한 뒤 로컬 Speaker를 즉시 사용하며 서버 Speaker 경로를 새로 활성화하지 않는다.
+- OBS 제어 소켓이 일시적으로 끊겨도 재생 중인 로컬 media graph를 멈추지 않는다. 실제 OBS sourceActive/sourceVisible 상실은 즉시 물리 정지한다.
+- OBS heartbeat는 10초 간격, Worker stale은 60초다. heartbeat는 오디오 clock이 아니라 half-open 소켓 fallback이다.
+
+사용자 관점에서 현재 확정된 것:
+
+- 앱을 열면 복잡한 서버 경로 선택 없이 `스피커 송출 중`으로 시작한다.
+- Speaker는 여러 탭·창에서 각각 재생할 수 있고 한 탭의 충돌/복구 상태가 다른 탭을 잠그지 않는다.
+- 헤더에는 현재 출력과 설정만 남고, 경로 선택·OBS 점검·복구는 설정 안에 있다.
+- YouTube/Search/List/Setlink/Meloming 탭과 곡 목록은 키보드와 클릭으로 조작할 수 있다.
+
+아직 확정하지 않은 것:
+
+- OBS 믹서, 실제 녹화 트랙, 비공개 방송, 라이브 마이크↔MR 장시간 싱크는 실제 OBS 증거가 필요하다(G3~G6).
+- 모바일 OS별 백그라운드 정책이 로컬 Speaker의 실제 오디오를 얼마나 오래 유지하는지는 기기 수동 검증이 필요하다.
+- 전체 화면 번역, locale 선택기, pseudo-locale은 기반만 적용했고 전체 이관 전이다.
+
 ## 1. 이번 단계에서 자동으로 확정한 범위
 
-### 출력 경로 UI와 첫 연결
+### 출력 경로 UI와 첫 연결 (2026-07-22 이전 서버 Speaker 방식 — 이력)
 
 - 첫 화면의 `스피커`와 `OBS 방송` 버튼은 세션 준비 중에도 잠기지 않는다.
 - 첫 준비 과정에서 누른 최신 선택을 한 건만 기억하고, 이 탭의 쓰기 제어권이 확인된 뒤 한 번만 실행한다.
@@ -34,11 +55,11 @@
 ### 이미 완료된 방송 안전 검증
 
 - 단일 출력 lease, deactivate-before-activate, 중복 후보 차단, 다른 탭 제어권 분리.
-- 현재 페이지가 미리 만든 정확한 스피커 `playerInstanceId`만 첫 연결 대상으로 허용.
+- OBS는 정확한 단일 `playerInstanceId`만 연결 대상으로 허용. Dashboard Speaker는 더 이상 player 후보로 등록하지 않음.
 - OBS source active/visible 상실 즉시 실제 media pause·detach, 자동 재생 금지, 명시적 강한 정지 증거 뒤에만 안전 복구.
 - Protocol v2 실제 Chrome에서 8초 PCM fixture 재생, 16개 marker, waiting/stalled/error/backwards 0.
 - 10분 READY idle에서 long task 0, DOM mutation 0, 평균 main-thread CPU 0.199267%.
-- OBS 정적 경로 번들: raw 379,454B, gzip 114,460B, brotli 100,010B. 예산 raw 450KiB, gzip 130KiB 이내.
+- OBS 정적 경로 번들(2026-07-22): raw 380,775B, gzip 115,807B, brotli 101,470B. 예산 raw 450KiB, gzip 130KiB 이내.
 
 ## 2. 실제 OBS 없이는 끝낼 수 없는 필수 관문
 
@@ -63,14 +84,14 @@ G3에서 반드시 바꿔 보아야 할 항목:
 
 1. 별도 staging 계정 자격을 준비해 최신 Protocol v2 smoke와 safety smoke를 원격 Worker에서 재실행한다.
 2. 실제 Cloudflare Durable Object eviction/rehydration과 alarm 자동 delivery·retry 뒤 R2 정리까지 확인한다. 현재는 handler 시뮬레이션 증거만 있다.
-3. 배포 직후 공개 Pages에서 새 프로필 첫 스피커 클릭, OBS 미연결 실패, 버튼 재시도를 다시 확인한다.
+3. 배포 직후 공개 Pages에서 새 프로필의 즉시 Speaker 상태, 다중 탭 독립 재생, OBS 미연결 실패, OBS 연결 후 전환/복귀를 다시 확인한다.
 
 ### P1 — 장애·장시간·부하
 
 1. offline/online, WebSocket 1011, PC sleep/resume, background throttle를 실제 브라우저에 주입한다.
 2. 일반 Chrome 30분과 OBS CEF 60분 soak에서 crash, dropout, 중복 player, post-GC heap, working set을 기록한다.
 3. hint 교체와 곡 전환 100회: stale fetch 0, retained Blob 1개, aggregate Blob 예산 준수.
-4. 스피커↔OBS 전환 500회: control socket 1개, audible player 1개, 자동 fallback 0.
+4. Speaker↔OBS 전환 500회: OBS 전환 중 local/OBS 동시 audible 0, OBS control socket 1개, 자동 fallback 0. 여러 Speaker 탭의 독립 재생은 허용한다.
 5. history 1,000곡: 실제 render row 100 이하 또는 virtualization, 조작 p95 100ms 이하, localStorage 1MiB 이하.
 
 ### P1 — 리모컨 사용성

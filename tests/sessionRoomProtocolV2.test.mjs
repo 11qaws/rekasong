@@ -4938,7 +4938,7 @@ test('send failures count as zero delivery and never leave nonpersistent or stag
   assert.equal(emergencyHarness.session.protocolV2.confirmedPlayback.status, 'unknown');
 });
 
-test('heartbeat warning and stale thresholds use exact 499/500/1999/2000ms boundaries', async () => {
+test('heartbeat warning and stale thresholds use exact 29999/30000/59999/60000ms boundaries', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -4948,10 +4948,10 @@ test('heartbeat warning and stale thresholds use exact 499/500/1999/2000ms bound
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   const fixedNow = Date.now() + 10_000;
   const expected = [
-    [499, false, false],
-    [500, true, false],
-    [1999, true, false],
-    [2000, true, true],
+    [29_999, false, false],
+    [30_000, true, false],
+    [59_999, true, false],
+    [60_000, true, true],
   ];
   for (const [age, warning, stale] of expected) {
     const health = harness.room.playerHeartbeatHealth({ lastSeenAt: fixedNow - age }, fixedNow);
@@ -4976,7 +4976,7 @@ test('heartbeat warning and stale thresholds use exact 499/500/1999/2000ms bound
     Date.now = () => fixedNow;
     player.serializeAttachment({
       ...player.deserializeAttachment(),
-      lastSeenAt: fixedNow - 500,
+      lastSeenAt: fixedNow - 30_000,
       runtime: { sourceActive: true },
     });
     const snapshot = harness.room.protocolV2Snapshot(harness.session);
@@ -4987,13 +4987,13 @@ test('heartbeat warning and stale thresholds use exact 499/500/1999/2000ms bound
         heartbeatWarning: snapshotPlayer.heartbeatWarning,
         heartbeatStale: snapshotPlayer.heartbeatStale,
       },
-      { heartbeatAgeMs: 500, heartbeatWarning: true, heartbeatStale: false },
+      { heartbeatAgeMs: 30_000, heartbeatWarning: true, heartbeatStale: false },
     );
     assert.equal(snapshot.eligibleCandidates.obs.includes('player-a'), true);
 
-    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow - 1999 });
+    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow - 59_999 });
     assert.equal(harness.room.eligiblePlayerRecords('obs').length, 1);
-    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow - 2000 });
+    player.serializeAttachment({ ...player.deserializeAttachment(), lastSeenAt: fixedNow - 60_000 });
     assert.equal(harness.room.eligiblePlayerRecords('obs').length, 0);
     player.serializeAttachment({
       ...player.deserializeAttachment(),
@@ -5024,7 +5024,7 @@ test('speaker candidate remains eligible while its live socket heartbeat is thro
     Date.now = () => fixedNow;
     speaker.serializeAttachment({
       ...speaker.deserializeAttachment(),
-      lastSeenAt: fixedNow - 2_000,
+      lastSeenAt: fixedNow - 60_000,
       runtime: {},
     });
     assert.equal(harness.room.eligiblePlayerRecords('speaker').length, 1);
@@ -5051,7 +5051,13 @@ test('active output watchdog arms at the exact stale deadline without postponing
     harness.storage.alarm = null;
     const leaseEpoch = await activateOutput(harness, control);
     assert.equal(leaseEpoch, 1);
-    assert.equal(harness.storage.alarm, fixedNow + 2000);
+    await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+    // Simulate Cloudflare consuming the earlier route-transition alarm. Once
+    // the route is ready, the heartbeat watchdog owns the next deadline.
+    harness.storage.alarm = null;
+    harness.room.activeOutputHeartbeatAlarmKnown = false;
+    await harness.room.ensureActiveOutputHeartbeatAlarm(harness.session);
+    assert.equal(harness.storage.alarm, fixedNow + 60_000);
 
     const earlierGraceOrCleanupAlarm = fixedNow + 250;
     harness.storage.alarm = earlierGraceOrCleanupAlarm;
@@ -5063,7 +5069,7 @@ test('active output watchdog arms at the exact stale deadline without postponing
   }
 });
 
-test('watchdog latches an open active socket unknown at 2000ms but never at 1999ms', async () => {
+test('watchdog latches an open active socket unknown at 60000ms but never at 59999ms', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const player = harness.socket('player');
@@ -5081,15 +5087,15 @@ test('watchdog latches an open active socket unknown at 2000ms but never at 1999
   const putsBefore = harness.storage.puts.length;
   const snapshotsBefore = messagesOfType(control, 'player_snapshot').length;
   try {
-    Date.now = () => observedAt + 1999;
+    Date.now = () => observedAt + 59_999;
     harness.storage.alarm = null;
     await harness.room.alarm();
     assert.equal(harness.session.status, 'active');
     assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
     assert.equal(harness.storage.puts.length, putsBefore);
-    assert.equal(harness.storage.alarm, observedAt + 2000);
+    assert.equal(harness.storage.alarm, observedAt + 60_000);
 
-    Date.now = () => observedAt + 2000;
+    Date.now = () => observedAt + 60_000;
     harness.storage.alarm = null;
     await harness.room.alarm();
     assert.equal(harness.session.status, 'active');
@@ -5114,7 +5120,7 @@ test('watchdog storage failure publishes nothing and an alarm retry commits the 
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
   const sessionBefore = structuredClone(harness.session);
@@ -5173,7 +5179,7 @@ test('hibernation bootstrap preserves an earlier alarm and healthy heartbeats do
     await rehydratedRoom.alarm();
     assert.equal(rehydratedRoom.sessionState.status, 'active');
     assert.equal(rehydratedRoom.sessionState.protocolV2.leaseStatus, 'ready');
-    assert.equal(harness.storage.alarm, observedAt + 2100);
+    assert.equal(harness.storage.alarm, observedAt + 60_100);
     const callsAfterAlarm = harness.storage.getAlarmCalls;
 
     Date.now = () => observedAt + 300;
@@ -5187,7 +5193,7 @@ test('hibernation bootstrap preserves an earlier alarm and healthy heartbeats do
       runtime: { sourceActive: true },
     }));
     assert.equal(harness.storage.getAlarmCalls, callsAfterAlarm);
-    assert.equal(harness.storage.alarm, observedAt + 2100);
+    assert.equal(harness.storage.alarm, observedAt + 60_100);
     assert.equal(harness.storage.puts.length, putsBefore);
   } finally {
     Date.now = originalNow;
@@ -5204,7 +5210,7 @@ test('watchdog alarm queues behind route deactivation and cannot overwrite it wi
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
   const pausedWrite = pauseNextStoragePut(harness.storage);
@@ -5766,7 +5772,7 @@ test('heartbeat ACK follows durable liveness commit, attachment serialization, a
   const connectionId = player.deserializeAttachment().connectionId;
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
 
@@ -5890,7 +5896,7 @@ test('stale or disconnected active output durably refuses every run and test com
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
   const putsBefore = harness.storage.puts.length;
@@ -5971,7 +5977,7 @@ test('a late active heartbeat latches unknown and a healthy OBS heartbeat restor
   const connectionId = player.deserializeAttachment().connectionId;
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
   const heartbeat = {
@@ -6057,7 +6063,7 @@ test('speaker heartbeat throttling does not make the active media route unknown'
   const connectionId = speaker.deserializeAttachment().connectionId;
   speaker.serializeAttachment({
     ...speaker.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
   });
 
   await harness.send(speaker, {
@@ -6236,7 +6242,7 @@ test('stale or source-inactive targets still receive deactivate and emergency re
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: false },
   });
   await harness.send(control, {
@@ -6253,7 +6259,7 @@ test('stale or source-inactive targets still receive deactivate and emergency re
 
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: false },
   });
   await harness.send(control, {
@@ -6276,7 +6282,7 @@ test('heartbeat liveness storage failure leaves attachment and relays untouched,
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
   const heartbeat = {
@@ -6329,7 +6335,7 @@ test('run liveness storage failure does not reject, cache, snapshot, or dispatch
   await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
   player.serializeAttachment({
     ...player.deserializeAttachment(),
-    lastSeenAt: Date.now() - 2000,
+    lastSeenAt: Date.now() - 60_000,
     runtime: { sourceActive: true },
   });
   const command = {

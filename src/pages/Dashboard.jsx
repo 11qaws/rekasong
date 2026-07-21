@@ -21,7 +21,6 @@ import {
   isSafeOutputControlTakeover,
 } from '../lib/outputControlAuthority';
 import { deriveObsAudioCheckView } from '../lib/obsAudioCheckView';
-import { createPlayerPageIdentity } from '../lib/onAirClientState';
 import {
   getOutputMessage as t,
   outputSwitchFailureMessageKey,
@@ -45,7 +44,7 @@ import './Dashboard.css';
 
 const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;
 
-const DashboardSpeakerPlayerV2 = lazy(() => import('../components/DashboardSpeakerPlayerV2'));
+const DashboardLocalSpeaker = lazy(() => import('../components/DashboardLocalSpeaker'));
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
 const EMPTY_PREPARE_STATES = Object.freeze({});
@@ -112,8 +111,14 @@ export default function Dashboard() {
   const [queuedOutputIntent, setQueuedOutputIntent] = useState(null);
   const [outputControlRecoveryRequired, setOutputControlRecoveryRequired] = useState(false);
   const [outputControllerEverReady, setOutputControllerEverReady] = useState(false);
+  // Every dashboard tab starts as an ordinary local music player. OBS is an
+  // explicit opt-in for this visit; a stale browser preference must never make
+  // a returning listener wait for a broadcast route.
+  const [outputModePreference, setOutputModePreference] = useState('speaker');
+  const [localSpeakerState, setLocalSpeakerState] = useState('initializing');
   const outputIntentSequenceRef = useRef(0);
   const claimedOutputIntentRef = useRef(null);
+  const localSpeakerRef = useRef(null);
   const currentEntry = state?.currentEntry || null;
   const active = state?.active || null;
   const history = useMemo(() => Array.isArray(state?.history) ? state.history : [], [state?.history]);
@@ -124,11 +129,6 @@ export default function Dashboard() {
   // 설계라 원격 발행 payload에 절대 싣지 않는다(N-08).
 
   const onAirEventHandlerRef = useRef(null);
-  const dashboardSpeakerIdentityRef = useRef(null);
-  if (dashboardSpeakerIdentityRef.current === null) {
-    dashboardSpeakerIdentityRef.current = createPlayerPageIdentity();
-  }
-  const dashboardSpeakerIdentity = dashboardSpeakerIdentityRef.current;
   const onAir = useOnAirSession(
     (payload) => onAirEventHandlerRef.current?.(payload),
     { observeOnly: true }
@@ -142,7 +142,6 @@ export default function Dashboard() {
   const outputControl = useOnAirOutputControl({
     session: onAirSession,
     baseUrl: onAir.baseUrl,
-    dashboardSpeakerPlayerInstanceId: dashboardSpeakerIdentity.playerInstanceId,
     // Protocol v2 owns its control lease. A transient legacy observer reconnect
     // must not dispose that owner in the middle of a run.
     enabled: onAir.configured
@@ -151,6 +150,7 @@ export default function Dashboard() {
   });
   const sendOnAirCommand = outputControl.sendCommand;
   const selectOnAirOutputMode = outputControl.selectOutputMode;
+  const selectLocalSpeakerMode = outputControl.selectLocalSpeakerMode;
   const retryOnAirOutputControl = outputControl.retryConnection;
   const playbackTransitionState = outputControl.playbackTransitionState;
   const outputControlAuthority = deriveOutputControlAuthority(outputControl.snapshot);
@@ -209,103 +209,9 @@ export default function Dashboard() {
     return () => window.clearTimeout(timer);
   }, [outputControllerReady, queuedOutputIntent, retryOnAirOutputControl]);
 
-  // A control-socket rebuild must not tear down a healthy speaker player that
-  // this page already owned. A page that has never held authority still cannot
-  // create a second speaker candidate, and an authoritative foreign-owner or
-  // unknown-ready observation immediately retires the old player.
-  const dashboardSpeakerOwnershipRef = useRef({
-    sessionKey: null,
-    held: false,
-    controlInstanceId: null,
-    controlEpoch: null,
-    retiredAtControlEpoch: null,
-  });
-  const dashboardSpeakerOwnerChannelRef = useRef(null);
-  const [, forceDashboardSpeakerOwnershipRender] = useState(0);
   const outputControlSessionKey = onAirSession?.room && onAirSession?.controlToken
     ? `${onAirSession.room}:${onAirSession.controlToken}`
     : null;
-  if (dashboardSpeakerOwnershipRef.current.sessionKey !== outputControlSessionKey) {
-    dashboardSpeakerOwnershipRef.current = {
-      sessionKey: outputControlSessionKey,
-      held: false,
-      controlInstanceId: null,
-      controlEpoch: null,
-      retiredAtControlEpoch: null,
-    };
-  }
-  if (!outputControlSessionKey || ['invalid', 'ended'].includes(onAirSessionState)) {
-    dashboardSpeakerOwnershipRef.current.held = false;
-  } else if (outputControllerReady) {
-    const observedControlEpoch = outputControl.snapshot?.playerSnapshot?.controlLease?.controlEpoch;
-    const retiredAtControlEpoch = dashboardSpeakerOwnershipRef.current.retiredAtControlEpoch;
-    const authorityAdvanced = Number.isSafeInteger(observedControlEpoch)
-      && Number.isSafeInteger(retiredAtControlEpoch)
-      && observedControlEpoch > retiredAtControlEpoch;
-    if (retiredAtControlEpoch === null || authorityAdvanced) {
-      dashboardSpeakerOwnershipRef.current.held = true;
-      dashboardSpeakerOwnershipRef.current.retiredAtControlEpoch = null;
-    }
-    dashboardSpeakerOwnershipRef.current.controlInstanceId =
-      outputControl.snapshot?.welcome?.controlInstanceId ?? null;
-    dashboardSpeakerOwnershipRef.current.controlEpoch =
-      Number.isSafeInteger(observedControlEpoch) ? observedControlEpoch : null;
-  } else if (outputControlConflict
-    || (outputControlUnavailable && outputConnectionState === 'ready')) {
-    dashboardSpeakerOwnershipRef.current.held = false;
-  }
-  const shouldHostDashboardSpeaker = dashboardSpeakerOwnershipRef.current.held;
-  const dashboardSpeakerControlInstanceId =
-    dashboardSpeakerOwnershipRef.current.controlInstanceId;
-  const preservingDashboardSpeakerDuringReconnect = Boolean(
-    shouldHostDashboardSpeaker && !outputControllerReady && outputControlSessionKey,
-  );
-
-  // Native cross-tab notice retires a disconnected former owner's speaker as
-  // soon as another tab becomes authoritative. The timer is the lightweight
-  // fallback for browsers without BroadcastChannel and bounds orphan lifetime.
-  useEffect(() => {
-    if (!onAirSession?.room || typeof globalThis.BroadcastChannel !== 'function') return undefined;
-    const channel = new globalThis.BroadcastChannel(`rekasong-output-owner:${onAirSession.room}`);
-    dashboardSpeakerOwnerChannelRef.current = channel;
-    channel.onmessage = (event) => {
-      const nextOwnerId = event?.data?.controlInstanceId;
-      const current = dashboardSpeakerOwnershipRef.current;
-      if (!current.held || typeof nextOwnerId !== 'string'
-        || nextOwnerId === current.controlInstanceId) return;
-      current.held = false;
-      current.retiredAtControlEpoch = Number.isSafeInteger(event?.data?.controlEpoch)
-        ? event.data.controlEpoch
-        : current.controlEpoch;
-      forceDashboardSpeakerOwnershipRender((revision) => revision + 1);
-    };
-    return () => {
-      if (dashboardSpeakerOwnerChannelRef.current === channel) {
-        dashboardSpeakerOwnerChannelRef.current = null;
-      }
-      channel.close();
-    };
-  }, [onAirSession?.room]);
-
-  useEffect(() => {
-    if (!outputControllerReady || !dashboardSpeakerControlInstanceId) return;
-    dashboardSpeakerOwnerChannelRef.current?.postMessage({
-      controlInstanceId: dashboardSpeakerControlInstanceId,
-      controlEpoch: dashboardSpeakerOwnershipRef.current.controlEpoch,
-    });
-  }, [dashboardSpeakerControlInstanceId, outputControllerReady]);
-
-  useEffect(() => {
-    if (!preservingDashboardSpeakerDuringReconnect) return undefined;
-    const ownershipKey = outputControlSessionKey;
-    const timer = window.setTimeout(() => {
-      const current = dashboardSpeakerOwnershipRef.current;
-      if (current.sessionKey !== ownershipKey || !current.held) return;
-      current.held = false;
-      forceDashboardSpeakerOwnershipRender((revision) => revision + 1);
-    }, 8_000);
-    return () => window.clearTimeout(timer);
-  }, [outputControlSessionKey, preservingDashboardSpeakerDuringReconnect]);
   const actualOutputMode = outputControl.actualOutputMode;
   const outputSwitchStatus = outputControl.outputSwitchState?.status || 'idle';
   const outputSwitchTargetMode = ['speaker', 'obs'].includes(
@@ -323,7 +229,10 @@ export default function Dashboard() {
   // still using the previous output.
   const selectedOutputMode = outputSwitchInFlight
     ? outputSwitchTargetMode
-    : actualOutputMode;
+    : actualOutputMode === 'obs'
+      ? 'obs'
+      : outputModePreference;
+  const speakerPlayerMode = selectedOutputMode !== 'obs' && actualOutputMode !== 'obs';
   const failedOutputMode = outputSwitchStatus === 'blocked'
     ? outputSwitchTargetMode
     : null;
@@ -331,26 +240,35 @@ export default function Dashboard() {
   const activeOutputCandidates = actualOutputMode
     ? outputControl.snapshot?.playerSnapshot?.eligibleCandidates?.[actualOutputMode]
     : null;
-  const outputRouteStable = Boolean(
-    outputControllerReady
-    && actualOutputMode
-    && outputControl.requestedOutputMode === actualOutputMode
-    && outputSwitchStatus === 'idle'
-    && Array.isArray(activeOutputCandidates)
-    && (actualOutputMode === 'speaker'
-      ? activeOutputCandidates.includes(activeOutputLease?.leaseTarget)
-      : activeOutputCandidates.length === 1
-        && activeOutputCandidates[0] === activeOutputLease?.leaseTarget)
-  );
-  const outputSwitchUiState = outputControlConflict
-    ? 'conflict'
-    : outputControlUnavailable
-      ? 'blocked'
-      : !outputControllerReady
-        ? 'connecting'
+  const outputRouteStable = speakerPlayerMode
+    ? (!useOnAirPlayer || !['failed', 'invalid_configuration'].includes(localSpeakerState))
+    : Boolean(
+      outputControllerReady
+      && actualOutputMode === 'obs'
+      && outputControl.requestedOutputMode === actualOutputMode
+      && outputSwitchStatus === 'idle'
+      && Array.isArray(activeOutputCandidates)
+      && activeOutputCandidates.length === 1
+      && activeOutputCandidates[0] === activeOutputLease?.leaseTarget
+    );
+  const outputSwitchUiState = speakerPlayerMode
+    ? (outputSwitchInFlight ? 'switching' : 'idle')
+    : outputControlConflict
+      ? 'conflict'
+      : outputControlUnavailable
+        ? 'blocked'
+        : !outputControllerReady
+          ? 'connecting'
     : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
       ? 'switching'
       : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
+  const playbackOutputView = speakerPlayerMode
+    ? {
+      ...outputControl.outputView,
+      statusCode: 'speaker_local',
+      messageKey: 'onair.output.status.speaker.localReady',
+    }
+    : outputControl.outputView;
   const obsAudioCheck = deriveObsAudioCheckView({
     snapshot: outputControl.snapshot,
     actualOutputMode,
@@ -480,6 +398,17 @@ export default function Dashboard() {
   const activeRef = useRef(active);
   activeRef.current = active;
 
+  const playbackModeForRun = () => activeRef.current?.outputMode === 'obs'
+    ? 'obs'
+    : 'speaker';
+
+  const dispatchPlaybackCommand = (command, outputMode = playbackModeForRun()) => {
+    if (outputMode === 'obs') return sendOnAirCommand(command);
+    const localSpeaker = localSpeakerRef.current;
+    if (!localSpeaker) throw new Error(t('playback.localSpeaker.notReady'));
+    return localSpeaker.sendCommand(command);
+  };
+
   const isCurrentRun = (marker) => Boolean(
     marker && activeRef.current &&
     activeRef.current.entryId === marker.entryId &&
@@ -557,12 +486,12 @@ export default function Dashboard() {
     if (['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase)) return;
     if (useOnAirPlayer) {
       try {
-        sendOnAirCommand({
+        Promise.resolve(dispatchPlaybackCommand({
           type: 'seek',
           sessionId: currentEntry?.entryId,
           runId: activeRef.current?.runId,
           position: time
-        });
+        })).catch((error) => showToast(error.message, 'error'));
         setCurrentTime(time);
       } catch (error) {
         showToast(error.message, 'error');
@@ -856,21 +785,37 @@ export default function Dashboard() {
   const lastPrefetchSentRef = useRef('');
   useEffect(() => {
     if (!useOnAirPlayer) return;
+    if (speakerPlayerMode && localSpeakerState === 'ready') {
+      if (lastPrefetchSentRef.current === `speaker:${prefetchTargetIds}`) return;
+      lastPrefetchSentRef.current = `speaker:${prefetchTargetIds}`;
+      Promise.resolve(localSpeakerRef.current?.sendCommand({
+        type: 'prefetch',
+        videoIds: prefetchTargetIds ? prefetchTargetIds.split(' ') : [],
+      })).catch(() => {});
+      return;
+    }
     if (!outputControllerReady) {
       // 위젯이 새로 붙으면(OBS 재시작 포함) 캐시가 비어 있으므로,
       // 재연결 시 같은 목록이라도 다시 보내도록 기억을 지운다.
       lastPrefetchSentRef.current = '';
       return;
     }
-    if (lastPrefetchSentRef.current === prefetchTargetIds) return;
+    if (lastPrefetchSentRef.current === `obs:${prefetchTargetIds}`) return;
     try {
       // 빈 목록도 보낸다 — 위젯이 더는 필요 없는 blob을 회수하는 신호다.
       sendOnAirCommand({ type: 'prefetch', videoIds: prefetchTargetIds ? prefetchTargetIds.split(' ') : [] });
-      lastPrefetchSentRef.current = prefetchTargetIds;
+      lastPrefetchSentRef.current = `obs:${prefetchTargetIds}`;
     } catch {
       // 소켓 미연결 등 — 프리페치는 최적화일 뿐이라 다음 상태 변화에서 다시 시도한다.
     }
-  }, [useOnAirPlayer, outputControllerReady, prefetchTargetIds, sendOnAirCommand]);
+  }, [
+    localSpeakerState,
+    outputControllerReady,
+    prefetchTargetIds,
+    sendOnAirCommand,
+    speakerPlayerMode,
+    useOnAirPlayer,
+  ]);
 
   // Stage 4 (INV-8, D-31): 창 닫힘 시 참조 중인 blob을 revoke해 메모리 누수를
   // 막는다. 상태는 localStorage에 남으므로 다음 로드에서 Stage 1의 로컬 곡
@@ -898,15 +843,15 @@ export default function Dashboard() {
 
   // Toast notifications
   const [toasts, setToasts] = useState([]);
-  const dismissToast = (id) => {
+  const dismissToast = useCallback((id) => {
     setToasts(prev => prev.filter(toast => toast.id !== id));
-  };
+  }, []);
 
-  const showToast = (message, type = 'info', action = null) => {
+  const showToast = useCallback((message, type = 'info', action = null) => {
     const id = Date.now().toString() + '-' + Math.random().toString(36).slice(2, 7);
     setToasts(prev => [...prev, { id, message, type, action }]);
     setTimeout(() => dismissToast(id), action ? 5000 : 3000);
-  };
+  }, [dismissToast]);
 
   // A fresh dashboard is also a speaker player, so it needs a session even
   // before the user opens OBS setup or stages a song. Rotate one proven-stale
@@ -919,6 +864,10 @@ export default function Dashboard() {
     const recoverableEndedSession = onAirSessionState === 'ended'
       && !explicitSessionEndRequestedRef.current;
     if (recoverableInvalidSession || recoverableEndedSession) {
+      // Session rotation replaces media credentials and therefore remounts the
+      // local resolver. Never let that maintenance stop an already-buffered
+      // speaker track; recover as soon as its run leaves the player instead.
+      if (activeRef.current?.outputMode === 'speaker') return;
       // One automatic rotation per page lifetime prevents the replacement
       // session from being rotated again during the invalid→connecting render gap.
       if (!onAirSessionRecoveryGate.claim()) return;
@@ -945,6 +894,8 @@ export default function Dashboard() {
     onAirSession,
     onAirSessionState,
     recoverOnAirConnection,
+    showToast,
+    active?.outputMode,
     useOnAirPlayer,
   ]);
 
@@ -958,11 +909,46 @@ export default function Dashboard() {
     } catch (error) {
       reportFailure(error);
     }
-  }, [selectOnAirOutputMode]);
+  }, [selectOnAirOutputMode, showToast]);
 
   const handleSelectOutputMode = useCallback((mode) => {
     if (!['speaker', 'obs'].includes(mode)) return;
-    if (outputControlRecoveryRequired) return;
+    if (mode === 'speaker') {
+      setOutputModePreference('speaker');
+      setQueuedOutputIntent(null);
+      setOutputControlRecoveryRequired(false);
+      // With no server-routed output, this tab is already a complete local
+      // player. If OBS (or a legacy remote speaker) is active, stop that route
+      // first to prevent double audio; no speaker candidate is ever activated.
+      if (!actualOutputMode) return;
+      if (outputControlRecoveryRequired || outputControlConflict
+        || outputControlUnavailable || !outputControllerReady) {
+        showToast(t('onair.output.localSpeaker.stopObsFirst'), 'info');
+        return;
+      }
+      const reportFailure = (error) => showToast(
+        t(outputSwitchFailureMessageKey(error)),
+        'error',
+      );
+      try {
+        Promise.resolve(selectLocalSpeakerMode()).catch(reportFailure);
+      } catch (error) {
+        reportFailure(error);
+      }
+      return;
+    } else {
+      if (activeRef.current?.outputMode === 'speaker') {
+        showToast(t('onair.output.obs.finishLocalTrackFirst'), 'info');
+        return;
+      }
+      if (outputControlRecoveryRequired || outputControlConflict
+        || outputControlUnavailable
+        || (!outputControllerReady && !outputBootstrapSelectionAvailable)) {
+        showToast(t('onair.output.selector.locked.unavailable'), 'info');
+        return;
+      }
+      setOutputModePreference('obs');
+    }
     outputIntentSequenceRef.current += 1;
     // Accept the user's route choice during the first session/control
     // bootstrap. It stays a visibly pending intent, never an aria-checked
@@ -972,36 +958,16 @@ export default function Dashboard() {
       mode,
       sessionKey: outputControlSessionKey,
     });
-  }, [outputControlRecoveryRequired, outputControlSessionKey]);
-
-  // A normal dashboard is a web player first. Once output control is ready,
-  // make the speaker route the first choice unless an existing route or an
-  // explicit user intent already exists. OBS remains opt-in through settings.
-  const defaultSpeakerSelectionSessionRef = useRef(null);
-  useEffect(() => {
-    if (!useOnAirPlayer
-      || !outputControllerReady
-      || actualOutputMode
-      || outputSwitchInFlight
-      || queuedOutputIntent
-      || outputControlConflict
-      || outputControlUnavailable
-      || outputControlRecoveryRequired
-      || !outputControlSessionKey
-      || defaultSpeakerSelectionSessionRef.current === outputControlSessionKey) return;
-    defaultSpeakerSelectionSessionRef.current = outputControlSessionKey;
-    handleSelectOutputMode('speaker');
   }, [
     actualOutputMode,
-    handleSelectOutputMode,
+    outputBootstrapSelectionAvailable,
     outputControlConflict,
     outputControlRecoveryRequired,
     outputControlSessionKey,
     outputControlUnavailable,
     outputControllerReady,
-    outputSwitchInFlight,
-    queuedOutputIntent,
-    useOnAirPlayer,
+    selectLocalSpeakerMode,
+    showToast,
   ]);
 
   useEffect(() => {
@@ -1047,7 +1013,7 @@ export default function Dashboard() {
       );
     }
     // eslint 참고: showToast는 setToasts만 사용하는 안정적 로직이다.
-  }, [syncLoadNotice]);
+  }, [showToast, syncLoadNotice]);
 
   const [room] = useState(() => getOrCreateRoom());
   const [signingKeys, setSigningKeys] = useState(null);
@@ -1107,7 +1073,7 @@ export default function Dashboard() {
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
+  }, [showToast]);
 
   const handleSelectSearchResult = (video) => {
     const replacedStagedItem = Boolean(stagedItem);
@@ -1281,7 +1247,8 @@ export default function Dashboard() {
     // 진실성 게이트(모든 재생 시작 경로 공통 — 대기열 바로 재생·재시도·자동 다음
     // 곡 포함): player 위젯이 실제로 연결돼 있지 않으면 run 을 만들지 않는다.
     // 모든 호출자가 catch→토스트로 처리한다.
-    if (useOnAirPlayer && actualOutputMode !== 'speaker' && !outputRouteStable) {
+    const runOutputMode = actualOutputMode === 'obs' ? 'obs' : 'speaker';
+    if (useOnAirPlayer && runOutputMode === 'obs' && !outputRouteStable) {
       throw new Error(t('onair.output.playback.routeNotConfirmed'));
     }
     const runId = newId();
@@ -1290,7 +1257,7 @@ export default function Dashboard() {
     if (useOnAirPlayer) {
       // OnAirPlayer가 song.src(videoId)로 준비된 오디오 URL을 스스로 구성하므로
       // (자기 player 토큰 사용) load 명령의 프로토콜은 변경 없다.
-      sendOnAirCommand({
+      const command = {
         type: 'load',
         sessionId: entry.entryId, // On-Air 프로토콜의 sessionId = entryId 매핑
         entryId: entry.entryId,
@@ -1298,19 +1265,45 @@ export default function Dashboard() {
         song: toLegacySong(entry),
         position: 0,
         volume
-      });
+      };
+      const dispatchLoad = () => {
+        // A local cached source can become ready in the same task. Wait until
+        // React has committed this run marker so its first PLAYING evidence
+        // cannot arrive before the dashboard knows which run owns it.
+        if (runOutputMode === 'speaker' && activeRef.current?.runId !== runId) return;
+        let operation;
+        try {
+          operation = dispatchPlaybackCommand(command, runOutputMode);
+        } catch (error) {
+          operation = Promise.reject(error);
+        }
+        Promise.resolve(operation).catch((error) => {
+          window.setTimeout(() => {
+            handleMediaFailureRef.current?.(
+              { entryId: entry.entryId, runId },
+              runOutputMode === 'obs'
+                ? t('onair.output.playback.source')
+                : t('playback.localSpeaker.source'),
+              error?.message || t('playback.localSpeaker.loadFailed'),
+            );
+          }, 0);
+        });
+      };
+      if (runOutputMode === 'speaker') window.setTimeout(dispatchLoad, 0);
+      else dispatchLoad();
     }
-    return { entryId: entry.entryId, runId, phase: 'starting' };
+    return { entryId: entry.entryId, runId, phase: 'starting', outputMode: runOutputMode };
   };
 
   // 재생 출력 정지(다음 곡 없음). On-Air 명령 실패는 호출자가 처리한다.
   const stopPlaybackOutput = ({ stoppingEntryId, stoppingRunId } = {}) => {
     if (useOnAirPlayer) {
-      sendOnAirCommand({
+      const operation = dispatchPlaybackCommand({
         type: 'stop',
         sessionId: stoppingEntryId || currentEntry?.entryId,
         runId: stoppingRunId || activeRef.current?.runId
       });
+      Promise.resolve(operation).catch((error) => showToast(error.message, 'error'));
     }
     setIsPlaying(false);
     setCurrentTime(0);
@@ -1699,7 +1692,7 @@ export default function Dashboard() {
     const act = activeRef.current;
     if (act && act.entryId === current.entryId && act.phase === 'discarding') return;
 
-    if (useOnAirPlayer) {
+    if (useOnAirPlayer && playbackModeForRun() === 'obs') {
       // Keep the song visible until the exact v2 strong-stop event proves that
       // audio is paused, detached, autoplay-cancelled, and non-audible.
       try {
@@ -1717,6 +1710,34 @@ export default function Dashboard() {
         'discarding',
         { discardRequested: true }
       );
+      return;
+    } else if (useOnAirPlayer) {
+      commitActivePhase(
+        { entryId: current.entryId, runId: act?.runId },
+        'discarding',
+        { discardRequested: true },
+      );
+      try {
+        Promise.resolve(dispatchPlaybackCommand({
+          type: 'stop',
+          sessionId: current.entryId,
+          runId: act?.runId,
+        }, 'speaker')).then(() => {
+          finalizeDiscardRef.current?.({ entryId: current.entryId, runId: act?.runId });
+        }).catch(() => {
+          commitActivePhaseRef.current?.(
+            { entryId: current.entryId, runId: act?.runId },
+            'failed',
+            { failureDetail: t('playback.discard.stopRequestFailed') },
+          );
+        });
+      } catch {
+        commitActivePhaseRef.current?.(
+          { entryId: current.entryId, runId: act?.runId },
+          'failed',
+          { failureDetail: t('playback.discard.stopRequestFailed') },
+        );
+      }
       return;
     } else {
       // 직접 재생(로컬·프록시 오디오): 같은 페이지의 요소라 정지를 동기로 확정할
@@ -1745,7 +1766,7 @@ export default function Dashboard() {
       showToast(t('playback.discard.confirmationTimeout'), 'error');
     }, 8000);
     return () => window.clearTimeout(timeout);
-  }, [active?.discardRequested, active?.entryId, active?.phase, active?.runId]);
+  }, [active?.discardRequested, active?.entryId, active?.phase, active?.runId, showToast]);
 
   useEffect(() => {
     const latest = activeRef.current;
@@ -1845,11 +1866,11 @@ export default function Dashboard() {
     if (activeRef.current?.phase === 'starting' || isPhaseLocked()) return;
     if (useOnAirPlayer) {
       try {
-        sendOnAirCommand({
+        Promise.resolve(dispatchPlaybackCommand({
           type: isPlaying ? 'pause' : 'play',
           sessionId: entry.entryId,
           runId: activeRef.current?.runId
-        });
+        })).catch((error) => showToast(error.message, 'error'));
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1875,12 +1896,12 @@ export default function Dashboard() {
     setVolume(clamped);
     if (useOnAirPlayer && currentEntry) {
       try {
-        sendOnAirCommand({
+        Promise.resolve(dispatchPlaybackCommand({
           type: 'volume',
           sessionId: currentEntry.entryId,
           runId: activeRef.current?.runId,
           volume: clamped
-        });
+        })).catch((error) => showToast(error.message, 'error'));
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1933,12 +1954,34 @@ export default function Dashboard() {
   };
   handleMediaFailureRef.current = handleMediaFailure;
 
+  const handleLocalSpeakerEvidence = (evidence) => {
+    const act = activeRef.current;
+    if (!act || act.outputMode !== 'speaker' || act.runId !== evidence?.runId) return;
+    const marker = { entryId: act.entryId, runId: act.runId };
+    if (Number.isFinite(evidence.mediaTime)) setCurrentTime(evidence.mediaTime);
+    if (Number.isFinite(evidence.duration)) setDuration(evidence.duration);
+    if (evidence.type === 'playing') handleConfirmedPlaying(marker);
+    if (evidence.type === 'paused') handleConfirmedPaused(marker);
+    if (evidence.type === 'buffering') {
+      handlePlaybackDelay(marker, t('playback.localSpeaker.source'));
+    }
+    if (evidence.type === 'ended') handleConfirmedEnded(marker, 'natural');
+    if (evidence.type === 'error') {
+      handleMediaFailure(
+        marker,
+        t('playback.localSpeaker.source'),
+        evidence.code || t('playback.localSpeaker.loadFailed'),
+      );
+    }
+  };
+
   // A v2 LOAD transition is fail-closed. If its authoritative route proof is
   // lost while the UI is still waiting for the first PLAY confirmation, make
   // the run explicitly retryable instead of leaving it stuck on “preparing”.
   useEffect(() => {
     const act = activeRef.current;
-    if (!useOnAirPlayer || act?.phase !== 'starting' || outputRouteStable) return;
+    if (!useOnAirPlayer || act?.outputMode !== 'obs'
+      || act?.phase !== 'starting' || outputRouteStable) return;
     handleMediaFailureRef.current?.(
       { entryId: act.entryId, runId: act.runId },
       t('onair.output.playback.source'),
@@ -1949,6 +1992,7 @@ export default function Dashboard() {
   useEffect(() => {
     const act = activeRef.current;
     if (playbackTransitionState?.status !== 'failed'
+      || act?.outputMode !== 'obs'
       || act?.phase !== 'starting'
       || playbackTransitionState.entryId !== act.entryId
       || playbackTransitionState.runId !== act.runId) return;
@@ -2008,6 +2052,10 @@ export default function Dashboard() {
   togglePlaybackRef.current = handleTogglePlayback;
   onAirEventHandlerRef.current = (payload) => {
     if (payload.type === 'snapshot' || payload.type === 'transport') {
+      // Legacy observer snapshots describe the Worker/OBS transport. A local
+      // speaker run owns its own timeline and must never be paused, restored,
+      // or relabelled by a late remote snapshot.
+      if (actualOutputMode !== 'obs' && activeRef.current?.outputMode !== 'obs') return;
       const remoteTransport = payload.transport || {};
       const remoteSong = remoteTransport.song;
       if (remoteSong?.id && remoteSong.id !== lastDiscardedEntryIdRef.current) {
@@ -2039,6 +2087,7 @@ export default function Dashboard() {
       // Protocol v2 reports the runId; the legacy observer reports entryId.
       // Never let a late event from the previous run mutate the current song.
       const act = activeRef.current;
+      if (act?.outputMode !== 'obs') return;
       const eventIdentityMatches = payload.protocolVersion === 2
         ? act?.runId === String(event.sessionId || '')
         : act?.entryId === String(event.sessionId || '');
@@ -2076,6 +2125,11 @@ export default function Dashboard() {
         return;
       }
 
+      if (activeRef.current?.outputMode === 'speaker') {
+        showToast(t('onair.session.ended.localSpeakerContinues'), 'info');
+        return;
+      }
+
       // Unexpected expiry/disconnect only retires runtime state. Put the
       // interrupted song back at the front so its metadata and ordering stay
       // recoverable after the user creates a new On-Air connection.
@@ -2108,7 +2162,6 @@ export default function Dashboard() {
       <header className="dashboard-header">
         <div className="dashboard-branding">
           <h1 className="logo">Rekasong</h1>
-        <p className="subtitle">방송용 노래 검색 · 재생 · OBS 위젯 제어</p>
         </div>
         <div id="dashboard-output-route-bar" className="dashboard-output-route-bar" aria-label={t('onair.output.region.label')} />
       </header>
@@ -2146,27 +2199,21 @@ export default function Dashboard() {
             canEndBroadcastSession={canEndBroadcastSession}
             outputMode={selectedOutputMode}
             pendingOutputMode={queuedOutputIntent?.mode ?? null}
-            actualOutputMode={actualOutputMode}
+            actualOutputMode={speakerPlayerMode ? 'speaker' : actualOutputMode}
             failedOutputMode={failedOutputMode}
-            outputView={outputControl.outputView}
-            outputControlConflict={outputControlConflict}
-            outputControlUnavailable={outputControlUnavailable}
-            outputControlRecoveryReason={outputControlRecoveryReason}
+            outputView={playbackOutputView}
+            outputControlConflict={speakerPlayerMode ? false : outputControlConflict}
+            outputControlUnavailable={speakerPlayerMode ? false : outputControlUnavailable}
+            outputControlRecoveryReason={speakerPlayerMode ? null : outputControlRecoveryReason}
             outputControlSafeToTakeOver={outputControlSafeToTakeOver}
             outputControlTakeover={outputControl.snapshot?.pendingTakeover ?? null}
-            outputControlRecoveryRequired={outputControlRecoveryRequired}
+            outputControlRecoveryRequired={speakerPlayerMode ? false : outputControlRecoveryRequired}
             outputRouteStable={outputRouteStable}
             outputSwitchState={outputSwitchUiState}
             outputSwitchReasonCode={outputControl.outputSwitchState?.reasonCode ?? null}
             obsAudioCheck={obsAudioCheck}
-            allowOutputSelectionWhileConnecting={outputBootstrapSelectionAvailable}
-            onSelectOutputMode={!outputControlRecoveryReason
-              && !outputControlConflict
-              && !outputControlUnavailable
-              && (outputControllerReady || outputBootstrapSelectionAvailable)
-              && !outputControlRecoveryRequired
-              ? handleSelectOutputMode
-              : undefined}
+            allowOutputSelectionWhileConnecting={speakerPlayerMode || outputBootstrapSelectionAvailable}
+            onSelectOutputMode={handleSelectOutputMode}
             onStartObsAudioCheck={outputControl.startTest}
             onStopObsAudioCheck={outputControl.stopTest}
             onEmergencyStopOutput={outputControl.emergencyStop}
@@ -2245,13 +2292,15 @@ export default function Dashboard() {
           모드에서는 beginPlaybackRun이 YouTube run 생성 자체를 막는다(blocked).
           iframe 등 광고가 나갈 수 있는 폴백 경로는 존재하지 않는다. */}
       <div className="live-players-hidden">
-        {useOnAirPlayer && shouldHostDashboardSpeaker && onAirSession?.room && onAirSession?.playerToken && (
+        {useOnAirPlayer && onAirSession?.room && onAirSession?.playerToken && (
           <Suspense fallback={null}>
-            <DashboardSpeakerPlayerV2
+            <DashboardLocalSpeaker
+              ref={localSpeakerRef}
               apiBaseUrl={onAir.baseUrl}
               room={onAirSession.room}
               token={onAirSession.playerToken}
-              identity={dashboardSpeakerIdentity}
+              onEvidence={handleLocalSpeakerEvidence}
+              onStateChange={setLocalSpeakerState}
             />
           </Suspense>
         )}

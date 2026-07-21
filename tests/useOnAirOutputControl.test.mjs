@@ -345,6 +345,42 @@ test('explicit authority takeover delegates once without replaying route or play
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
 });
 
+test('local speaker mode needs no Worker player candidate when every remote route is inactive', () => {
+  const snapshot = coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [], obs: ['obs-player'] },
+  }));
+  const { controller, coordinators } = createHarness(snapshot);
+
+  assert.deepEqual(controller.selectLocalSpeakerMode(), {
+    status: 'already_local',
+    mode: 'speaker',
+  });
+  assert.equal(
+    coordinators[0].calls.some(([name]) => ['activateOutput', 'deactivateOutput'].includes(name)),
+    false,
+  );
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+});
+
+test('local speaker mode only deactivates OBS and never activates a speaker candidate', () => {
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(readyRoute('obs', {
+    eligibleCandidates: { speaker: [], obs: ['obs-player'] },
+  })));
+
+  controller.selectLocalSpeakerMode();
+  assert.deepEqual(coordinators[0].calls, [['deactivateOutput']]);
+  assert.equal(
+    controller.getState().outputSwitchState.status,
+    ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING,
+  );
+
+  coordinators[0].emit(coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [], obs: ['obs-player'] },
+  })));
+  assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+  assert.equal(coordinators[0].calls.some(([name]) => name === 'activateOutput'), false);
+});
+
 test('registry preserves one session owner across StrictMode cleanup/setup', () => {
   const scheduled = [];
   const created = [];

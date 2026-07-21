@@ -505,6 +505,63 @@ export class OnAirOutputController {
     }
   }
 
+  /**
+   * Leave every server-routed output inactive before the dashboard starts its
+   * browser-local speaker. Unlike selectOutputMode('speaker'), this operation
+   * does not require or activate a dashboard-speaker candidate. Multiple tabs
+   * may therefore listen locally without becoming Worker player candidates.
+   */
+  selectLocalSpeakerMode() {
+    this.#assertUsable();
+    try {
+      this.#assertControlReady();
+      if (this.#switchIntent || this.#snapshot.pendingSwitch) {
+        throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_PENDING, {});
+      }
+      const lease = this.#snapshot.playerSnapshot.lease;
+      if (lease.status === 'inactive') {
+        this.#switchIntent = null;
+        this.#clearSwitchWatchdog();
+        this.#switchState = outputSwitchState();
+        this.#publish();
+        return Object.freeze({ status: 'already_local', mode: ON_AIR_OUTPUT_MODES.SPEAKER });
+      }
+      this.#assertNoActiveWork();
+      if (!ACTIVE_LEASE_STATES.has(lease.status)) {
+        return this.#blockAndThrow(ON_AIR_OUTPUT_CONTROL_CODES.LEASE_NOT_SWITCHABLE, {
+          status: lease.status,
+          mode: ON_AIR_OUTPUT_MODES.SPEAKER,
+        });
+      }
+      this.#switchIntent = {
+        targetMode: ON_AIR_OUTPUT_MODES.SPEAKER,
+        phase: ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING,
+        deactivateOnly: true,
+      };
+      this.#switchState = outputSwitchState(
+        ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING,
+        ON_AIR_OUTPUT_MODES.SPEAKER,
+      );
+      this.#armSwitchWatchdog(
+        ON_AIR_OUTPUT_MODES.SPEAKER,
+        ON_AIR_OUTPUT_SWITCH_STATUSES.DEACTIVATING,
+      );
+      this.#publish();
+      try {
+        return this.#coordinator.deactivateOutput();
+      } catch (error) {
+        this.#failSwitch(error?.code || ON_AIR_OUTPUT_CONTROL_CODES.LEASE_NOT_SWITCHABLE);
+        throw error;
+      }
+    } catch (error) {
+      if (error instanceof OnAirOutputControlError
+        && this.#switchState.status !== ON_AIR_OUTPUT_SWITCH_STATUSES.BLOCKED) {
+        this.#setBlocked(error.code, ON_AIR_OUTPUT_MODES.SPEAKER);
+      }
+      throw error;
+    }
+  }
+
   sendCommand(command) {
     this.#assertUsable();
     this.#assertControlReady();
@@ -1120,6 +1177,12 @@ export class OnAirOutputController {
           return;
         }
         if (lease.status === 'inactive') {
+          if (intent.deactivateOnly === true) {
+            this.#switchIntent = null;
+            this.#clearSwitchWatchdog();
+            this.#switchState = outputSwitchState();
+            return;
+          }
           this.#assertNoActiveWork();
           const candidates = this.#snapshot?.playerSnapshot?.eligibleCandidates?.[intent.targetMode];
           // Recovery from a disconnected speaker lease can reach `inactive`
@@ -1398,6 +1461,10 @@ export function useOnAirOutputControl({
     (mode) => requireController().selectOutputMode(mode),
     [requireController],
   );
+  const selectLocalSpeakerMode = useCallback(
+    () => requireController().selectLocalSpeakerMode(),
+    [requireController],
+  );
   const sendCommand = useCallback(
     (command) => requireController().sendCommand(command),
     [requireController],
@@ -1430,6 +1497,7 @@ export function useOnAirOutputControl({
   return {
     ...state,
     selectOutputMode,
+    selectLocalSpeakerMode,
     sendCommand,
     retryConnection,
     emergencyStop,

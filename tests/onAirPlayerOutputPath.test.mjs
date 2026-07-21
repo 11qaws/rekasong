@@ -97,28 +97,41 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
   assert.ok(spreadIndex >= 0 && fixedKindIndex > spreadIndex, 'fixed clientKind must override caller props');
 });
 
-test('dashboard speaker ownership and released-owner reconnect stay authority-gated', async () => {
+test('dashboard speaker is browser-local while OBS control reconnect stays bounded', async () => {
   const dashboardPath = fileURLToPath(new URL('../src/pages/Dashboard.jsx', import.meta.url));
   const source = await readFile(dashboardPath, 'utf8');
 
   await transformWithOxc(source, dashboardPath, { lang: 'jsx' });
 
   assert.match(source, /const outputControllerReady = outputControlAuthority\.writable;/);
-  assert.match(source, /dashboardSpeakerIdentityRef\.current = createPlayerPageIdentity\(\)/);
+  assert.doesNotMatch(source, /dashboardSpeakerIdentityRef|createPlayerPageIdentity/);
   assert.match(
     source,
-    /dashboardSpeakerPlayerInstanceId: dashboardSpeakerIdentity\.playerInstanceId/,
+    /const DashboardLocalSpeaker = lazy\(\(\) => import\('\.\.\/components\/DashboardLocalSpeaker'\)\)/,
   );
-  assert.match(source, /identity=\{dashboardSpeakerIdentity\}/);
   assert.match(
     source,
-    /\{useOnAirPlayer && shouldHostDashboardSpeaker && onAirSession\?\.room && onAirSession\?\.playerToken && \(/,
-    'only the page-lifetime authority owner may host the dashboard speaker player',
+    /<DashboardLocalSpeaker[\s\S]*?ref=\{localSpeakerRef\}[\s\S]*?onEvidence=\{handleLocalSpeakerEvidence\}/,
+    'the dashboard must host its own local player without a Worker route lease',
   );
-  assert.match(source, /const dashboardSpeakerOwnershipRef = useRef\(\{[\s\S]*?sessionKey: null,[\s\S]*?held: false,[\s\S]*?controlInstanceId: null,/);
-  assert.match(source, /else if \(outputControlConflict\s+\|\| \(outputControlUnavailable && outputConnectionState === 'ready'\)\) \{\s+dashboardSpeakerOwnershipRef\.current\.held = false;/);
-  assert.match(source, /new globalThis\.BroadcastChannel\(`rekasong-output-owner:\$\{onAirSession\.room\}`\)/);
-  assert.match(source, /if \(!preservingDashboardSpeakerDuringReconnect\) return undefined;[\s\S]*?\}, 8_000\);/);
+  assert.doesNotMatch(source, /DashboardSpeakerPlayerV2|shouldHostDashboardSpeaker|rekasong-output-owner/);
+  assert.match(source, /const selectLocalSpeakerMode = outputControl\.selectLocalSpeakerMode;/);
+  assert.match(
+    source,
+    /const handleSeek = \(time\) => \{[\s\S]*?if \(useOnAirPlayer\) \{[\s\S]*?dispatchPlaybackCommand\(\{[\s\S]*?type: 'seek'/,
+    'local speaker seek must use the local transport instead of the legacy hidden media ref',
+  );
+  assert.match(source, /if \(!actualOutputMode\) return;[\s\S]*?Promise\.resolve\(selectLocalSpeakerMode\(\)\)/);
+  assert.match(
+    source,
+    /if \(actualOutputMode !== 'obs' && activeRef\.current\?\.outputMode !== 'obs'\) return;/,
+    'late Worker transport snapshots must not overwrite a browser-local speaker timeline',
+  );
+  assert.match(
+    source,
+    /if \(activeRef\.current\?\.outputMode === 'speaker'\) return;[\s\S]*?onAirSessionRecoveryGate\.claim\(\)/,
+    'session credential rotation must wait until an already-buffered local track leaves the player',
+  );
   assert.match(source, /const releasedOwnerRetryRef = useRef\(null\);/);
   assert.match(
     source,

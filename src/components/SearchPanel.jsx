@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp } from 'lucide-react';
+import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
 import { readTitleEventStream } from '../lib/titleStream';
+import { getOutputMessage as t } from '../copy/outputMessages';
 
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
 
@@ -48,6 +49,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [setlinkSearch, setSetlinkSearch] = useState('');
   const fileInputRef = useRef(null);
   const playlistTitleAbortRef = useRef(null);
+  const youtubePlaylistCatalogRef = useRef(youtubePlaylistCatalog);
+  youtubePlaylistCatalogRef.current = youtubePlaylistCatalog;
   
   const melo = useMeloming(melomingChannelId);
   const setlink = useSetlink(setlinkCatalog);
@@ -111,14 +114,15 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
   useEffect(() => {
     playlistTitleAbortRef.current?.abort();
-    if (!youtubePlaylistCatalog.length) {
+    const currentCatalog = youtubePlaylistCatalogRef.current;
+    if (!currentCatalog.length) {
       setPlaylistTitleProgress({ total: 0, completed: 0, active: false });
       return undefined;
     }
 
     const controller = new AbortController();
     playlistTitleAbortRef.current = controller;
-    const sourceSongs = youtubePlaylistCatalog.map((song) => ({ ...song }));
+    const sourceSongs = currentCatalog.map((song) => ({ ...song }));
 
     const updatePlaylistSong = (sourceId, patch) => {
       setSharedStateRef.current((previous) => ({
@@ -181,7 +185,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const runYoutubeSearch = async (searchQuery) => {
     if (!searchQuery.trim()) return;
 
-    const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
+    const ytRegex = /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i;
     const match = searchQuery.match(ytRegex);
     if (match) {
       const videoId = match[1];
@@ -252,7 +256,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           catalogSong.sourceId === sourceId ? { ...catalogSong, title, titleStatus: 'ready' } : catalogSong
         ))
       }));
-    } catch (error) {
+    } catch {
       setSharedStateRef.current((previous) => ({
         ...previous,
         youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
@@ -435,7 +439,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           <Search className="search-icon" size={18} />
           <input 
             type="text" 
-            placeholder="가수명, 곡명 또는 유튜브 URL을 입력하세요"
+            placeholder={t('search.youtube.placeholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="glass-input search-input"
@@ -443,14 +447,19 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           />
         </div>
         <button type="submit" className="btn-primary" disabled={isSearching || !query.trim()}>
-          {isSearching ? <><Loader2 className="spinner" size={18} /> 검색중</> : '검색'}
+          {isSearching ? <><Loader2 className="spinner" size={18} /> {t('search.youtube.searching')}</> : t('search.youtube.action')}
         </button>
       </form>
 
       <div className="search-results">
         {results.map((v) => (
           <div key={v.id} className="result-item" style={{position:'relative'}}>
-            <div style={{display:'flex', width:'100%', cursor:'pointer'}} onClick={() => selectYoutubeResult(v)}>
+            <button
+              type="button"
+              className="result-select-button"
+              onClick={() => selectYoutubeResult(v)}
+              aria-label={t('search.result.select', { title: v.title })}
+            >
               <img 
                 src={v.thumbnail || 'https://via.placeholder.com/120x68/333/fff?text=No+Image'} 
                 alt="thumbnail" 
@@ -461,7 +470,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 <div className="result-title">{v.title}</div>
                 <div className="result-meta">{v.channelTitle} • {v.durationText}</div>
               </div>
-            </div>
+              <ChevronRight size={18} className="result-select-chevron" aria-hidden="true" />
+            </button>
           </div>
         ))}
         {isSearching && results.length === 0 && (
@@ -473,21 +483,21 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         )}
         {!isSearching && results.length === 0 && query === '' && (
           <div className="composer-search-hint">
-            곡명 또는 YouTube URL을 입력하세요. 로컬 MR은 아래에서 바로 추가할 수 있어요.
+            {t('search.youtube.emptyHint')}
           </div>
         )}
         {results.length === 0 && !isSearching && query !== '' && !error && (
           <div className="empty-state" style={{padding:'2rem 1rem', color:'var(--accent-red)'}}>
             <span style={{fontSize:'1.5rem', display:'block', marginBottom:'0.5rem'}}>🤷‍♂️</span>
-            검색 결과가 없습니다.<br/>
-            (정확한 유튜브 URL을 직접 붙여넣어 보세요)
+            {t('search.youtube.noResults')}<br/>
+            ({t('search.youtube.noResultsHint')})
           </div>
         )}
         {error && (
           <div className="empty-state" style={{padding:'2rem 1rem', color:'var(--accent-red)'}}>
             <span style={{fontSize:'1.5rem', display:'block', marginBottom:'0.5rem'}}>⚠️</span>
-            검색 서버와 통신할 수 없습니다.<br/>
-            잠시 후 다시 시도해주세요.
+            {t('search.youtube.serverError')}<br/>
+            {t('search.youtube.tryAgain')}
           </div>
         )}
       </div>
@@ -657,7 +667,13 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 : 'MR 연결 없음';
             return (
             <div key={song.id} className="result-item songbook-item">
-              <div className="songbook-copy">
+              <button
+                type="button"
+                className="songbook-copy"
+                onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
+                disabled={!isTitleReady}
+                aria-label={t('search.songbook.select', { title: displayTitle })}
+              >
                 <div className={`songbook-title ${isTitleReady ? '' : 'is-pending'}`}>{displayTitle}</div>
                 <div className="songbook-artist">{song.artist}</div>
                 {song.tags && song.tags.length > 0 && (
@@ -670,7 +686,12 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 <div className={`songbook-mr-state ${hasLinkedMr ? 'is-linked' : ''}`}>
                   {mrStateLabel}
                 </div>
-              </div>
+                {isTitleReady && (
+                  <span className="songbook-select-hint">
+                    {t('search.songbook.selectHint')} <ChevronRight size={14} aria-hidden="true" />
+                  </span>
+                )}
+              </button>
               <div className="songbook-actions">
                 {canRetryTitle ? (
                   <button
@@ -735,44 +756,44 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             className={`tab-btn source-tab ${activeTab === 'youtube' ? 'active' : ''}`}
             data-source="youtube"
             aria-pressed={activeTab === 'youtube'}
-            title="유튜브 검색"
+            title={t('search.tab.youtubeSearch')}
             onClick={() => handleTabChange('youtube')}
           >
             <Search size={14} aria-hidden="true" />
-            <span className="source-tab-label">유튜브 검색</span>
-          </button>
-          <button
-            type="button"
-            className={`tab-btn source-tab ${activeTab === 'meloming' ? 'active' : ''}`}
-            data-source="meloming"
-            aria-pressed={activeTab === 'meloming'}
-            title="멜로밍"
-            onClick={() => handleTabChange('meloming')}
-          >
-            <Music size={14} aria-hidden="true" />
-            <span className="source-tab-label">멜로밍</span>
+            <span className="source-tab-label">{t('search.tab.youtubeSearch')}</span>
           </button>
           <button
             type="button"
             className={`tab-btn source-tab ${activeTab === 'youtube-playlist' ? 'active' : ''}`}
             data-source="youtube-playlist"
             aria-pressed={activeTab === 'youtube-playlist'}
-            title="YouTube 목록"
+            title={t('search.tab.youtubeList')}
             onClick={() => handleTabChange('youtube-playlist')}
           >
             <Link size={14} aria-hidden="true" />
-            <span className="source-tab-label">YouTube 목록</span>
+            <span className="source-tab-label">{t('search.tab.youtubeList')}</span>
           </button>
           <button
             type="button"
             className={`tab-btn source-tab ${activeTab === 'setlink' ? 'active' : ''}`}
             data-source="setlink"
             aria-pressed={activeTab === 'setlink'}
-            title="Setlink"
+            title={t('search.tab.setlink')}
             onClick={() => handleTabChange('setlink')}
           >
             <Link size={14} aria-hidden="true" />
-            <span className="source-tab-label">Setlink</span>
+            <span className="source-tab-label">{t('search.tab.setlink')}</span>
+          </button>
+          <button
+            type="button"
+            className={`tab-btn source-tab ${activeTab === 'meloming' ? 'active' : ''}`}
+            data-source="meloming"
+            aria-pressed={activeTab === 'meloming'}
+            title={t('search.tab.meloming')}
+            onClick={() => handleTabChange('meloming')}
+          >
+            <Music size={14} aria-hidden="true" />
+            <span className="source-tab-label">{t('search.tab.meloming')}</span>
           </button>
         </div>
       </header>

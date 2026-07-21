@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   ON_AIR_V2_CONNECTION_CODES,
   ON_AIR_V2_CONNECTION_STATES,
+  ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS,
+  ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS,
   OnAirV2Connection,
 } from '../src/lib/onAirV2Connection.js';
 import { ON_AIR_CLIENT_STATE_CODES } from '../src/lib/onAirClientState.js';
@@ -16,6 +18,11 @@ import {
   validateOnAirMessage,
   validateOnAirPlayerCommand,
 } from '../src/lib/onAirProtocol.js';
+
+test('production player heartbeats are diagnostics, not a per-second audio clock', () => {
+  assert.equal(ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS, 10_000);
+  assert.equal(ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS, 30_000);
+});
 
 class FakeSocket {
   readyState = 0;

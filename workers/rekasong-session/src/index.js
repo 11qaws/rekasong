@@ -5,8 +5,12 @@ const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 const PREPARE_LEASE_MS = 120 * 1000;
 const PROTOCOL_V2 = 2;
-const PLAYER_HEARTBEAT_WARNING_MS = 500;
-const PLAYER_HEARTBEAT_STALE_MS = 2 * 1000;
+// Heartbeats are a half-open-transport fallback, not an audio clock. Native
+// WebSocket close and OBS source-active callbacks remain immediate signals;
+// allowing six missed 10s beats prevents throttling from tearing down a live
+// broadcast and cuts idle Worker messages by 90%.
+const PLAYER_HEARTBEAT_WARNING_MS = 30 * 1000;
+const PLAYER_HEARTBEAT_STALE_MS = 60 * 1000;
 // The dashboard gives a route switch 12 seconds before surfacing a local
 // timeout. Keep the same bounded window authoritative in the Durable Object so
 // a missing terminal player event cannot leave the shared lease transitional
@@ -1030,7 +1034,7 @@ export class SessionRoom {
     return this.livePlayerRecords(excluded).filter(({ attachment }) => {
       if (mode === 'speaker') {
         // Speaker playback is a normal browser media route. Mobile background
-        // tabs, PiP and BFCache can pause/throttle its 5s heartbeat while the
+        // tabs, PiP and BFCache can pause/throttle its low-rate heartbeat while the
         // WebSocket and audio element remain alive. Candidate eligibility is
         // therefore based on the live socket for speakers; OBS keeps the
         // strict heartbeat gate below because its browser-source attestation

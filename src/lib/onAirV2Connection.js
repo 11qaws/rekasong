@@ -82,8 +82,8 @@ export const ON_AIR_V2_CONNECTION_CODES = Object.freeze({
 // an audio clock; four frames per second from every idle source needlessly
 // consumes the Worker WebSocket message budget.
 export const ON_AIR_V2_HEARTBEAT_INTERVAL_MS = 250;
-export const ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS = 1_000;
-export const ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS = 5_000;
+export const ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS = 10_000;
+export const ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS = 30_000;
 export const ON_AIR_V2_LIVENESS_WARNING_MS = 500;
 export const ON_AIR_V2_LIVENESS_UNKNOWN_MS = 2_000;
 
