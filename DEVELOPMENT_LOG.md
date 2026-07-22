@@ -496,4 +496,5 @@
 - 소스 참조가 0개인 구형 `LivePanel.jsx`를 제거했다. 이 화면에 남아 있던 하드코딩 문구와 사용하지 않는 애니메이션 유지보수 표면도 함께 사라졌다.
 - 소스 import가 0개인 `firebase` 직접 의존성을 제거해 설치 트리에서 84개 패키지를 줄였다. 공개 Dashboard/OBS 번들은 원래 Firebase를 포함하지 않아 런타임 동작과 OBS bundle byte 수는 변하지 않는다.
 - 첫 Pages 작업은 깨끗한 `npm ci`에서 Rolldown의 선택적 WASM fallback이 요구하는 `@emnapi/core`/`@emnapi/runtime` peer 레코드가 lockfile에 없다고 중단됐다. `npm uninstall`이 Firebase 트리와 함께 공유된 선택적 peer 레코드까지 제거한 것이 원인이었다. Firebase를 되살리지 않고 두 optional peer lock 레코드만 복원했으며, 빈 검증 디렉터리의 `npm ci --ignore-scripts`로 lockfile 재현성을 확인했다.
+- 수정 배포 `743ac9a`의 GitHub Pages 작업은 clean install, 634개 테스트, lint, Worker 문법, build, OBS budget, publish를 모두 통과했다. CDN Last-Modified는 `2026-07-22 06:34:36Z`로 갱신됐고, 런타임 코드가 의도대로 동일해 main/CSS 자산 hash는 유지됐다. 게시 뒤 공개 스모크도 다시 통과했다.
 - 검증: 자동 테스트 634/634, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, whitespace, 공개·로컬 Dashboard smoke, OBS 정적 closure budget(raw 382,301B / gzip 116,110B / brotli 101,713B)을 통과했다.

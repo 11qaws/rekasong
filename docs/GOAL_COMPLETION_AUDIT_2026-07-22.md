@@ -25,7 +25,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | Dashboard 대량 이력 trace |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | 자동 계약 완료 | 현재 후보 배포됨 | 실제 브라우저 performance trace |
 
-현재 공개 Pages의 애플리케이션 코드는 frontend `0.2.4` / `7a31155` 기준이며, 그 뒤에는 검증 기록만 추가됐다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 634/634와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
+현재 공개 Pages의 release 기준은 frontend `0.2.5` / `743ac9a`다. 실제 런타임 UI는 검증된 `7a31155` 이후 동작을 유지하면서 공개 Dashboard smoke와 불필요 의존성 정리를 추가했다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 634/634와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
@@ -124,7 +124,7 @@
 
 - 닫힌 이전 재생 곡은 DOM 행 0개, 최초 개방은 최근 100개다. 1,000곡 원본을 유지한 채 100곡씩만 확장하며, 닫으면 다시 100곡 window로 초기화한다.
 - 반복 가능한 공개 Dashboard 스모크가 새 격리 Chrome에서 Speaker 기본값과 두 출력 버튼의 활성 상태, YouTube 단일 상위 소스, 한·영 전환·새로고침 지속성, 320/375/768/1100px의 머리핀·금발 선·가로 overflow를 검사한다.
-- 공개 냉시작 실측: DCL 약 499ms, 초기 자원 289,872B 전송 / 1,018,946B decode, DOM 125개, 72ms long task 1개. 캐시 재방문은 DCL 약 28ms, long task 0개였다.
+- 공개 냉시작 2회 실측: DCL 약 499~536ms, 초기 자원 289,872B 전송 / 1,018,946B decode, DOM 125~127개, 67~72ms long task 1개. 캐시 재방문은 DCL 약 25~28ms, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.2MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
 - 전체 테스트: 634/634 통과.
@@ -140,7 +140,7 @@
 
 ## 7. 배포 완료와 다음 관문
 
-1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.4` / `7a31155` 배포를 완료했다.
+1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.5` / `743ac9a` 배포를 완료했다.
 2. GitHub Pages workflow와 production 자산 응답, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
 3. 실제 OBS G3, G4, source hide/show, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.

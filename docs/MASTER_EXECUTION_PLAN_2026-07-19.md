@@ -44,7 +44,7 @@
 
 ### 2.3 Codex
 
-- 공개 애플리케이션 코드 기준은 frontend `0.2.4` / `7a31155`이며, 이후 `master`에는 검증 기록만 추가됐다. production Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 배포했다.
+- 공개 release 기준은 frontend `0.2.5` / `743ac9a`다. 런타임 UI는 검증된 `7a31155` 이후 동작을 유지하면서 공개 Dashboard smoke와 의존성 정리를 추가했다. production Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 배포했다.
 - Protocol v2, Worker lease/identity/fence, 공통 PlaybackEngine, source resolver, deterministic fixture, coordinator, v2 OBS player, bounded prefetch, route split, 로컬 Speaker 분리, 번역 구조와 점진 OBS 설정을 구현했다.
 - production Worker 경로와 staging 경로를 env로 다시 분리했고 production 산출물에 staging URL이 섞이지 않는지 검사했다.
 - 최신 검증 결과:
@@ -54,6 +54,7 @@
   - OBS v2 선택 artifact raw `382,301B`, gzip `116,110B`, budget PASS.
   - v2 브라우저 cold-route 전송 `115,317B`, 초기 DOM 15개, 외부 font 요청 0.
   - 4Hz heartbeat 10초 동안 DOM mutation 0, React-facing coordinator publish 0.
+  - 공개 Dashboard 냉시작 2회: 289,872B 전송 / 1,018,946B decode, DOM 125~127개, JS heap 약 9.1MiB. 320~1100px 한국어·영어 hairpin/금발 선/설정 dialog와 Speaker 기본값·출력 버튼을 자동 smoke로 확인했다.
 - 과거 staging smoke 11/11과 10초 blob 재생은 초기 인수 증거로 보존하되 현재 Protocol v2/실제 OBS 증거로 승격하지 않는다.
 - 실제 OBS G3 mixer, G4 녹화 artifact, source hide/show와 CEF 60분 재생은 통과했다. 사용자의 실제 청취, ingest/VOD G5와 마이크↔MR G6는 미검증이다.
 
@@ -96,7 +97,7 @@ OBS
 | `127.0.0.1:5000`, `:5001` | Node listener 동작 중 | 로컬 frontend 접근 가능 |
 | `127.0.0.1:5100` | listener 없음 | 별도 preview는 종료됨 |
 | OBS | OBS 30.2.0 프로세스 1개 동작, 4455 listener 없음 | 수동 UI 검증 가능, obs-websocket 자동화는 미사용 |
-| GitHub Pages | application source `7a31155`, 후속 docs-only workflow 성공, HTTP 200 | frontend `0.2.4` 자산 hash 유지 |
+| GitHub Pages | release `743ac9a`, workflow `29897176475` 성공, HTTP 200 | frontend `0.2.5`; 런타임 동작 동일로 자산 hash 유지 |
 | `rekasong.pages.dev` | root/search HTTP 200 | production API 도달 가능 |
 | prod/staging Worker | root 404, 보호 audio 401 | production DO session은 실제 OBS CEF 60분으로 검증됨 |
 | VPS prepare service | active | **현재 target=staging** |

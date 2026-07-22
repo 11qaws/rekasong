@@ -16,7 +16,7 @@
 
 > 작업 범위: `D:\Agents\rekasong\Codex\workspace`만 수정했다.
 > 판정 원칙: 실제 OBS CEF·mixer·녹화·stream artifact가 없는 상태를 “OBS 송출 확인 완료”로 표시하지 않는다.
-> 배포 상태: frontend `0.2.4` / commit `7a31155`, Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 production에 배포했다.
+> 배포 상태: frontend `0.2.5` / release commit `743ac9a`, Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 production에 배포했다. v0.2.5는 공개 Dashboard UX·성능 smoke와 의존성 정리이며 런타임 UI 자산 hash는 유지된다.
 
 ## 1. 현재 결론
 
