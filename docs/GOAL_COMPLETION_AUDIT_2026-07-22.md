@@ -25,11 +25,11 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | Dashboard 대량 이력 trace |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | 자동 계약 완료 | 현재 후보 배포됨 | 실제 브라우저 performance trace |
 
-현재 공개 Pages는 frontend `0.2.4` / commit `7a31155`, production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73` 기준이다. 전체 테스트 634/634와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
+현재 공개 Pages의 애플리케이션 코드는 frontend `0.2.4` / `7a31155` 기준이며, 그 뒤에는 검증 기록만 추가됐다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 634/634와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
-- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 `Last-Modified: 2026-07-22 13:25:08 KST`, 메인 자산은 `assets/index-ByvWPOkp.js`, Dashboard CSS는 `assets/Dashboard-B_MsAqnr.css`다. 공개 `master`와 로컬 HEAD는 `7a31155`다.
+- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-ByvWPOkp.js`, Dashboard CSS는 `assets/Dashboard-B_MsAqnr.css`다. 문서 전용 후속 커밋에서도 애플리케이션 자산 hash는 그대로 유지됐다.
 - 공개 Worker의 현재 활성 배포는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 이 Worker와 공개 Pages 조합으로 실제 OBS CEF 60분 재생을 통과했다.
 - 공개 Worker 루트의 HTTP 404는 장애가 아니라 루트 라우트를 제공하지 않는 현재 설계다. 세션·WebSocket·미디어 API는 `/v1/...` 아래에서만 제공한다.
 - 공개 첫 화면은 Speaker 기본과 `스피커 송출 중`을 유지하고, OBS 전용 설정은 톱니 안에서 OBS를 선택한 사용자에게 점진적으로 노출한다.
