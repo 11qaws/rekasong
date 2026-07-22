@@ -11,6 +11,9 @@
 - production preview smoke는 기본 Speaker, YouTube 단일 상위 소스+Search/Playlist, Setlink, Meloming, 한·영 reload, 320/375/768/1100px, 320px 설정, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류와 ntfy 요청은 0, warm DCL `24.8ms`, long task 0, JS heap 약 `7.87MiB`였다.
 - v0.2.21 commit `128f977eb835d70fcd44dbb57da575658f3f29d1`을 배포했다. Pages workflow `29955448969`는 clean install·709 tests·lint·Worker 문법·production build·OBS budget·artifact upload·deploy를 모두 통과했다. 공개 main/Dashboard는 `index-nTobOpEa.js` / `Dashboard-CVlr6ZcZ.js`이며 Dashboard 자산에 새 setup 상태·candidate reason·connection-preparing key가 실제 포함됐다.
 - 공개 격리 smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 모바일 설정, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `25.8ms`, long task 0, JS heap 약 `7.97MiB`였다. 기존 검증 브라우저 origin에는 다른 control owner가 실제 남아 있어 정확히 `다른 탭에서 출력 제어 중`을 표시했고, 이 경우를 플레이어 없음으로 숨기지 않았다. 해당 상태에서도 Speaker는 즉시 정상 복귀했다.
+- 실제 OBS 30.2.0에서 player가 없는 상태로 OBS를 먼저 선택한 뒤, 기존 `Browser` source URL만 현재 로컬 production preview 세션 주소로 바꿔 **후발 연결**을 만들었다. 대시보드는 추가 출력 클릭 없이 약 2초 안에 `OBS 송출 중`·`실제 활성: OBS 방송`·`OBS 플레이어 정상 · 1개 연결됨`으로 자동 수렴했다. 현재 곡은 비어 있었고 Dashboard media element는 `paused=true`, source 없음, console warning/error 0건이라 route 준비만으로 LOAD·PLAY가 생기지 않았다.
+- 시험 전 다른 탭 소유권이 남은 상태도 재현됐다. 새 탭은 이를 서버 장애나 player 없음으로 숨기지 않고 `다른 탭에서 제어 중`과 `이 탭에서 제어`를 표시했다. 제어권을 가져온 뒤에는 route가 `송출 경로 없음`으로 명시적으로 정리됐고, OBS를 다시 선택하자 후발 player 자동 활성화가 이어졌다.
+- 실제 방송·녹화는 시작하지 않았다. 시험 전후 OBS UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었고, 최종 로그 `2026-07-23 05-47-04.txt`의 streaming/recording start는 각각 0건, clean shutdown은 1건이었다. Browser Source URL은 시험 전 214자 원본과 exact match로 복원했고, 클립보드의 세션 URL은 안전한 폭 값 `800`으로 덮어쓴 뒤 OBS와 로컬 preview를 종료했다.
 
 ## 2026-07-23 (Codex) — v0.2.20 OBS 장면 전환 연속성과 제어 연결 관측 분리
 

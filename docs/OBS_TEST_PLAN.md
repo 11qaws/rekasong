@@ -175,6 +175,7 @@ npm run test:obs:v2:cef-scene-transition
 
 ## 5. 실제 OBS 검증 매트릭스
 
+- [OBS] **완료(2026-07-23):** Dashboard에서 OBS를 먼저 선택하고 player가 없는 정상 대기 상태를 만든 뒤, visible Browser Source를 후발 연결했다. 추가 route 클릭 없이 약 2초 안에 실제 OBS 활성과 단일 player 준비로 수렴했고 LOAD·PLAY·점검음은 자동 발생하지 않았다. 방송·녹화 시작 0건, 원본 URL exact restore를 확인했다.
 - [OBS] CEF에서 준비된 AAC/오디오가 실제 재생된다.
 - [OBS] `Control audio via OBS` 체크 전/후 mixer 동작이 예상과 일치한다.
 - [OBS] source mute, monitoring, Advanced Audio Properties, 방송/녹화 트랙 라우팅.

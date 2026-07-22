@@ -20,7 +20,7 @@
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
-| OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약 통과 | v0.2.21 배포·공개 자산 확인 | 실제 OBS source 후발 연결 확인 |
+| OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 ID 자동 복구 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작 완료 | v0.2.19 공개 CEF로 5분 scene 전환 실기 완료 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
@@ -41,6 +41,8 @@
 - 자동 검증은 `709/709`, production build와 OBS bundle 예산을 통과했다. Dashboard는 `369.83kB raw / 101.28kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`다. production preview smoke의 warm DCL은 `24.8ms`, long task 0, JS heap 약 `7.87MiB`, HTTP 오류·ntfy 요청 0이었다.
 - commit `128f977eb835d70fcd44dbb57da575658f3f29d1`의 Pages workflow `29955448969`는 709 tests·lint·Worker syntax·build·OBS budget·deploy를 모두 통과했다. 공개 main/Dashboard 자산은 `index-nTobOpEa.js` / `Dashboard-CVlr6ZcZ.js`이며 새 setup 상태 key가 게시 파일에 포함됐다.
 - 공개 격리 smoke는 기본 Speaker, 한·영 reload, 320/375/768/1100px, YouTube 묶음, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `25.8ms`, long task 0, JS heap 약 `7.97MiB`였다. 기존 브라우저의 실제 다른 control owner 상태는 계속 별도 안내하고 Speaker 복귀를 막지 않았다.
+- 실제 OBS 30.2.0에서 Dashboard가 먼저 `OBS 플레이어를 열어 주세요`로 기다리는 동안 기존 visible Browser Source에 같은 세션의 player URL을 넣었다. 별도의 OBS 출력 재클릭 없이 약 2초 안에 `OBS 송출 중`·`실제 활성: OBS 방송`·player 1개 정상으로 수렴했다. route 준비 중 현재 곡은 없었고 local media는 paused/source 없음, browser warning/error 0건이었다.
+- 시험 전 남은 다른 control owner도 `다른 탭에서 제어 중`으로 정확히 드러났고, `이 탭에서 제어` 뒤 명시적 OBS 선택으로 같은 후발 연결 경로를 정상 수행했다. 방송·녹화 시작은 0건이었고 OBS URL은 시험 전 원본과 exact match로 복원했다.
 
 ### v0.2.20 실제 OBS scene 전환 — 2026-07-23
 
