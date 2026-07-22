@@ -1082,13 +1082,20 @@ export class OnAirControlCoordinator {
     }
   }
 
-  emergencyStop() {
+  emergencyStop({ forceReset = false } = {}) {
     this.#assertEmergencyCommandable();
+    if (typeof forceReset !== 'boolean') {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.INVALID_ARGUMENT,
+        { field: 'forceReset', kind: 'boolean' },
+      );
+    }
     const command = {
       type: ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP,
       commandId: this.#newId('control-command'),
       sessionId: this.#sessionId,
       authenticatedControlInstanceId: this.#connection.identity.controlInstanceId,
+      ...(forceReset ? { payload: { forceReset: true } } : {}),
     };
     this.#emergencyTestIntent = this.#captureEmergencyTestIntent(command);
     try {

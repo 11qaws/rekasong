@@ -182,6 +182,24 @@ function isStrongStoppedPlayback(snapshot) {
     && confirmed.audible === false;
 }
 
+function isOutputResetComplete(snapshot) {
+  const protocol = snapshot?.playerSnapshot;
+  const lease = protocol?.lease;
+  const confirmed = snapshot?.confirmedPlayback ?? protocol?.confirmedPlayback;
+  const forcedMissingTargetReset = confirmed?.status === 'unknown'
+    && confirmed.reasonCode === 'output_inactive'
+    && confirmed.recoveryOverride === true;
+  return snapshot?.ready === true
+    && lease?.status === 'inactive'
+    && lease.leaseTarget === null
+    && lease.clientKind === null
+    && lease.switchId === null
+    && protocol?.activeFamily === null
+    && protocol?.activeCheckId === null
+    && protocol?.desiredTransport?.status === 'stopped'
+    && (isStrongStoppedPlayback(snapshot) || forcedMissingTargetReset);
+}
+
 function deriveView(snapshot) {
   return deriveOnAirOutputView({ protocolSnapshot: snapshot?.playerSnapshot ?? null });
 }
@@ -380,14 +398,42 @@ export class OnAirOutputController {
     return this.connect();
   }
 
-  emergencyStop() {
+  emergencyStop(options = {}) {
     this.#assertUsable();
-    const result = this.#coordinator.emergencyStop();
+    const result = this.#coordinator.emergencyStop(options);
     this.#switchIntent = null;
     this.#clearSwitchWatchdog();
     this.#switchState = outputSwitchState();
     this.#publish();
     return result;
+  }
+
+  #waitForOutputResetCompletion() {
+    if (isOutputResetComplete(this.#coordinator.snapshot())) {
+      return Promise.resolve(this.#coordinator.snapshot());
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let unsubscribe = null;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        this.#clearTimeoutFn(timer);
+        unsubscribe?.();
+        callback(value);
+      };
+      const timer = this.#setTimeoutFn(() => {
+        finish(reject, controlError(ON_AIR_OUTPUT_CONTROL_CODES.SWITCH_TIMEOUT, {
+          operation: 'emergency_stop_completion_wait',
+          timeoutMs: this.#switchTimeoutMs,
+        }));
+      }, this.#switchTimeoutMs);
+      const returnedUnsubscribe = this.#coordinator.subscribe((snapshot) => {
+        if (isOutputResetComplete(snapshot)) finish(resolve, snapshot);
+      });
+      unsubscribe = returnedUnsubscribe;
+      if (settled) returnedUnsubscribe();
+    });
   }
 
   async resetOutputControl() {
@@ -396,7 +442,7 @@ export class OnAirOutputController {
     // emergency stop and wait for its command result, then rebuild the
     // control socket. If the stop outcome is unknown or rejected, do not
     // discard the coordinator state.
-    const dispatched = this.emergencyStop();
+    const dispatched = this.emergencyStop({ forceReset: true });
     const commandId = dispatched?.command?.commandId;
     if (!isIdentifier(commandId) || typeof this.#coordinator.waitForCommandResult !== 'function') {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.COMMAND_REQUEST_FAILED, {
@@ -416,6 +462,7 @@ export class OnAirOutputController {
         status: outcome?.status ?? null,
       });
     }
+    await this.#waitForOutputResetCompletion();
     return this.retryConnection();
   }
 

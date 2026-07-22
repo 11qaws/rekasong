@@ -1,5 +1,17 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.17 OBS 새 인스턴스 완전 초기화와 Speaker 안전 복귀
+
+- `source refresh`·OBS 재시작의 복구 경로를 상태 단위로 다시 감사했다. 같은 페이지의 WebSocket 재접속은 같은 `playerInstanceId`라 hello에서 route를 복원하지만, 페이지가 다시 만들어지면 새 ID가 등록된다. 기존 일반 emergency stop은 사라진 이전 lease target의 정확한 ACK를 영원히 기다렸고, Dashboard의 완전 초기화는 dispatch ACK만 받은 뒤 coordinator를 재생성해 실제 inactive 수렴을 확인하지 않았다. 이것이 `송출 경로 확인 필요`가 reset 뒤 다시 나타나는 직접 원인이었다.
+- 일반 emergency stop의 strict proof 계약은 그대로 유지했다. 사용자 확인이 있는 완전 초기화만 `forceReset`을 보내고, 현재 연결된 모든 v2 player의 pause·source detach·autoplay cancel ACK를 기다린다. 이전 target이나 ACK 전 사라진 standby는 `missingTargetUnverified`·`liveTargetLossUnverified`로 명시하되, 그 증거가 영원히 돌아오지 않는다는 이유로 route를 잠가 두지 않는다.
+- Worker의 terminal reset snapshot은 lease inactive, target/client/switch null, active run/test null, desired stopped를 보장한다. 사라진 대상이 있으면 `confirmedPlayback.status=unknown`, `reasonCode=output_inactive`, `recoveryOverride=true`를 남겨 strong-stop을 조작하지 않는다. 완전 초기화일 때 서버의 `selectedOutputMode`도 null로 비운다.
+- Dashboard는 emergency command ACK 다음에 위 terminal snapshot까지 기다린 뒤에만 reset 성공으로 처리한다. 완료하면 OBS control을 휴면하고 조용한 Speaker 기본 상태로 돌아간다. 중단된 OBS 곡은 `failed`로 보존해 사용자가 재시도 또는 버리기를 선택하게 하며, 새 Speaker run·OBS LOAD·PLAY를 자동 생성하지 않는다.
+- 한국어·영어 reset 안내는 연결된 출력의 정지와 사라진 출력의 미확인을 구분하고, 완료 뒤 Speaker 복귀·무자동재생·OBS mixer 직접 확인·다시 방송할 때 OBS 재선택을 설명한다.
+- 로컬 Worker+실제 Chromium 통합 smoke는 기존 OBS 페이지 종료→`target_disconnected`→새 ID 등록→force reset→inactive/unverified→새 media element paused·source 없음→명시적 OBS 재선택 ready를 두 번 통과했다. 최신 8초 fixture wall 오차는 `270.9ms`, 최대 sample gap은 `102.3ms`, waiting/stalled/error/backward 진행은 0이었다.
+- 단독 대시보드 smoke는 Speaker 유휴·로컬 WAV 재생·검색에서 session WebSocket/frame을 0으로 유지했고, 로컬 파일 복구·곡 클릭/drag·320px 배치도 통과했다. 1,000곡 이력은 최대 100행, cold `221.9ms`, warm p95 `25.9ms`, 최대 DOM `2,537`, post-GC heap 증가 `0B`였다. 병렬 실행에서 개발 서버 포트 경합으로 한 번 timeout이 났지만 같은 smoke를 단독 실행해 제품 결함이 아님을 확인했다.
+- 실제 OBS 30.2.0에서는 방송·녹화를 시작하지 않고 Browser Source Refresh와 OBS 프로세스 재시작을 실행했다. test profile·scene·Browser/FIFINE source·mixer가 복원되고 `Start Streaming`·`Start Recording`, 타이머 `00:00:00`을 확인했다. Browser URL은 이전 세션 값이라 live-session 새-ID 복구의 물리 합격으로 세지 않는다.
+- 집중 회귀 `262/262`, 전체 `696/696`, lint 신규 오류 0(기존 Gemini escape 경고 2건), Worker·smoke 문법, `git diff --check`, production build를 통과했다. OBS 정적 closure는 raw `383,782B`, gzip `117,547B`, brotli `102,913B`로 예산 안이다. 로컬 production Dashboard smoke는 Speaker 기본, 한·영 reload, 320/375/768/1100px, 3px 금발 선, ntfy 요청 0·HTTP 오류 0을 통과했고 warm DCL `22.2ms`, long task 0, JS heap 약 `7.5MiB`였다. production Worker·Pages 배포와 공개 smoke 결과는 같은 항목에 이어 기록한다.
+
 ## 2026-07-23 (Codex) — v0.2.16 실제 OBS 5분 격리 검증과 시험 업로드 안전화
 
 - 외부 CEF smoke가 이전 작업 기록의 staging 주소(`rekasong-session.11qaws-test.workers.dev`)를 따라가며 제어 협상에 실패한 것을 확인했다. 현재 production frontend 설정과 Wrangler 배포 대상은 `rekasong-session.11qaws.workers.dev`다. 로컬 Worker+앱 v2 smoke와 production Worker+공개 Pages v2 smoke를 각각 통과시켜 앱 결함과 잘못된 시험 endpoint를 분리했다.

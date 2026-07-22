@@ -1117,6 +1117,186 @@ test('a standby ACK cannot prove a disconnected pre-emergency lease target stopp
   assert.equal(harness.session.protocolV2.controlEpoch, ownerEpoch);
 });
 
+test('a confirmed full reset releases a vanished OBS target only after every live replacement detaches', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const activeObs = harness.socket('player');
+  await registerControl(harness, control, 'control-owner');
+  await registerPlayer(harness, activeObs, { playerInstanceId: 'obs-before-refresh' });
+  const leaseEpoch = await activateOutput(harness, control, 'obs-before-refresh', 'obs');
+  await confirmOutputReady(harness, activeObs, 'obs-before-refresh', leaseEpoch);
+
+  activeObs.close();
+  await harness.room.webSocketClose(activeObs);
+  const replacementObs = harness.socket('player');
+  await registerPlayer(harness, replacementObs, { playerInstanceId: 'obs-after-refresh' });
+
+  await harness.send(control, {
+    type: 'emergency_stop',
+    commandId: 'force-reset-after-obs-refresh',
+    sessionId: harness.session.room,
+    authenticatedControlInstanceId: 'control-owner',
+    payload: { forceReset: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'emergency_stopping');
+  assert.equal(harness.session.protocolV2.pendingEmergencyRequiredPlayerInstanceId, null);
+  assert.equal(harness.session.protocolV2.pendingEmergencyRequiredTargetKnown, true);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.recoveryOverride, true);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.missingTargetUnverified, true);
+  assert.equal(messagesOfType(replacementObs, 'emergency_stop').length, 1);
+
+  await harness.send(replacementObs, {
+    type: 'emergency_stop_ack',
+    eventId: 'force-reset-after-obs-refresh-ack',
+    commandId: 'force-reset-after-obs-refresh',
+    sessionId: harness.session.room,
+    playerInstanceId: 'obs-after-refresh',
+    connectionId: replacementObs.deserializeAttachment().connectionId,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  });
+
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+  assert.equal(harness.session.protocolV2.leaseTarget, null);
+  assert.equal(harness.session.protocolV2.selectedOutputMode, null);
+  assert.equal(harness.session.protocolV2.activeFamily, null);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_inactive');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.recoveryOverride, true);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.missingTargetUnverified, true);
+  assert.equal(harness.session.transport.status, 'stopped');
+
+  const replacementLeaseEpoch = await activateOutput(
+    harness,
+    control,
+    'obs-after-refresh',
+    'obs',
+  );
+  await confirmOutputReady(
+    harness,
+    replacementObs,
+    'obs-after-refresh',
+    replacementLeaseEpoch,
+  );
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.leaseTarget, 'obs-after-refresh');
+});
+
+test('a confirmed full reset with no live player completes immediately and accepts the next OBS source', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const activeObs = harness.socket('player');
+  await registerControl(harness, control, 'control-owner');
+  await registerPlayer(harness, activeObs, { playerInstanceId: 'obs-before-restart' });
+  const leaseEpoch = await activateOutput(harness, control, 'obs-before-restart', 'obs');
+  await confirmOutputReady(harness, activeObs, 'obs-before-restart', leaseEpoch);
+
+  activeObs.close();
+  await harness.room.webSocketClose(activeObs);
+  await harness.send(control, {
+    type: 'emergency_stop',
+    commandId: 'force-reset-without-live-player',
+    sessionId: harness.session.room,
+    authenticatedControlInstanceId: 'control-owner',
+    payload: { forceReset: true },
+  });
+
+  assert.equal(terminalResults(control, 'force-reset-without-live-player')[0].type, 'command_ack');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+  assert.equal(harness.session.protocolV2.leaseTarget, null);
+  assert.equal(harness.session.protocolV2.selectedOutputMode, null);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_inactive');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.recoveryOverride, true);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.missingTargetUnverified, true);
+
+  const replacementObs = harness.socket('player');
+  await registerPlayer(harness, replacementObs, { playerInstanceId: 'obs-after-restart' });
+  const replacementLeaseEpoch = await activateOutput(
+    harness,
+    control,
+    'obs-after-restart',
+    'obs',
+  );
+  await confirmOutputReady(
+    harness,
+    replacementObs,
+    'obs-after-restart',
+    replacementLeaseEpoch,
+  );
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.leaseTarget, 'obs-after-restart');
+});
+
+test('a confirmed full reset cannot be held forever by a standby source that vanishes before its ACK', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const activeObs = harness.socket('player');
+  const staleStandby = harness.socket('player');
+  await registerControl(harness, control, 'control-owner');
+  await registerPlayer(harness, activeObs, { playerInstanceId: 'obs-reset-active' });
+  const leaseEpoch = await activateOutput(harness, control, 'obs-reset-active', 'obs');
+  await confirmOutputReady(harness, activeObs, 'obs-reset-active', leaseEpoch);
+  await registerPlayer(harness, staleStandby, { playerInstanceId: 'obs-reset-standby' });
+
+  await harness.send(control, {
+    type: 'emergency_stop',
+    commandId: 'force-reset-standby-vanishes',
+    sessionId: harness.session.room,
+    authenticatedControlInstanceId: 'control-owner',
+    payload: { forceReset: true },
+  });
+  assert.equal(messagesOfType(activeObs, 'emergency_stop').length, 1);
+  assert.equal(messagesOfType(staleStandby, 'emergency_stop').length, 1);
+
+  await harness.send(activeObs, {
+    type: 'emergency_stop_ack',
+    eventId: 'force-reset-active-ack',
+    commandId: 'force-reset-standby-vanishes',
+    sessionId: harness.session.room,
+    playerInstanceId: 'obs-reset-active',
+    connectionId: activeObs.deserializeAttachment().connectionId,
+    sequence: 0,
+    monotonicTimeMs: 1,
+    postcondition: { mediaPaused: true, sourceDetached: true, autoplayCancelled: true },
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'emergency_stopping');
+
+  staleStandby.close();
+  await harness.room.webSocketClose(staleStandby);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+  assert.equal(harness.session.protocolV2.leaseTarget, null);
+  assert.equal(harness.session.protocolV2.selectedOutputMode, null);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_inactive');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.recoveryOverride, true);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.liveTargetLossUnverified, true);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.missingTargetUnverified, false);
+});
+
+test('force-reset payload rejects unexpected or non-boolean authority', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  await registerControl(harness, control, 'control-owner');
+
+  for (const [commandId, payload] of [
+    ['force-reset-wrong-type', { forceReset: 'yes' }],
+    ['force-reset-foreign-field', { forceReset: true, takeover: true }],
+  ]) {
+    await harness.send(control, {
+      type: 'emergency_stop',
+      commandId,
+      sessionId: harness.session.room,
+      authenticatedControlInstanceId: 'control-owner',
+      payload,
+    });
+    assert.equal(terminalResults(control, commandId)[0].type, 'command_rejected');
+    assert.equal(terminalResults(control, commandId)[0].code, 'invalid_emergency_identity');
+  }
+  assert.equal(harness.session.protocolV2.leaseStatus, 'inactive');
+});
+
 test('a persisted control owner without a live negotiated socket expires on the next hello', async () => {
   const harness = createHarness();
   const first = harness.socket('control');

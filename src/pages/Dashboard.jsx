@@ -2725,6 +2725,46 @@ export default function Dashboard() {
   };
   handleMediaFailureRef.current = handleMediaFailure;
 
+  const handleResetOutputControl = async () => {
+    const interruptedObsRun = activeRef.current?.outputMode === 'obs'
+      ? {
+          entryId: activeRef.current.entryId,
+          runId: activeRef.current.runId,
+        }
+      : null;
+    await outputControl.resetOutputControl();
+
+    // A full reset returns to the safe local-player baseline. It must not
+    // reinterpret recovery as permission to resume the interrupted OBS song.
+    setOutputModePreference('speaker');
+    setObsControlRequested(false);
+    setQueuedOutputIntent(null);
+    setOutputControlRecoveryRequired(false);
+    setObsRemoteControlFeedback(null);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+
+    if (!interruptedObsRun) return;
+    const failureDetail = t('dashboard.playback.outputReset');
+    const latest = stateRef.current;
+    if (latest?.active?.entryId === interruptedObsRun.entryId
+      && latest.active.runId === interruptedObsRun.runId) {
+      const failedActive = { ...latest.active, phase: 'failed', failureDetail };
+      stateRef.current = { ...latest, active: failedActive };
+      activeRef.current = failedActive;
+    }
+    setSharedState((previous) => {
+      const previousActive = previous.active;
+      if (previousActive?.entryId !== interruptedObsRun.entryId
+        || previousActive.runId !== interruptedObsRun.runId) return previous;
+      return {
+        ...previous,
+        active: { ...previousActive, phase: 'failed', failureDetail },
+      };
+    });
+  };
+
   const handleLocalSpeakerEvidence = (evidence) => {
     const act = activeRef.current;
     if (!act || act.outputMode !== 'speaker' || act.runId !== evidence?.runId) return;
@@ -3128,7 +3168,7 @@ export default function Dashboard() {
             onConfirmObsMixerSignal={handleConfirmObsMixerSignal}
             onReportMissingObsMixerSignal={handleReportMissingObsMixerSignal}
             onEmergencyStopOutput={outputControl.emergencyStop}
-            onResetOutputControl={outputControl.resetOutputControl}
+            onResetOutputControl={handleResetOutputControl}
             onTakeOverOutputControl={outputControl.takeOverControl}
             onRetryOutputControl={retryOutputControlNow}
             locale={locale}

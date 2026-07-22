@@ -93,7 +93,7 @@ G3에서 반드시 바꿔 보아야 할 항목:
 
 - `Control audio via OBS` 체크 전·후.
 - 소스 mute, 모니터링 끔, 모니터만, 모니터 및 출력.
-- 소스 hide/show, scene 전환, source refresh, OBS 재시작.
+- 소스 hide/show, scene 전환, source refresh, OBS 재시작. hide/show는 실제 통과했고, refresh·재시작의 새-ID 완전 초기화는 자동·로컬 브라우저 통과 및 실제 live-session 변형 대기다.
 - pause, seek, 곡 전환 때 click·gap·중복 재생 여부.
 - 같은 플레이어 URL이 다른 Browser Source나 scene에 중복 등록된 경우의 명시적 차단 안내.
 
@@ -134,7 +134,7 @@ G3에서 반드시 바꿔 보아야 할 항목:
 
 1. 현재 UI/프리뷰 보완을 전체 테스트·lint·Worker syntax·production build·OBS bundle gate로 다시 검증한다.
 2. GitHub Pages에 배포하고 공개 URL에서 캐시를 우회한 새 프로필 브라우저 검증을 반복한다.
-3. G3의 남은 사용자 청취를 확인하고 source mute·monitoring·scene 전환·refresh·OBS 재시작 변형을 수행한다. source hide/show 중 established route와 16/16 marker 지속은 실제 OBS에서 통과했다.
+3. G3의 남은 사용자 청취를 확인하고 source mute·monitoring·scene 전환·refresh·OBS 재시작 변형을 수행한다. source hide/show 중 established route와 16/16 marker 지속은 실제 OBS에서 통과했다. refresh·재시작은 유효한 live-session URL에서 완전 초기화→Speaker 무자동재생→OBS mixer 무음 확인→명시적 OBS 재선택을 기록한다.
 4. G4 녹화 artifact는 현재 장비 구성에서 통과했다.
 5. G6 10분 마이크↔MR 상호상관과 31-marker/300초 rolling 재분석은 완료했다. 제품 관문은 최대 5분 한 곡의 시작 offset·drift이므로 같은 audio clock 장치 또는 저지연 performer monitoring 경로에서 endpoint-inclusive 5분+짧은 반복 시험을 실행한다. 30초 관찰과 10분 결과, 모든 실패는 advisory이며 route 차단 조건으로 쓰지 않는다.
 6. G5 비공개 방송 결과물은 사용자가 실제 비공개 송출을 명시적으로 승인한 경우에만 PCM을 확인한다.

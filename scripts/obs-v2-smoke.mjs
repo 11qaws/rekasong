@@ -28,6 +28,7 @@ const MAX_FIXTURE_WALL_DRIFT_MS = 500;
 const MAX_MEDIA_SAMPLE_GAP_MS = 250;
 const MIN_TIMING_SAMPLES = 50;
 const RUN_CONTINUITY_SMOKE = process.argv.includes('--continuity');
+const RUN_FORCE_RESET_SMOKE = process.argv.includes('--force-reset');
 const CONTINUITY_DURATION_MS = positiveIntegerEnvironment(
   'REKASONG_CONTINUITY_DURATION_MS',
   30_000,
@@ -624,6 +625,100 @@ async function runNormalPlaybackContinuitySmoke(playerInstanceId) {
   );
 }
 
+async function runForcedRefreshRecoverySmoke(previousPlayerInstanceId) {
+  await page.close();
+  const disconnected = await waitForObservation(() => {
+    const snapshot = coordinator.snapshot().playerSnapshot;
+    return snapshot?.lease?.status === 'unknown'
+      && snapshot.lease.leaseTarget === previousPlayerInstanceId
+      && snapshot.confirmedPlayback?.reasonCode === 'target_disconnected'
+      && !snapshot.players.some((playerRecord) => (
+        playerRecord.playerInstanceId === previousPlayerInstanceId
+      ))
+      ? snapshot
+      : null;
+  }, PLAYER_READY_TIMEOUT_MS, 'closed OBS page leaves an explicit unknown route');
+  invariant(
+    disconnected.activeFamily === null,
+    'refresh recovery begins without silently resuming a media run',
+  );
+
+  page = await browser.newPage();
+  page.on('pageerror', (error) => pageErrors.push(diagnostics.errorText(error)));
+  await installObsBinding(page);
+  await page.goto(widgetUrl(session.room, session.playerToken), { waitUntil: 'domcontentloaded' });
+  const replacement = await waitForObservation(() => {
+    const snapshot = coordinator.snapshot().playerSnapshot;
+    const candidateIds = snapshot?.eligibleCandidates?.obs || [];
+    const playerRecord = snapshot?.players?.find((candidate) => (
+      candidate.playerInstanceId === candidateIds[0]
+    ));
+    return candidateIds.length === 1
+      && candidateIds[0] !== previousPlayerInstanceId
+      && playerRecord?.clientKind === 'obs-browser-source'
+      && playerRecord.runtime?.sourceActive === true
+      && playerRecord.runtime?.sourceVisible === true
+      ? playerRecord
+      : null;
+  }, PLAYER_READY_TIMEOUT_MS, 'replacement OBS page registers one new candidate');
+  await waitForObservation(
+    () => page.evaluate(() => Boolean(document.querySelector('[data-on-air-player-v2-state] audio'))),
+    PLAYER_READY_TIMEOUT_MS,
+    'replacement Protocol v2 media element',
+  );
+  invariant(await armMediaObservation(), 'replacement HTMLMediaElement graph captured');
+
+  const emergency = coordinator.emergencyStop({ forceReset: true });
+  const reset = await waitForObservation(() => {
+    const snapshot = coordinator.snapshot();
+    const protocol = snapshot.playerSnapshot;
+    return snapshot.ready === true
+      && snapshot.unknownLock === null
+      && protocol?.lease?.status === 'inactive'
+      && protocol.lease.leaseTarget === null
+      && protocol.selectedOutputMode === null
+      && protocol.activeFamily === null
+      && protocol.confirmedPlayback?.status === 'unknown'
+      && protocol.confirmedPlayback.reasonCode === 'output_inactive'
+      && protocol.confirmedPlayback.recoveryOverride === true
+      && protocol.confirmedPlayback.missingTargetUnverified === true
+      ? snapshot
+      : null;
+  }, ROUTE_TIMEOUT_MS, 'confirmed full reset releases the vanished OBS identity');
+  invariant(
+    reset.playerSnapshot.desiredTransport?.status === 'stopped',
+    'full reset leaves playback stopped and does not auto-resume',
+  );
+  const emergencyResult = commandResults.get(emergency.command.commandId);
+  invariant(
+    emergencyResult?.status === 'acknowledged',
+    'full reset command is acknowledged before route reuse',
+    compactJson(emergencyResult),
+  );
+  const replacementMedia = await mediaSnapshot();
+  invariant(
+    replacementMedia.sameElement
+      && replacementMedia.paused === true
+      && replacementMedia.srcAttribute === null
+      && replacementMedia.sourceChildren === 0,
+    'replacement player remains silent after full reset',
+    compactJson(replacementMedia),
+  );
+
+  const activation = coordinator.activateOutput('obs');
+  await waitFor(() => {
+    const snapshot = coordinator.snapshot().playerSnapshot;
+    return snapshot?.lease?.status === 'ready'
+      && snapshot.lease.leaseTarget === replacement.playerInstanceId
+      && snapshot.confirmedPlayback?.reasonCode === 'output_ready_no_playback'
+      ? snapshot
+      : null;
+  }, ROUTE_TIMEOUT_MS, 'replacement OBS route activates after full reset', {
+    commandId: activation.command.commandId,
+  });
+  pass('OBS refresh gets a recoverable route without automatic playback');
+}
+
 async function verifyEndedStatus() {
   const response = await fetch(
     `${WORKER.replace(/\/$/, '')}/v1/sessions/${encodeURIComponent(session.room)}/status`,
@@ -886,6 +981,10 @@ async function run() {
 
   if (RUN_CONTINUITY_SMOKE) {
     await runNormalPlaybackContinuitySmoke(candidateSnapshot.player.playerInstanceId);
+  }
+
+  if (RUN_FORCE_RESET_SMOKE) {
+    await runForcedRefreshRecoverySmoke(candidateSnapshot.player.playerInstanceId);
   }
 
   const deactivation = coordinator.deactivateOutput();

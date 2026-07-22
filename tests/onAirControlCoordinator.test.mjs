@@ -2387,6 +2387,22 @@ test('emergency stop remains single-shot under unknown lock with only session/co
   assert.equal(connection.commands.length, 1);
 });
 
+test('a user-confirmed full reset is explicit in the emergency payload', () => {
+  const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
+  const emergency = coordinator.emergencyStop({ forceReset: true });
+
+  assert.equal(validateOnAirMessage(emergency.command).ok, true);
+  assert.deepEqual(emergency.command.payload, { forceReset: true });
+  assert.equal(connection.commands.length, 1);
+
+  const invalid = createHarness({ snapshot: readyOutputSnapshot() });
+  assertCoordinatorError(
+    () => invalid.coordinator.emergencyStop({ forceReset: 'yes' }),
+    ON_AIR_CONTROL_COORDINATOR_CODES.INVALID_ARGUMENT,
+  );
+  assert.equal(invalid.connection.commands.length, 0);
+});
+
 test('a second connect while READY is rejected without discarding current snapshot authority', () => {
   const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
   const before = coordinator.snapshot();

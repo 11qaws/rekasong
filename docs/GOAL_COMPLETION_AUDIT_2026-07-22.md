@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 앱과 현재 검증 후보는 v0.2.16이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 앱은 v0.2.16이고 현재 로컬 검증 후보는 v0.2.17이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -20,7 +20,7 @@
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
-| OBS 재접속 중 재생 연결을 우선 보존 | 자동 검증 + 실제 source hide/show·60분 CEF 완료 | 현재 후보 배포됨 | scene 전환·source refresh·OBS 재시작 |
+| OBS 재접속 중 재생 연결을 우선 보존 | 같은 ID 자동 복구 + 새 ID 명시적 완전 초기화 자동·로컬 브라우저 검증 + 실제 source hide/show·60분 CEF 완료 | v0.2.16은 같은-ID 보존 배포, v0.2.17 배포 대기 | scene 전환·유효한 live-session의 실제 source refresh·OBS 재시작 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
@@ -30,7 +30,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 frontend `0.2.16` / release commit `b4e94a066b12d8f80174f6cdc2e6638877afbd9d`까지 성공적으로 배포됐고, 앱 runtime을 마지막으로 바꾼 기준은 `94efd537e34862ca84b30b1f6cdc2e666cc2018f`다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `71c233ad-5e37-4655-8f62-b3ff306e7708`다. 전체 테스트 `689/689`, 실제 OBS CEF 60분 재생, 별도 5분 가상 케이블 녹화를 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 frontend `0.2.16` / release commit `b4e94a066b12d8f80174f6cdc2e6638877afbd9d`까지 성공적으로 배포됐다. v0.2.17 로컬 후보는 source refresh·OBS 재시작으로 새 player ID가 생겼을 때의 영구 reset 대기를 없애고, 완전 초기화가 실제 inactive snapshot까지 기다린 뒤 Speaker로 돌아가도록 보강했다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결은 계속 분리되어 유휴·검색·로컬 파일 Speaker 재생에 불필요한 Worker 연결이 없다. 현재 production Worker는 version `71c233ad-5e37-4655-8f62-b3ff306e7708`이며 v0.2.17 Worker 배포는 대기 중이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화는 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
@@ -100,6 +100,7 @@
 - 같은 OBS player identity가 재접속하면 10초 heartbeat를 기다리지 않고 hello에서 route를 복원한다.
 - 살아 있는 playback은 재접속 후 현재 상태를 다시 보고하지만, 이 보고 결과가 불명확하다는 이유로 재생을 끊지 않는다.
 - 일반 control socket 단절은 새 welcome과 authoritative snapshot이 일치하면 명령 재전송 없이 해제한다. 진행 중 명령 결과 불명과 identity 불일치는 계속 수동 복구 대상으로 남긴다.
+- Browser Source refresh·OBS 재시작처럼 새 player ID가 생기면 자동으로 기존 경로를 승계하지 않는다. 사용자가 완전 초기화를 확인한 경우에만 현재 연결된 출력의 정지 ACK를 기다리고, 사라진 이전 target은 물리 정지 미확인으로 표시한 채 잠금을 해제한다. 완료 후 선택 경로를 비우고 Dashboard는 Speaker로 돌아가며 중단 곡을 자동 재생하지 않는다.
 - source active/visible 콜백은 한 번의 storage-free 즉시 heartbeat로 합쳐 전송하고, runtime 값이 바뀔 때만 Dashboard snapshot을 갱신한다. 장면 상태는 빠르게 보이되 established graph를 멈추지 않는다.
 - 실제 OBS 플레이어 heartbeat는 10초다. 최신 Dashboard Speaker는 Worker player WebSocket과 heartbeat가 없으며, 구버전 호환 Speaker만 30초 cadence를 사용한다. Worker의 정상 heartbeat 처리는 durable storage write 없이 ACK·relay만 수행한다.
 - Dashboard는 마지막으로 사용자가 누른 OBS play/pause/seek/volume의 정확한 `commandId`와 run을 탭 메모리에만 보관한다. Worker는 기존 `command_applied`/`command_failed` snapshot에 그 명령 식별자를 보존하고, Dashboard는 실제 media 상태 또는 적용된 seek/volume 값까지 일치할 때만 `적용됨`으로 표시한다. 수신 ACK·desired 값은 성공 증거가 아니며, 5초 지연도 재생 중단·명령 재전송·추가 WebSocket traffic을 만들지 않는다.
@@ -116,7 +117,8 @@
 - G6 가상 케이블 격리 측정: 실제 OBS CEF Browser direct track과 VB-Audio Virtual Cable loopback track의 31/31 marker를 300초 전체에서 기록했다. edge drift `0.965ms`, linear-fit `0.352ms`, jitter p95 `2.015ms`는 통과했고 고정 offset `85.797ms`는 실패했다. 30초 변화 p95 `3.224ms`는 실제 누적 drift보다 커서 30초마다 강제 보정하지 않고 관찰만 한다. 이 run은 플레이어의 누적 drift 격리 증거이며 실제 가수 monitoring path 합격을 대신하지 않는다.
 - `+69ms` OBS Browser Sync Offset 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 되돌렸다. 서로 다른 하드웨어 clock의 drift 보정으로 사용하지 않는다.
 - 각 곡은 새 run과 `position: 0`으로 기준점을 다시 잡되 OBS route와 lease는 유지한다. 정확한 이전 run stop proof 뒤에만 다음 media run을 load/play하며, 곡 중간에는 자동 seek·restart·속도 보정을 하지 않는다.
-- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증, scene 전환·source refresh·OBS 재시작 변형이다.
+- 실제 OBS UI에서 Source Refresh와 OBS 재시작 뒤 profile·scene·Browser/FIFINE source·mixer 설정 보존은 확인했다. 당시 Browser URL은 이전 세션 값이므로 live route 복구 증거로 세지 않는다.
+- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증, scene 전환과 유효한 live-session에서의 source refresh·OBS 재시작 변형이다.
 
 세부 증거와 남은 절차는 `docs/OBS_REMAINING_VALIDATION_PLAN_2026-07-20.md`에 유지한다.
 
@@ -151,14 +153,14 @@
 - v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- 최신 공개 코드 전체 테스트: 686/686 통과.
+- v0.2.17 현재 후보 전체 테스트: 696/696 통과. 공개 배포 뒤 동일 CI 결과를 별도로 확인한다.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 365.15 kB raw / 100.07 kB gzip.
+- Dashboard chunk: 366.87 kB raw / 100.52 kB gzip.
 - Dashboard CSS: 61.55 kB raw / 11.63 kB gzip.
 - 탭별 local Speaker controller lazy chunk: 7.25 kB raw / 2.51 kB gzip. 공용 playback engine은 24.87 kB raw / 6.56 kB gzip이며 둘 다 Speaker 유휴 첫 화면에는 로드하지 않는다.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 383,818B raw / 117,569B gzip / 103,056B brotli.
+- OBS 정적 경로: 383,782B raw / 117,547B gzip / 102,913B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 
@@ -170,3 +172,4 @@
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.
+7. v0.2.17의 새-ID 완전 초기화는 로컬 실제 브라우저+Worker에서 무자동재생까지 통과했으며, 전체 release preflight·production Worker·Pages 배포와 공개 회귀 확인을 남겨 두었다.

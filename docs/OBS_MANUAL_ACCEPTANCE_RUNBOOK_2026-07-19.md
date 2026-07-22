@@ -341,7 +341,7 @@ npm run make:obs:karaoke-fixture -- "C:\path\to\rekasong-obs-karaoke-5m-v1.wav"
 
 | 장애 | 기대 결과 |
 |---|---|
-| OBS player source 새로고침 | 새 player instance, 자동 takeover·resume 없음 |
+| OBS player source 새로고침 | 새 player instance, 자동 takeover·resume 없음. 완전 초기화 승인 뒤 새 player 정지 ACK·이전 target 미확인 표시·Speaker 복귀, OBS 재선택 전 무음 |
 | player WebSocket 일시 단절 | 살아 있는 로컬 media graph 보존, Worker가 `paused` 성공을 추측하지 않음, 재연결 뒤 자동 LOAD/PLAY 없음 |
 | heartbeat 30초 지연 | warning만, established graph 해제·성공 증거 승격 없음 |
 | heartbeat 60초 stale | 새 activation 후보에서는 제외하되 established graph를 heartbeat만으로 파괴하지 않음 |
@@ -355,7 +355,7 @@ npm run make:obs:karaoke-fixture -- "C:\path\to\rekasong-obs-karaoke-5m-v1.wav"
 | deactivation failure | 기존 target 유지, explicit deactivate 재시도만 허용 |
 | fixture fetch/decode 실패 | test_failed, 강한 detach 증거 없으면 connection close |
 | scene hide/show | 설정 정책과 일치; 결과가 바뀌면 인증 stale |
-| OBS 재시작 | 새 pairing 필요, 이전 인증을 현재 연결 증거로 사용하지 않음 |
+| OBS 재시작 | 새 player instance, 이전 인증을 현재 연결 증거로 사용하지 않음. 완전 초기화→OBS mixer 무음 확인→명시적 OBS 재선택 |
 
 ## 13. 리모컨·UI 인수 기준
 
@@ -368,6 +368,7 @@ npm run make:obs:karaoke-fixture -- "C:\path\to\rekasong-obs-karaoke-5m-v1.wav"
 - 원격 position은 확인 전에 낙관적으로 확정하지 않는다.
 - 0 player, duplicate player, unknown, read-only control, stale verification의 원인과 다음 행동이 구분된다.
 - 긴급 정지는 다른 action보다 명확하지만 오조작 방지 label과 결과 확인 단계를 가진다.
+- 완전 초기화는 연결된 출력만 정지 증명할 수 있음을 밝히고, 성공 뒤 Speaker로 돌아가며 중단 곡을 자동 재생하지 않는다. 사용자가 OBS mixer 무음을 확인하고 OBS를 다시 선택해야 한다.
 - 출력 radio, 상태, 오류, test progress는 키보드와 screen reader로 접근 가능하다.
 - modal은 초기 focus, focus trap, Escape, trigger focus 복귀를 지킨다.
 - test 진행 중 backdrop 오클릭으로 점검 UI만 사라지지 않는다.

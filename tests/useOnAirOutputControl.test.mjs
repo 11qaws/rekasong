@@ -201,8 +201,10 @@ class FakeCoordinator {
     return { status: 'created', operation: 'deactivate' };
   }
 
-  emergencyStop() {
-    this.calls.push(['emergencyStop']);
+  emergencyStop(options = {}) {
+    this.calls.push(options.forceReset === true
+      ? ['emergencyStop', { forceReset: true }]
+      : ['emergencyStop']);
     return {
       status: 'created',
       operation: 'emergencyStop',
@@ -829,10 +831,39 @@ test('full output reset stops every output before rebuilding control', async () 
   const { controller, coordinators } = createHarness(readyRoute('obs'));
   const oldCoordinator = coordinators[0];
 
-  await controller.resetOutputControl();
+  const reset = controller.resetOutputControl();
+  for (let attempt = 0; attempt < 10 && oldCoordinator.subscribers.size < 2; attempt += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(oldCoordinator.subscribers.size, 2, 'reset must wait for terminal route evidence');
+  oldCoordinator.emit(coordinatorSnapshot(playerSnapshot({
+    selectedOutputMode: null,
+    lease: {
+      epoch: 5,
+      leaseTarget: null,
+      clientKind: null,
+      status: 'inactive',
+      switchId: null,
+    },
+    desiredTransport: {
+      status: 'stopped',
+      song: null,
+      entryId: null,
+      runId: null,
+      position: 0,
+      volume: 100,
+    },
+    confirmedPlayback: {
+      status: 'unknown',
+      reasonCode: 'output_inactive',
+      recoveryOverride: true,
+      missingTargetUnverified: true,
+    },
+  })));
+  await reset;
 
   assert.deepEqual(oldCoordinator.calls, [
-    ['emergencyStop'],
+    ['emergencyStop', { forceReset: true }],
     ['waitForCommandResult', 'fake-emergency-command'],
     ['dispose'],
   ]);

@@ -2886,6 +2886,49 @@ export class SessionRoom {
     });
   }
 
+  finalizeV2EmergencyStopState(candidate) {
+    const protocol = this.ensureProtocolV2(candidate);
+    const forceResetRequested = protocol.confirmedPlayback?.forceResetRequested === true;
+    const recoveryOverride = protocol.confirmedPlayback?.recoveryOverride === true;
+    const missingTargetUnverified = protocol.confirmedPlayback?.missingTargetUnverified === true;
+    const liveTargetLossUnverified = protocol.confirmedPlayback?.liveTargetLossUnverified === true;
+    const legacyTargetsUnverified = finiteEpoch(
+      protocol.confirmedPlayback?.legacyTargetsUnverified
+    ) ?? 0;
+    this.clearRouteTransition(protocol);
+    protocol.leaseStatus = 'inactive';
+    protocol.pendingEmergencyCommandId = null;
+    protocol.pendingEmergencyControlInstanceId = null;
+    protocol.pendingEmergencyRequiredPlayerInstanceId = null;
+    protocol.pendingEmergencyRequiredTargetKnown = false;
+    protocol.pendingEmergencyTargets = [];
+    protocol.pendingEmergencyTargetInstances = {};
+    protocol.emergencyAcknowledgedTargets = [];
+    protocol.pendingEmergencyLegacyCount = 0;
+    if (forceResetRequested) protocol.selectedOutputMode = null;
+    protocol.confirmedPlayback = recoveryOverride
+      ? {
+          status: 'unknown',
+          reasonCode: 'output_inactive',
+          recoveryOverride: true,
+          missingTargetUnverified,
+          liveTargetLossUnverified,
+          legacyTargetsUnverified,
+          lastSeenAt: Date.now()
+        }
+      : {
+          status: 'stopped',
+          reasonCode: 'emergency_stop_acknowledged',
+          position: 0,
+          paused: true,
+          sourceDetached: true,
+          autoplayCancelled: true,
+          audible: false,
+          lastSeenAt: Date.now()
+        };
+    candidate.transport = { ...(candidate.transport || {}), status: 'stopped', position: 0 };
+  }
+
   async handleV2EmergencyStop(socket, session, command) {
     const attachment = socket.deserializeAttachment() || {};
     const commandId = protocolId(command.commandId);
@@ -2900,7 +2943,9 @@ export class SessionRoom {
       'targetPlayerInstanceId', 'targetConnectionId'
     ].some((field) => hasOwn(command, field));
     const invalidPayload = hasOwn(command, 'payload')
-      && (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload));
+      && (!command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload)
+        || Object.keys(command.payload).some((field) => field !== 'forceReset')
+        || (hasOwn(command.payload, 'forceReset') && typeof command.payload.forceReset !== 'boolean'));
     if (!commandId || hasForeignIdentity || invalidPayload || sessionId !== session.room
       || authenticatedControlInstanceId !== attachment.controlInstanceId) {
       return this.rejectV2Command(socket, command, 'invalid_emergency_identity', {
@@ -2910,6 +2955,7 @@ export class SessionRoom {
     }
 
     let protocol = this.ensureProtocolV2(session);
+    const forceReset = command.payload?.forceReset === true;
     const v2Targets = [];
     const legacyTargets = [];
     const emergencyTargets = [];
@@ -2929,6 +2975,17 @@ export class SessionRoom {
       }
     }
 
+    const requiredPlayerInstanceId = protocol.leaseTarget;
+    const requiredTargetConnected = requiredPlayerInstanceId === null
+      || v2Targets.some(({ attachment: target }) => (
+        target.playerInstanceId === requiredPlayerInstanceId
+      ));
+    const missingTargetUnverified = forceReset
+      && requiredPlayerInstanceId !== null
+      && !requiredTargetConnected;
+    const legacyTargetsUnverified = forceReset ? legacyTargets.length : 0;
+    const recoveryOverride = missingTargetUnverified || legacyTargetsUnverified > 0;
+
     const candidate = structuredClone(session);
     const candidateProtocol = this.ensureProtocolV2(candidate);
     candidateProtocol.leaseEpoch += 1;
@@ -2941,12 +2998,16 @@ export class SessionRoom {
     candidateProtocol.activeCheckProgress = null;
     candidateProtocol.pendingEmergencyCommandId = commandId;
     candidateProtocol.pendingEmergencyControlInstanceId = authenticatedControlInstanceId;
-    candidateProtocol.pendingEmergencyRequiredPlayerInstanceId = protocol.leaseTarget;
-    candidateProtocol.pendingEmergencyRequiredTargetKnown = true;
+    candidateProtocol.pendingEmergencyRequiredPlayerInstanceId = missingTargetUnverified
+      ? null
+      : requiredPlayerInstanceId;
+    candidateProtocol.pendingEmergencyRequiredTargetKnown = missingTargetUnverified
+      ? true
+      : requiredTargetConnected;
     candidateProtocol.pendingEmergencyTargets = [...new Set(emergencyTargets)];
     candidateProtocol.pendingEmergencyTargetInstances = emergencyTargetInstances;
     candidateProtocol.emergencyAcknowledgedTargets = [];
-    candidateProtocol.pendingEmergencyLegacyCount = legacyTargets.length;
+    candidateProtocol.pendingEmergencyLegacyCount = forceReset ? 0 : legacyTargets.length;
     candidateProtocol.desiredTransport = {
       ...(candidateProtocol.desiredTransport || {}),
       status: 'stopped',
@@ -2954,8 +3015,22 @@ export class SessionRoom {
       entryId: null,
       runId: null
     };
-    candidateProtocol.confirmedPlayback = { status: 'unknown', reasonCode: 'emergency_stop_unconfirmed' };
+    candidateProtocol.confirmedPlayback = {
+      status: 'unknown',
+      reasonCode: 'emergency_stop_unconfirmed',
+      ...(forceReset ? { forceResetRequested: true } : {}),
+      ...(recoveryOverride ? {
+        recoveryOverride: true,
+        missingTargetUnverified,
+        legacyTargetsUnverified
+      } : {})
+    };
     candidate.transport = { ...candidate.transport, status: 'unknown' };
+    const canCompleteWithoutPlayerEvent = emergencyTargets.length === 0
+      && candidateProtocol.pendingEmergencyLegacyCount === 0
+      && candidateProtocol.pendingEmergencyRequiredTargetKnown === true
+      && candidateProtocol.pendingEmergencyRequiredPlayerInstanceId === null;
+    if (canCompleteWithoutPlayerEvent) this.finalizeV2EmergencyStopState(candidate);
     await this.ctx.storage.put('session', candidate);
     this.adoptPersistedSession(session, candidate);
     protocol = this.ensureProtocolV2(session);
@@ -3775,28 +3850,11 @@ export class SessionRoom {
       if (allV2TargetsAcknowledged
         && protocol.pendingEmergencyLegacyCount === 0
         && requiredTargetAcknowledged) {
-        // The exact, durable strong-stop acknowledgement is terminal evidence
-        // for any route transition that the emergency command preempted.
-        this.clearRouteTransition(protocol);
-        protocol.leaseStatus = 'inactive';
-        protocol.pendingEmergencyCommandId = null;
-        protocol.pendingEmergencyControlInstanceId = null;
-        protocol.pendingEmergencyRequiredPlayerInstanceId = null;
-        protocol.pendingEmergencyRequiredTargetKnown = false;
-        protocol.pendingEmergencyTargets = [];
-        protocol.pendingEmergencyTargetInstances = {};
-        protocol.emergencyAcknowledgedTargets = [];
-        protocol.confirmedPlayback = {
-          status: 'stopped',
-          reasonCode: 'emergency_stop_acknowledged',
-          position: 0,
-          paused: true,
-          sourceDetached: true,
-          autoplayCancelled: true,
-          audible: false,
-          lastSeenAt: Date.now()
-        };
-        candidate.transport = { ...(candidate.transport || {}), status: 'stopped', position: 0 };
+        // A normal emergency stop remains exact-proof only. A user-confirmed
+        // full reset may release a vanished target after every currently live
+        // v2 player has detached; the snapshot keeps that missing target
+        // explicitly unverified instead of manufacturing physical proof.
+        this.finalizeV2EmergencyStopState(candidate);
       }
       return {
         status: 'applied',
@@ -4015,6 +4073,51 @@ export class SessionRoom {
         const protocol = this.ensureProtocolV2(candidateSession);
         const sameInstanceConnected = this.livePlayerRecords(socket)
           .some(({ attachment }) => attachment.playerInstanceId === closingAttachment.playerInstanceId);
+        const closingPendingForcedResetTarget = protocol.leaseStatus === 'emergency_stopping'
+          && protocol.confirmedPlayback?.forceResetRequested === true
+          && protocol.pendingEmergencyTargets.includes(closingAttachment.connectionId)
+          && !sameInstanceConnected;
+        if (closingPendingForcedResetTarget) {
+          protocol.pendingEmergencyTargets = protocol.pendingEmergencyTargets
+            .filter((target) => target !== closingAttachment.connectionId);
+          protocol.emergencyAcknowledgedTargets = protocol.emergencyAcknowledgedTargets
+            .filter((target) => target !== closingAttachment.connectionId);
+          protocol.pendingEmergencyTargetInstances = Object.fromEntries(
+            Object.entries(protocol.pendingEmergencyTargetInstances || {})
+              .filter(([target]) => target !== closingAttachment.connectionId)
+          );
+          const requiredTargetClosed = protocol.pendingEmergencyRequiredPlayerInstanceId
+            === closingAttachment.playerInstanceId;
+          if (requiredTargetClosed) {
+            protocol.pendingEmergencyRequiredPlayerInstanceId = null;
+            protocol.pendingEmergencyRequiredTargetKnown = true;
+          }
+          protocol.confirmedPlayback = {
+            ...protocol.confirmedPlayback,
+            recoveryOverride: true,
+            missingTargetUnverified: protocol.confirmedPlayback?.missingTargetUnverified === true
+              || requiredTargetClosed,
+            liveTargetLossUnverified: true,
+          };
+          const allRemainingTargetsAcknowledged = protocol.pendingEmergencyTargets
+            .every((target) => protocol.emergencyAcknowledgedTargets.includes(target));
+          const requiredTargetResolved = protocol.pendingEmergencyRequiredTargetKnown === true
+            && (
+              protocol.pendingEmergencyRequiredPlayerInstanceId === null
+              || protocol.pendingEmergencyTargets.some((target) => (
+                protocol.pendingEmergencyTargetInstances?.[target]
+                  === protocol.pendingEmergencyRequiredPlayerInstanceId
+                && protocol.emergencyAcknowledgedTargets.includes(target)
+              ))
+            );
+          if (allRemainingTargetsAcknowledged
+            && protocol.pendingEmergencyLegacyCount === 0
+            && requiredTargetResolved) {
+            this.finalizeV2EmergencyStopState(candidateSession);
+            transportChanged = true;
+          }
+          shouldPersist = true;
+        }
         if (protocol.leaseTarget === closingAttachment.playerInstanceId && !sameInstanceConnected) {
           const interruptedTransition = this.currentRouteTransitionForProtocol(protocol);
           if (interruptedTransition) {

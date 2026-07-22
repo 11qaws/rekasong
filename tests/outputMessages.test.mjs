@@ -409,6 +409,44 @@ test('a durable route-transition timeout uses the localized switch recovery pane
   assert.ok(outputMessageCatalog.en['onair.control.recovery.switchTimeout.description']?.trim());
 });
 
+test('full reset copy distinguishes connected stops from vanished-output uncertainty', () => {
+  const koreanConfirm = outputMessageCatalog.ko['obs.setup.recovery.resetConfirm'];
+  const englishConfirm = outputMessageCatalog.en['obs.setup.recovery.resetConfirm'];
+  const koreanComplete = outputMessageCatalog.ko['obs.setup.recovery.resetComplete'];
+  const englishComplete = outputMessageCatalog.en['obs.setup.recovery.resetComplete'];
+
+  assert.match(koreanConfirm, /연결된 모든 출력/);
+  assert.match(koreanConfirm, /증명할 수 없습니다/);
+  assert.match(koreanComplete, /OBS 믹서/);
+  assert.match(koreanComplete, /스피커 모드/);
+  assert.match(koreanComplete, /자동 재생하지 않습니다/);
+  assert.match(englishConfirm, /every connected output/i);
+  assert.match(englishConfirm, /cannot prove/i);
+  assert.match(englishComplete, /OBS mixer/i);
+  assert.match(englishComplete, /Speaker mode/i);
+  assert.match(englishComplete, /without autoplay/i);
+  assert.doesNotMatch(koreanConfirm, /재생 중인 소리는 멈춥니다/);
+  assert.doesNotMatch(englishConfirm, /Any playing audio will stop immediately/i);
+});
+
+test('full reset returns the dashboard to silent Speaker mode without replaying an OBS run', async () => {
+  const dashboardSource = await readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8');
+  const resetStart = dashboardSource.indexOf('const handleResetOutputControl = async () =>');
+  const resetEnd = dashboardSource.indexOf('const handleLocalSpeakerEvidence', resetStart);
+  const resetBlock = dashboardSource.slice(resetStart, resetEnd);
+
+  assert.ok(resetStart >= 0 && resetEnd > resetStart);
+  assert.match(resetBlock, /await outputControl\.resetOutputControl\(\)/);
+  assert.match(resetBlock, /setOutputModePreference\('speaker'\)/);
+  assert.match(resetBlock, /setObsControlRequested\(false\)/);
+  assert.match(resetBlock, /phase: 'failed'/);
+  assert.match(resetBlock, /dashboard\.playback\.outputReset/);
+  assert.doesNotMatch(resetBlock, /beginPlaybackRun|dispatchPlaybackCommand|\.play\(/);
+  assert.match(dashboardSource, /onResetOutputControl=\{handleResetOutputControl\}/);
+  assert.ok(appMessageCatalog.ko['dashboard.playback.outputReset']?.trim());
+  assert.ok(appMessageCatalog.en['dashboard.playback.outputReset']?.trim());
+});
+
 test('route refusal, watchdog recovery, and takeover timeout copy is localized and actionable', async () => {
   const [dashboardSource, panelSource] = await Promise.all([
     readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
