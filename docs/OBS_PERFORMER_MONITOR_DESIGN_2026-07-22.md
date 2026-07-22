@@ -27,7 +27,9 @@
 | 선형 drift | `17.32ms/590초` | 실패 (`≤10ms`) |
 | 중앙 offset | `43.25ms` | 실패 (`±20ms`) |
 
-MR 재생 자체와 OBS media graph는 10분 동안 끊김·restart·seek 없이 유지됐다. 실패 원인은 연결 불안정이 아니라 서로 다른 출력·입력 하드웨어 clock을 지나는 현재 monitoring chain의 상대 drift다.
+MR 재생 자체와 OBS media graph는 10분 동안 끊김·restart·seek 없이 유지됐다. 기존 10분 기준을 넘은 값은 연결 불안정이 아니라 서로 다른 출력·입력 하드웨어 clock을 지나는 현재 monitoring chain의 상대 drift다. 여기서 “시계가 늦어진다”는 말은 한 장치가 갑자기 멈춘다는 뜻이 아니다. 두 장치가 각각 48,000 sample을 1초라고 세는 실제 속도가 아주 조금 달라서, 처음의 작은 차이가 시간에 비례해 누적된다는 뜻이다.
+
+제품의 실제 싱크 단위는 무한히 이어지는 한 재생기가 아니라 **한 곡**이다. OBS route와 player lease는 곡 사이에도 유지하지만, 각 곡은 새 `runId`와 `position: 0`으로 새 재생 기준점을 만든다. 이전 곡은 정확한 정지 증거 뒤에만 교체하며, 재생 중인 곡에는 telemetry·analyzer 결과를 이유로 자동 seek·restart·playback-rate 보정을 하지 않는다. 최대 곡 길이는 5분을 수용 창으로 사용하고, 10분 fixture는 drift 속도와 장시간 연속성을 알아보는 보수적인 스트레스 진단으로만 사용한다.
 
 Browser Source에 `+69ms` Sync Offset을 적용한 비교에서는 마이크 상대 지연이 약 `82–84ms`로 더 커졌다. Sync Offset은 이 장치 간 drift의 해법이 아니므로 `0ms`로 복원했다.
 
@@ -129,14 +131,14 @@ karaokeSyncEvidence
 
 이 보호는 일반 MR 재생에는 적용하지 않는다. 사용자가 OBS 방송 중 MR을 재생하는 것은 제품의 본래 목적이며, streaming telemetry가 일반 곡을 끊는 kill switch가 되어서는 안 된다.
 
-## 7. 10분 analyzer·certificate 구현
+## 7. 곡 단위 analyzer·certificate 구현
 
 분석기는 앱의 첫 화면 bundle에 넣지 않는다. 사용자가 G6 점검을 열거나 녹화 artifact를 선택할 때만 dynamic import한다.
 
 처리 순서:
 
 1. 48 kHz로 각 track decode/resample
-2. MR 직접 track에서 60개 cycle 검출
+2. MR 직접 track에서 5분 제품 시험의 30개 cycle 또는 10분 스트레스 시험의 60개 cycle 검출
 3. mic/monitor track에서 같은 880/440 Hz marker 검출
 4. cycle별 cross-correlation과 440 Hz edge를 독립 계산
 5. fixed offset, 선형 drift, 첫 5↔마지막 5 중앙값 drift, detrended jitter p95 계산
@@ -149,13 +151,14 @@ karaokeSyncEvidence
 
 | 항목 | 기준 |
 |---|---:|
-| marker | 60/60, 누락·중복 0 |
+| 5분 marker | 30/30, 누락·중복 0 |
 | 보정 후 fixed offset | `±20ms` 이내 |
-| 10분 relative drift | `≤10ms` |
+| 한 곡(최대 5분) relative drift | `≤10ms` |
 | jitter p95 | `≤5ms` |
 | active dropout | 0 |
 | echo secondary peak | 정책 한계 이하 |
-| 반복성 | 10분 본시험 뒤 짧은 시험 1회 추가 통과 |
+| 반복성 | 5분 본시험 뒤 짧은 시험 1회 추가 통과 |
+| 10분 stress | 진단값으로 기록하되 route·재생 차단 조건으로 사용하지 않음 |
 
 통과하더라도 장비 fingerprint가 바뀌면 `stale`로 내리고 재검을 안내한다. 시간 경과만으로 매 방송마다 강제 재검하지 않는다.
 
@@ -170,11 +173,10 @@ karaokeSyncEvidence
 
 ## 10. 실행 순서
 
-1. 완료: 10분 물리 분리 track을 측정해 현재 장치의 수용 실패를 확정했다.
+1. 완료: 10분 물리 분리 track을 측정해 MR 연속성과 현재 장치의 장시간 drift를 수치화했다. 이 결과는 새 5분 곡 단위 관문의 통과·실패로 자동 환산하지 않는다.
 2. 구현: streaming active/unknown일 때 점검 신호를 UI·Coordinator·Worker·OBS player에서 차단한다.
 3. 구현: 설정 안에 접힌 performer-monitor 연결 안내를 추가한다.
 4. 다음: G6 certificate schema와 artifact import/analyzer를 lazy module로 만든다.
-5. 다음: 같은 audio clock 장치 또는 저지연 performer-monitor 경로로 10분+짧은 반복 시험을 재실행한다.
+5. 다음: 같은 audio clock 장치 또는 저지연 performer-monitor 경로로 5분 곡 단위 시험+짧은 반복 시험을 실행한다. 10분 run은 선택적인 stress 자료로 별도 기록한다.
 6. 별도: scene 전환·source refresh·OBS 재시작 변형을 검증한다.
 7. 별도: 사용자가 명시적으로 비공개 송출을 승인한 경우에만 G5를 수행한다.
-

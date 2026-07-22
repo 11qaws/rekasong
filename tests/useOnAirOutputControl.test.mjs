@@ -1177,7 +1177,7 @@ test('identity-matched terminal LOAD evidence cancels auto-PLAY and permits a st
   }
 });
 
-test('natural end queues STOP and sends the next LOAD only after exact authoritative stop proof', () => {
+test('natural end re-anchors the next song at zero after exact stop proof without replacing the route', () => {
   const activeRun = { entryId: 'entry-a', runId: 'run-a' };
   const endedProtocol = readyRoute('speaker', {
     activeFamily: { family: 'run', entryId: 'entry-a', runId: 'run-a' },
@@ -1270,6 +1270,11 @@ test('natural end queues STOP and sends the next LOAD only after exact authorita
     }],
     ['play'],
   ]);
+  assert.equal(
+    coordinator.calls.some(([name]) => ['activateOutput', 'deactivateOutput'].includes(name)),
+    false,
+    'song boundaries keep the established output route and replace only the media run',
+  );
   assert.equal(
     controller.getState().playbackTransitionState.status,
     ON_AIR_PLAYBACK_TRANSITION_STATUSES.LOADING,

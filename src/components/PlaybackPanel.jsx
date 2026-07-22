@@ -1030,6 +1030,7 @@ export default function PlaybackPanel({
                   <li>{t('obs.performerMonitor.step.sameClock')}</li>
                   <li>{t('obs.performerMonitor.step.obsDevice')}</li>
                   <li>{t('obs.performerMonitor.step.monitoring')}</li>
+                  <li>{t('obs.performerMonitor.step.perSong')}</li>
                   <li>{t('obs.performerMonitor.step.verify')}</li>
                 </ol>
                 <p className="obs-performer-monitor-policy">

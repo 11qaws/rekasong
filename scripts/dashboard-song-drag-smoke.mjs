@@ -115,6 +115,7 @@ try {
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
+  const httpErrors = [];
   const workerHostRequests = [];
   const sessionWorkerRequests = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -125,6 +126,11 @@ try {
     const requestUrl = request.url();
     if (/workers\.dev/i.test(requestUrl)) workerHostRequests.push(requestUrl);
     if (/\/v1\/sessions(?:\/|\?|$)/i.test(requestUrl)) sessionWorkerRequests.push(requestUrl);
+  });
+  page.on('response', (response) => {
+    if (response.status() >= 400) {
+      httpErrors.push({ status: response.status(), url: response.url() });
+    }
   });
   await page.route('**/api/search?**', (route) => route.fulfill({
     status: 200,
@@ -143,6 +149,13 @@ try {
     contentType: 'text/html',
     body: '<!doctype html><title>Preview fixture</title>',
   }));
+  if (vite) {
+    // Direct-mode development intentionally retains the legacy room/key relay.
+    // Keep this UI smoke deterministic without depending on the public ntfy
+    // service; public production runs do not intercept it and therefore prove
+    // that the authenticated On-Air build leaves the legacy relay dormant.
+    await page.route('https://ntfy.sh/**', (route) => route.fulfill({ status: 204, body: '' }));
+  }
 
   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.locator('.search-form input').fill('drag fixture');
@@ -225,7 +238,11 @@ try {
     'Dropping a search result into history unexpectedly created session Worker traffic.',
   );
   assert.deepEqual(pageErrors, []);
-  assert.deepEqual(consoleErrors, []);
+  assert.deepEqual(
+    consoleErrors,
+    [],
+    `HTTP failures observed during drag smoke: ${JSON.stringify(httpErrors)}`,
+  );
 
   console.log(JSON.stringify({
     targetUrl: appUrl,
@@ -234,6 +251,7 @@ try {
     historyDrop: 'one completed entry, zero playback',
     mobileLayout,
     workerHostRequests: workerHostRequests.length,
+    httpErrors,
     sessionWorkerRequests: {
       afterSearch: sessionRequestsAfterSearch,
       beforeHistoryDrop: sessionRequestsBeforeHistoryDrop,

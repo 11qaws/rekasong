@@ -1,6 +1,11 @@
 import React, { lazy, Suspense, useCallback, useState, useRef, useEffect, useMemo } from 'react';
 import { useSyncState } from '../hooks/useSyncState';
-import { getOrCreateRoom, getOrCreateSigningKeys, publishSync } from '../hooks/useRemoteSync';
+import {
+  getOrCreateRoom,
+  getOrCreateSigningKeys,
+  publishSync,
+  shouldUseLegacyWidgetRelay,
+} from '../hooks/useRemoteSync';
 import { useAiTitleExtraction } from '../hooks/useAiTitleExtraction';
 import { useOnAirSession } from '../hooks/useOnAirSession';
 import {
@@ -1651,14 +1656,15 @@ export default function Dashboard() {
     // eslint 참고: showToast는 setToasts만 사용하는 안정적 로직이다.
   }, [showToast, syncLoadNotice]);
 
-  const [room] = useState(() => getOrCreateRoom());
+  const useLegacyWidgetRelay = shouldUseLegacyWidgetRelay(useOnAirPlayer);
+  const [room] = useState(() => (useLegacyWidgetRelay ? getOrCreateRoom() : ''));
   const [signingKeys, setSigningKeys] = useState(null);
 
   useEffect(() => {
-    if (!signingKeys) {
+    if (useLegacyWidgetRelay && !signingKeys) {
       getOrCreateSigningKeys().then(setSigningKeys).catch(() => {});
     }
-  }, [signingKeys]);
+  }, [signingKeys, useLegacyWidgetRelay]);
 
   // Stage 5 위젯 projection (INV-9): 확정 상태만, 위젯이 쓰는 필드만 발행한다.
   // 위젯(room&key 구독)은 평면 currentSong/history를 소비하므로 v2 QueueEntry를
@@ -1672,12 +1678,12 @@ export default function Dashboard() {
   }), [currentEntry, active?.phase, history, isPlaying]);
 
   useEffect(() => {
-    if (room && signingKeys) {
+    if (useLegacyWidgetRelay && room && signingKeys) {
       // D-12(늦게 연 위젯의 빈 화면 — ntfy since= 재생/접속 스냅숏)는 이번 단계
       // 미포함, Stage 5 후속으로 남긴다. 지금은 다음 상태 변경 시 채워진다.
       publishSync({ state: widgetProjection, timestamp: Date.now() }, room, signingKeys.privateKey);
     }
-  }, [widgetProjection, room, signingKeys]);
+  }, [useLegacyWidgetRelay, widgetProjection, room, signingKeys]);
 
   useEffect(() => {
     if (!useOnAirPlayer || !onAirDisplayToken || !outputControllerReady) return;

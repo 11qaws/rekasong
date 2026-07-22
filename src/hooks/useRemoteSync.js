@@ -64,6 +64,13 @@ const isLocalDev = () =>
 
 const ntfyTopic = (room) => `https://ntfy.sh/rekasong-${room}`;
 
+// Production On-Air deployments already deliver display_state through the
+// authenticated session Worker. Starting the legacy public ntfy relay there
+// duplicates traffic, creates a second failure surface, and can surface ntfy
+// rate limits during ordinary Speaker use. Keep the relay only for builds that
+// have no On-Air service and therefore still expose the room/key direct widget.
+export const shouldUseLegacyWidgetRelay = (onAirConfigured) => onAirConfigured !== true;
+
 export function getOrCreateRoom() {
   try {
     let room = localStorage.getItem(ROOM_STORAGE_KEY);

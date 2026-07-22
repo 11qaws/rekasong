@@ -1,5 +1,13 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — v0.2.15 공개 위젯 중복 릴레이 제거와 곡 단위 싱크 기준
+
+- production On-Air 구성은 시청자 화면 상태를 이미 인증된 session Worker의 `display_state` WebSocket으로 보낸다. 그런데 Dashboard가 일반 Speaker 상태 변화에도 구형 공개 `ntfy.sh` room/key relay를 함께 만들고 있어 중복 HTTP와 429 오류 표면이 남아 있었다. On-Air가 구성된 production에서는 room·서명 키 생성과 ntfy publish를 완전히 휴면시키고, On-Air가 없는 직접 모드에서만 구버전 위젯 호환 relay를 유지한다.
+- 공개·로컬 drag smoke는 HTTP 4xx/5xx URL을 함께 기록한다. 직접 모드 개발 스모크만 외부 ntfy를 204 fixture로 격리하고, 공개 배포 검증은 가로채지 않아 production에서 ntfy 요청이 실제로 0건인지 판정한다. Speaker 유휴·검색·로컬 파일 재생은 기존처럼 session HTTP 0회, WebSocket 0개, 전송 frame 0개다.
+- 노래 방송의 운영 싱크 단위를 무한한 단일 시간축이 아니라 한 곡으로 확정했다. OBS route와 player lease는 곡 사이에도 유지하고, 각 곡은 새 `runId`와 `position: 0`으로 시작한다. 기존 곡의 exact strong-stop proof 뒤에만 다음 LOAD→PLAY를 진행하며, 곡 중간에는 analyzer나 telemetry를 이유로 자동 seek·restart·playback-rate 보정을 하지 않는다.
+- 최대 곡 길이 5분의 시작 offset·relative drift를 제품 관문으로 사용하고, 기존 10분 fixture는 장치 drift 속도와 장시간 연속성을 보는 stress 진단으로 낮췄다. 10분 결과는 route나 재생을 차단하지 않는다. 모든 새 안내는 한국어·영어 semantic key로 함께 추가했다.
+- 검증: 전체 686/686 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2건), Worker·브라우저 스크립트 문법, production build, OBS 정적 closure 예산(raw `383,818B` / gzip `117,569B` / brotli `103,056B`)을 통과했다. Dashboard JS는 `365.15kB` raw / `100.07kB` gzip이다. 로컬 drag는 HTTP 오류 0·Worker 요청 0, Speaker 유휴/검색/로컬 재생은 session HTTP 0·WebSocket 0·frame 0을 유지했다. 1,000곡 이력은 최대 100행, cold `273.3ms`, warm p95 `37ms`, 320px overflow 0, post-GC heap 증가 0B였다.
+
 ## 2026-07-22 (Codex) — v0.2.13 OBS → Speaker 원자적 재생권 이관과 방송 시작 금지
 
 - 공개 v0.2.12의 실제 OBS 재검증에서 1차 forwarded-ref 문제는 사라졌지만 두 번째 순서 경쟁을 확인했다. 사용자가 OBS 재생 중 Speaker를 누르면 UI는 `스피커 송출 중`으로 바뀌고 OBS 신호도 멈췄으나, OBS STOP/ENDED 증거가 Speaker run을 만드는 `setTimeout(0)`보다 먼저 도착해 현재 곡을 `natural` 완료로 이력에 넣고 source를 회수했다. 그 결과 Speaker `<audio>`가 재생할 곡을 잃었다.

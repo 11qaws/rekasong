@@ -27,11 +27,21 @@ const cdp = await context.newCDPSession(page);
 await cdp.send('Performance.enable');
 const consoleErrors = [];
 const pageErrors = [];
+const httpErrors = [];
+const ntfyRequests = [];
 
 page.on('console', (message) => {
   if (message.type() === 'error') consoleErrors.push(message.text());
 });
 page.on('pageerror', (error) => pageErrors.push(error.message));
+page.on('request', (request) => {
+  if (/^https:\/\/ntfy\.sh\//i.test(request.url())) ntfyRequests.push(request.url());
+});
+page.on('response', (response) => {
+  if (response.status() >= 400) {
+    httpErrors.push({ status: response.status(), url: response.url() });
+  }
+});
 
 await page.addInitScript(() => {
   window.__rekasongLongTasks = [];
@@ -233,7 +243,12 @@ try {
   const benignConsoleError = /favicon|ERR_BLOCKED_BY_CLIENT/i;
   const actionableConsoleErrors = consoleErrors.filter((message) => !benignConsoleError.test(message));
   assert.equal(actionableConsoleErrors.length, 0,
-    `Console errors: ${actionableConsoleErrors.join(' | ')}`);
+    `Console errors: ${actionableConsoleErrors.join(' | ')}; HTTP failures: ${JSON.stringify(httpErrors)}`);
+  assert.equal(
+    ntfyRequests.length,
+    0,
+    `Authenticated On-Air production must not publish through the legacy ntfy relay: ${ntfyRequests.join(' | ')}`,
+  );
 
   process.stdout.write(`${JSON.stringify({
     targetUrl,
@@ -248,7 +263,9 @@ try {
       mobileSettingsDialog: 'fits at 320px in English',
       outputButtons: 'Speaker and OBS available after Speaker readiness',
       blondeLine: 'visible at every tested width',
+      legacyNtfyRequests: ntfyRequests.length,
     },
+    httpErrors,
     runtime: {
       cold: coldRuntime,
       warm: warmRuntime,

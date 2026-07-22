@@ -249,9 +249,13 @@ test('karaoke performer-monitor guidance is compact, translated, and explicitly 
     .filter((key) => key.startsWith(prefix))
     .sort();
   assert.deepEqual(englishKeys, koreanKeys);
-  assert.equal(koreanKeys.length, 9);
+  assert.equal(koreanKeys.length, 10);
   assert.match(outputMessageCatalog.ko[`${prefix}speakerTestOnly`], /물리 스피커.*측정용.*헤드폰/);
   assert.match(outputMessageCatalog.ko[`${prefix}step.sameClock`], /같은 오디오 인터페이스/);
+  assert.match(outputMessageCatalog.ko[`${prefix}step.perSong`], /곡마다.*0.*곡 중간.*하지 않습니다/);
+  assert.match(outputMessageCatalog.ko[`${prefix}step.verify`], /5분.*10분.*스트레스 진단/);
+  assert.match(outputMessageCatalog.en[`${prefix}step.perSong`], /every song.*position zero.*Never auto-seek/i);
+  assert.match(outputMessageCatalog.en[`${prefix}step.verify`], /five-minute.*ten-minute.*stress diagnostic/i);
   assert.match(outputMessageCatalog.ko[`${prefix}policy`], /연결이나 재생을 끊지 않고/);
   assert.match(outputMessageCatalog.ko[`${prefix}policy`], /자동 변경하지 않/);
   assert.match(outputMessageCatalog.en[`${prefix}policy`], /never disconnect/i);

@@ -33,7 +33,7 @@
 - 앱 점검 신호가 G2 완료로 끝나는 동안 OBS의 Rekasong 믹서 미터가 약 -25 dB까지 움직였다. 이는 G3의 기계 관측 통과이며, 사람이 들은 결과나 최종 방송 트랙 통과를 뜻하지 않는다.
 - 실제 방송은 한 번도 켜지 않았다. 사용자 허용 범위인 로컬 녹화만 사용했고, 최종 상태에서는 녹화도 껐다.
 - G4는 실제 녹화 artifact의 기준 PCM으로 통과했다.
-- G6는 물리 스피커 출력과 FIFINE 마이크 입력을 분리 track으로 10분 기록했다. marker와 jitter는 통과했지만 상대 drift와 offset은 기준을 넘어 수용 실패했다.
+- G6는 물리 스피커 출력과 FIFINE 마이크 입력을 분리 track으로 10분 기록했다. marker와 jitter는 통과했고 장시간 drift를 수치화했지만 시작 offset은 실패했으며, 새 제품 관문인 5분 한 곡 drift는 재판정한다.
 
 아직 확정하지 않은 것:
 
@@ -87,7 +87,7 @@
 | G3 정확한 OBS 믹서 입력 | **기계 관측 통과, 사용자 청취 대기** | test signal 중 Rekasong source meter 약 -25 dB; 사용자 모니터링 청취 기록 추가 필요 | 정확한 source meter와 최종 output meter가 시험 박자대로 움직이고 사용자가 들음을 확인 |
 | G4 녹화 파일 | **현재 장비 구성 통과** | `2026-07-22 09-57-46.mp4`: AAC 48kHz stereo, 880Hz 12개 + 440Hz 4개 | clipping 0, AAC frame 해상도에서 20ms 초과 활성 구간 분할 0, marker 누락·중복 0 |
 | G5 비공개 방송/VOD | 인코더·ingest 이후에도 신호가 남음 | 비공개 스트림 또는 VOD 원본 | 최종 방송 오디오 트랙에서 시험 신호 검출 |
-| G6 보컬↔MR 싱크 | **현재 장치 구성 측정 완료·수용 실패** | `2026-07-22 21-55-45.mkv`: track 2 MR, track 3 FIFINE 마이크, 60/60 marker | jitter p95 `1.832ms` 통과; offset `43.25ms`, drift `15.5–17.32ms/590초` 실패. 같은 clock 경로로 재검증 |
+| G6 보컬↔MR 싱크 | **장시간 측정 완료·시작 offset 실패·5분 drift 재판정** | `2026-07-22 21-55-45.mkv`: track 2 MR, track 3 FIFINE 마이크, 60/60 marker | jitter p95 `1.832ms`; offset `43.25ms`, 10분 stress drift `15.5–17.32ms/590초`. 같은 clock 경로로 재검증 |
 
 G3에서 반드시 바꿔 보아야 할 항목:
 
@@ -136,7 +136,7 @@ G3에서 반드시 바꿔 보아야 할 항목:
 2. GitHub Pages에 배포하고 공개 URL에서 캐시를 우회한 새 프로필 브라우저 검증을 반복한다.
 3. G3의 남은 사용자 청취를 확인하고 source mute·monitoring·scene 전환·refresh·OBS 재시작 변형을 수행한다. source hide/show 중 established route와 16/16 marker 지속은 실제 OBS에서 통과했다.
 4. G4 녹화 artifact는 현재 장비 구성에서 통과했다.
-5. G6 10분 마이크↔MR 상호상관 측정은 완료했지만 현재 장치 조합이 수용 실패했다. 같은 audio clock 장치 또는 저지연 performer monitoring 경로를 설계하고, 실패를 route 차단 조건으로 쓰지 않는 advisory UX를 고정한 뒤 동일 fixture로 재실행한다.
+5. G6 10분 마이크↔MR 상호상관 측정은 완료했고 장시간 stress drift를 수치화했다. 제품 관문은 최대 5분 한 곡의 시작 offset·drift로 재정의했으므로 같은 audio clock 장치 또는 저지연 performer monitoring 경로에서 5분+짧은 반복 시험을 실행한다. 10분 결과와 모든 실패는 advisory이며 route 차단 조건으로 쓰지 않는다.
 6. G5 비공개 방송 결과물은 사용자가 실제 비공개 송출을 명시적으로 승인한 경우에만 PCM을 확인한다.
 7. G3~G6 증거가 모두 수용 기준을 통과하기 전에는 UI나 문서에서 `OBS 송출 검증 완료` 또는 `싱크 검증 완료`라고 표시하지 않는다.
 

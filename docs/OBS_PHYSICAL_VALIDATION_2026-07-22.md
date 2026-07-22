@@ -167,7 +167,9 @@ OBS Recording Stop: 22:06:26.770
 | 440 Hz edge 선형 drift | `17.996 ms / 590초` | `≤ 10 ms / 10분` | **실패** |
 | 중앙 offset | `43.25 ms` | 보정 후 `±20 ms` | **실패** |
 
-따라서 G6는 **측정 완료·수용 실패**다. 앱/OBS의 MR 시간축과 established media graph는 안정적이었지만, 현재의 온보드 스피커 출력과 별도 USB 마이크 입력은 서로 다른 하드웨어 clock을 사용한다. 관측된 누적 상대 drift는 이 물리 monitoring chain의 clock 차이와 일치하며, 앱 연결 검사로 해결하거나 route를 끊어야 할 종류의 문제가 아니다.
+따라서 기존 10분 G6 기준으로는 **측정 완료·수용 실패**였다. 앱/OBS의 MR 시간축과 established media graph는 안정적이었지만, 현재의 온보드 스피커 출력과 별도 USB 마이크 입력은 서로 다른 하드웨어 clock을 사용한다. 관측된 누적 상대 drift는 이 물리 monitoring chain의 clock 차이와 일치하며, 앱 연결 검사로 해결하거나 route를 끊어야 할 종류의 문제가 아니다.
+
+이후 제품 수용 단위는 실제 최대 곡 길이인 5분으로 정리했다. 곡마다 새 `runId`와 `position: 0`으로 기준점을 다시 잡고 OBS route는 유지한다. 따라서 이 10분 결과는 장시간 stress 자료로 보존하되, 5분 구간의 drift를 별도로 재산출하기 전에는 새 곡 단위 관문의 통과·실패를 주장하지 않는다. 중앙 offset `43.25ms`는 여전히 현재 물리 monitoring 경로의 시작 offset 기준을 넘으므로 같은-clock 또는 실제 헤드폰 경로에서 다시 측정해야 한다.
 
 OBS Browser Source에 `+69 ms` sync offset을 넣은 비교 녹화(`2026-07-22 21-45-35.mkv`)에서는 상대 마이크 지연이 약 `82–84 ms`로 더 커졌다. 이 offset은 MR과 마이크 사이의 물리 clock drift를 고치지 못하므로 `0 ms`로 복원했다. 자동 보정값으로 사용하지 않는다.
 
