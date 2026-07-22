@@ -287,6 +287,18 @@ result: G4 passed for this exact OBS/profile/track configuration
 
 ## 11. G6 — 카라오케 마이크↔반주 싱크
 
+제품용 5분 fixture는 앱의 10초짜리 설정 점검음과 분리된 오프라인 도구로 만든다. 앱의 짧은 점검음 상한을 늘리지 않으므로 실수로 긴 진단음이 일반 방송에 재생되지 않는다.
+
+```powershell
+npm run make:obs:karaoke-fixture -- "C:\path\to\rekasong-obs-karaoke-5m-v1.wav"
+```
+
+기본 출력은 48kHz mono PCM WAV, `302.5초`, `29,040,044바이트`다. 앞 1초의 안전 여백 뒤 10초 주기 marker를 `0..300초` 양 끝에 31개 넣고 마지막 분석 여백까지 포함한다. 선택적인 10분 stress 파일은 명령 끝에 `--stress`를 붙인다. 생성 명령은 파일 SHA-256과 marker 수를 JSON으로 출력하므로 녹화 기록에 함께 남긴다.
+
+실제 OBS CEF 경로로 재생할 때는 위 파일을 `REKASONG_CEF_SOAK_ASSET`, MIME을 `audio/wav`, 기대 길이를 `302500`으로 지정할 수 있다. 반드시 전용 시험 profile·scene에서 OBS 방송이 꺼져 있음을 먼저 확인하고, 로컬 녹화만 시작한다. fixture의 30초 cadence는 관측 지점일 뿐이며 재생 중 seek·restart·playback-rate 변경을 명령하지 않는다.
+
+도구 자체의 기준 검증은 direct MR과 의도적인 `+12ms` 복제 track을 임시 3-track MKV로 mux해 수행했다. `scripts/analyze-obs-karaoke-window.py --expected-cycles 31`이 offset `12.001ms`, linear drift `0.003ms`, marker 31/31을 복원했다. 이 합성 통과는 분석기와 fixture의 시간축 계약만 증명하며 실제 OBS·마이크·헤드폰 경로의 G6 결과를 대신하지 않는다.
+
 1. MR fixture와 마이크 기준 신호를 가능한 한 분리 track으로 녹화한다.
 2. 시작 count-in과 주기 marker를 함께 기록한다. 10초 주기 5분 시험은 `0초`와 `300초` endpoint를 포함해 31개 marker여야 한다.
 3. 실제 최대 곡 길이인 5분 동안 scene 전환 없이 한 곡의 기준 상태를 측정한다. 필요하면 같은 fixture를 10분까지 늘려 stress 진단을 별도로 기록한다.

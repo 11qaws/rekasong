@@ -1,5 +1,14 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — 재현 가능한 5분 G6 fixture와 30초 관측 계약
+
+- `scripts/obs-karaoke-sync-fixture.mjs`를 제품 번들과 분리된 오프라인 도구로 추가했다. 앱의 안전한 10초 점검음 상한은 그대로 유지하면서, 48kHz mono PCM WAV에 10초 주기 440/880Hz marker를 endpoint-inclusive `31개/0..300초`로 기록한다.
+- 파일에는 첫 marker 상관 분석을 위한 1초 lead-in과 마지막 marker 분석 여백을 포함한다. 기본 5분 제품 fixture는 `302.5초/29,040,044바이트`, 선택적인 10분 stress는 61 marker로 제한되며 둘 다 외부 CEF harness의 64MiB active-media 한도 안이다.
+- 30초 cadence는 fixture metadata에서도 `observe_only_no_seek_restart_or_rate_change`로 고정했다. 측정값은 route·media graph를 바꾸지 않으며 다음 곡만 새 run과 0초 기준으로 시작한다. 실제 OBS 방송 시작·종료 권한은 추가하지 않았다.
+- Node 회귀 테스트는 endpoint 수, 30초 관측 pair, WAV header, digital silence, deterministic bytes, cycle 상한을 검증한다. 생성 CLI는 artifact SHA-256·크기·marker 수를 JSON으로 출력해 로컬 녹화와 분석 결과를 재현할 수 있게 한다.
+- 실제 생성 artifact `D:\Agents\rekasong\Codex\artifacts\rekasong-obs-karaoke-5m-v1.wav`의 SHA-256은 `2DE113DE43A45940C92220740647B0E8FC0BCE0B548744D6A7D360EEF9955708`이다. 동일 파일을 direct MR 두 track과 의도적인 `+12ms` mic track으로 임시 mux한 뒤 기존 분석기를 실행해 31/31 marker, 중앙 offset `12.001ms`, 300초 linear drift `0.003ms`, 30초 변화 최악 `0.007ms`를 복원했다. 임시 MKV는 분석 직후 삭제했으며 OBS와 방송 상태는 변경하지 않았다.
+- 검증: 전체 `689/689` 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2건), Python/Node 문법, production build를 통과했다. OBS 정적 closure는 raw `383,782B`, gzip `117,554B`, brotli `102,987B`로 기존 예산 안이며 오프라인 fixture 모듈은 production bundle에 포함되지 않았다.
+
 ## 2026-07-22 (Codex) — v0.2.15 공개 위젯 중복 릴레이 제거와 곡 단위 싱크 기준
 
 - production On-Air 구성은 시청자 화면 상태를 이미 인증된 session Worker의 `display_state` WebSocket으로 보낸다. 그런데 Dashboard가 일반 Speaker 상태 변화에도 구형 공개 `ntfy.sh` room/key relay를 함께 만들고 있어 중복 HTTP와 429 오류 표면이 남아 있었다. On-Air가 구성된 production에서는 room·서명 키 생성과 ntfy publish를 완전히 휴면시키고, On-Air가 없는 직접 모드에서만 구버전 위젯 호환 relay를 유지한다.

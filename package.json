@@ -17,6 +17,7 @@
     "test:obs:v2:safety": "node scripts/obs-v2-safety-smoke.mjs",
     "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs",
     "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs",
+    "make:obs:karaoke-fixture": "node scripts/obs-karaoke-sync-fixture.mjs",
     "test:dashboard:smoke": "node scripts/dashboard-production-smoke.mjs",
     "test:dashboard:history": "npm run build && node scripts/dashboard-history-performance-smoke.mjs",
     "test:dashboard:speaker-network": "node scripts/dashboard-speaker-network-smoke.mjs",
