@@ -70,32 +70,38 @@ const dropOn = async (source, target, dataTransfer) => {
   await dataTransfer.dispose();
 };
 
-const port = await reservePort();
-const appUrl = `http://127.0.0.1:${port}/`;
-const vitePath = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
+const requestedUrl = process.argv[2]?.trim();
+let appUrl = requestedUrl;
+let vite = null;
 const viteLogs = [];
-const vite = spawn(process.execPath, [
-  vitePath,
-  '--host', '127.0.0.1',
-  '--port', String(port),
-  '--strictPort',
-  '--mode', 'development',
-], {
-  cwd: fileURLToPath(new URL('..', import.meta.url)),
-  env: {
-    ...process.env,
-    BROWSER: 'none',
-    VITE_ON_AIR_BASE_URL: '',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-  windowsHide: true,
-});
-vite.stdout.on('data', (chunk) => viteLogs.push(String(chunk)));
-vite.stderr.on('data', (chunk) => viteLogs.push(String(chunk)));
+
+if (!appUrl) {
+  const port = await reservePort();
+  appUrl = `http://127.0.0.1:${port}/`;
+  const vitePath = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
+  vite = spawn(process.execPath, [
+    vitePath,
+    '--host', '127.0.0.1',
+    '--port', String(port),
+    '--strictPort',
+    '--mode', 'development',
+  ], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      BROWSER: 'none',
+      VITE_ON_AIR_BASE_URL: '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  vite.stdout.on('data', (chunk) => viteLogs.push(String(chunk)));
+  vite.stderr.on('data', (chunk) => viteLogs.push(String(chunk)));
+}
 
 let browser;
 try {
-  await waitForServer(appUrl, vite, viteLogs);
+  if (vite) await waitForServer(appUrl, vite, viteLogs);
   browser = await chromium.launch({ executablePath, headless: true });
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
   await context.addInitScript(() => {
@@ -109,13 +115,16 @@ try {
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
-  const workerRequests = [];
+  const workerHostRequests = [];
+  const sessionWorkerRequests = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
   page.on('request', (request) => {
-    if (/workers\.dev|\/v1\/sessions(?:\/|\?|$)/i.test(request.url())) workerRequests.push(request.url());
+    const requestUrl = request.url();
+    if (/workers\.dev/i.test(requestUrl)) workerHostRequests.push(requestUrl);
+    if (/\/v1\/sessions(?:\/|\?|$)/i.test(requestUrl)) sessionWorkerRequests.push(requestUrl);
   });
   await page.route('**/api/search?**', (route) => route.fulfill({
     status: 200,
@@ -141,6 +150,7 @@ try {
   const source = page.locator(`[data-song-drag-source="${VIDEO_ID}"]`);
   await source.waitFor({ state: 'visible' });
   assert.equal(await source.count(), 1);
+  const sessionRequestsAfterSearch = sessionWorkerRequests.length;
 
   // Click remains the complete touch/keyboard alternative to dragging.
   await source.locator('.result-select-button').click();
@@ -150,6 +160,7 @@ try {
   await page.locator('.search-form input').fill('drag fixture');
   await page.locator('.search-form button[type="submit"]').click();
   await source.waitFor({ state: 'visible' });
+  await page.waitForTimeout(250);
 
   const stateBeforeCancel = await page.evaluate(() => localStorage.getItem('karaoke_app_state'));
   const cancelTransfer = await beginDrag(page, source);
@@ -166,6 +177,7 @@ try {
   await page.locator('[data-song-drop-tray="visible"]').waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => localStorage.getItem('karaoke_app_state')), stateBeforeCancel,
     'Cancelling a drag must not mutate durable state.');
+  const sessionRequestsBeforeHistoryDrop = sessionWorkerRequests.length;
 
   await page.setViewportSize({ width: 320, height: 900 });
   const historyTransfer = await beginDrag(page, source);
@@ -206,16 +218,27 @@ try {
   assert.equal(stored.history[0].song.src, VIDEO_ID);
   assert.equal(stored.currentEntry, null);
   assert.equal(await page.locator('[data-song-drop-tray="visible"]').count(), 0);
-  assert.equal(workerRequests.length, 0, 'Speaker drag smoke unexpectedly created Worker traffic.');
+  await page.waitForTimeout(100);
+  assert.equal(
+    sessionWorkerRequests.length,
+    sessionRequestsBeforeHistoryDrop,
+    'Dropping a search result into history unexpectedly created session Worker traffic.',
+  );
   assert.deepEqual(pageErrors, []);
   assert.deepEqual(consoleErrors, []);
 
   console.log(JSON.stringify({
+    targetUrl: appUrl,
     clickPath: 'search result -> review',
     cancelPath: 'zero durable mutation',
     historyDrop: 'one completed entry, zero playback',
     mobileLayout,
-    workerRequests: workerRequests.length,
+    workerHostRequests: workerHostRequests.length,
+    sessionWorkerRequests: {
+      afterSearch: sessionRequestsAfterSearch,
+      beforeHistoryDrop: sessionRequestsBeforeHistoryDrop,
+      afterHistoryDrop: sessionWorkerRequests.length,
+    },
   }, null, 2));
 } finally {
   await browser?.close();

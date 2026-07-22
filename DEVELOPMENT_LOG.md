@@ -12,6 +12,9 @@
 - 직전 클릭 토스트가 drop tray를 덮어 목적지가 없는 것처럼 보이는 문제도 캡처로 발견했다. drag 중에는 tray를 최우선 조작면으로 두고 toast를 잠시 숨기며, drag가 끝나면 기존 toast가 다시 나타난다. 평상시 tray DOM은 0개라 상시 UI·레이아웃 비용이 없다.
 - 검증: 654/654 자동 테스트, 그 안의 500회 로컬 Speaker↔OBS 왕복, 새 `dashboard-song-drag-smoke`, 로컬 파일 복구 smoke, 1,000곡 production-browser 성능 smoke, 로컬 production Dashboard smoke, Worker 문법, production build를 통과했다. lint는 기존 `functions/api/gemini.js` escape 경고 2건만 유지한다.
 - 성능: Dashboard JS 356.26kB raw / 97.66kB gzip, CSS 59.79kB raw / 11.32kB gzip, 1,000곡 cold open 34.1ms, warm p95 47.5ms, post-GC heap 증가 210,748B다. OBS 정적 closure는 raw 382,301B / gzip 116,112B / brotli 101,671B로 450KiB/130KiB 예산 안이며 OBS player·Worker media graph는 변경하지 않았다.
+- 앱 커밋 `f8f78ad`를 Pages workflow `29904080444`로 배포했다. clean install 뒤 654개 테스트, lint, Worker 문법, production build, OBS bundle 예산과 publish가 모두 성공했다.
+- 캐시를 우회한 공개 v0.2.9 Dashboard smoke에서 Speaker 기본값, 활성 Speaker/OBS 선택, YouTube 단일 소스, 한국어↔영어 지속성, 설정 대화상자와 320/375/768/1100px 반응형을 통과했다. 유레카 금발을 뜻하는 실제 3px 노란 선도 모든 폭에서 다시 확인했다.
+- 드래그 smoke가 로컬 개발 서버뿐 아니라 대상 URL을 직접 받을 수 있게 했다. 공개 주소에서도 클릭→검토, 취소 시 저장 변경 0건, 이력 drop 시 재생 0건, 320px 문서 폭 320px와 3개 목적지 범위를 통과했다. 공개 환경의 media-session 요청은 이력 drop 직전 2건에서 직후 2건으로 유지돼 drop 자체가 새 세션 연결을 만들지 않았다. 같은 공개 릴리스의 1,000곡 이력은 cold 28.4ms, warm p95 40.5ms, post-GC heap 증가 257,576B였다.
 - 실제 청취, 비공개 방송/VOD, 모바일 OS별 백그라운드, 10분 마이크↔MR 상호상관은 이 UI 변경과 별도의 물리 관문으로 계속 남는다.
 
 ## 2026-07-22 (Codex) — v0.2.7 유레카 금발선 영구 요소 승격

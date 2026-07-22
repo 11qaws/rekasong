@@ -21,20 +21,22 @@
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
+| 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.9 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위) | 현재 후보 배포됨 | 공개 언어 전환 smoke |
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.6 공개 URL 실측 완료 | 없음 |
 
-현재 공개 Pages의 앱 release 기준은 frontend `0.2.6` / `eb25839`다. 고정 100행 이력 탐색과 공개 성능 관문을 추가했으며 Worker·OBS media graph는 바꾸지 않았다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 635/635와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
+현재 공개 Pages의 앱 release 기준은 frontend `0.2.9` / `f8f78ad`다. 고정 100행 이력, 페이지 한정 로컬 파일 복구, 곡 드래그 빠른 배치와 공개 성능 관문을 추가했으며 Worker·OBS media graph는 바꾸지 않았다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 654/654와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
-- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-CLVfnpPP.js`, Dashboard JS/CSS는 `assets/Dashboard-Bv-yzrIW.js` / `assets/Dashboard-DUb50qo8.css`다. CDN Last-Modified는 `2026-07-22 06:55:47Z`다.
+- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-szW9ejwN.js`, Dashboard JS/CSS는 `assets/Dashboard-C9jl9GiE.js` / `assets/Dashboard-CpozUITF.css`다. CDN Last-Modified는 `2026-07-22 08:28:15Z`다.
 - 공개 Worker의 현재 활성 배포는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 이 Worker와 공개 Pages 조합으로 실제 OBS CEF 60분 재생을 통과했다.
 - 공개 Worker 루트의 HTTP 404는 장애가 아니라 루트 라우트를 제공하지 않는 현재 설계다. 세션·WebSocket·미디어 API는 `/v1/...` 아래에서만 제공한다.
 - 공개 첫 화면은 Speaker 기본과 `스피커 송출 중`을 유지하고, OBS 전용 설정은 톱니 안에서 OBS를 선택한 사용자에게 점진적으로 노출한다.
 - 헤더의 얇은 노란 선은 유레카의 금발을 나타내는 영구 브랜드 요소다. production 390px viewport에서 실제 노란 픽셀 212개가 x=1..367, y=80..81에 존재했고 흰색 hairpin 묶음 뒤로 이어졌다. CSS는 3px, `rgb(242, 217, 141)`, `isolation:isolate`로 확인했다.
 - YouTube 단일 소스, 즉시 곡 검토 표시, 한국어/영어 전환을 포함한 현재 후보가 공개 배포됐다. 표에 남긴 모바일·다중 탭·출력 장치·언어 전환 수동 smoke는 별도 실기기 관문이다.
+- 공개 v0.2.9에서 검색 결과 클릭→검토와 drag 취소·이력 drop을 반복했다. 취소는 저장 변경 0건, 이력 drop은 현재 곡·대기열·재생 0건이며, 320px에서도 세 목적지가 모두 화면 안에 있다. 이력 drop 직전과 직후의 media-session 요청 수는 2→2로 같아 drop이 별도 Worker 세션을 열지 않았다.
 
 ## 2. Speaker 사용자 흐름
 
@@ -110,6 +112,7 @@
 - YouTube는 상단에서 하나의 소스이며 내부에 검색/플레이리스트가 있다. 상단 순서는 YouTube → Setlink → 멜로밍이다.
 - 노래책 본문은 읽기 쉬운 진한 녹색을 사용하고 emerald는 연결 상태·장식에 남긴다.
 - 곡 행은 클릭 가능한 버튼이며 바쁜 상태를 즉시 보여 준 뒤 검토 화면으로 이동한다.
+- 데스크톱에서는 재생 가능한 검색·노래책 곡을 끌 때만 `지금/다음 재생`, `대기열 끝`, `이전 재생곡` 목적지를 보여 준다. 현재 곡이 있으면 자르지 않고 다음 순서로 넣으며, 취소는 아무 상태도 바꾸지 않는다. 모바일·키보드는 같은 결과를 만드는 기존 클릭→검토 버튼을 유지한다.
 
 ## 5. 번역 구조
 
@@ -124,27 +127,27 @@
 
 - 닫힌 이전 재생 곡은 DOM 행 0개, 최초 개방은 최근 100개다. `이전 100곡`·`다음 100곡`·`최근 100곡`으로 이동해도 한 번에 한 페이지만 만들어 1,000곡 전체를 탐색하는 동안 실제 이력 행은 항상 100개 이하다. 닫으면 최신 페이지와 0행으로 초기화한다.
 - production build를 격리 Chromium에서 실행한 1,000곡 실측은 저장 payload `290,235B`, 최초 개방 `31.9~259.4ms`, warm 조작 p95 `30.6~42.8ms`, 320px 가로 overflow 0, 닫은 뒤 GC heap 증가 약 `0.2MiB`였다. 각각 1MiB, 300ms, 100ms, 16MiB 예산 안이다. 개발 서버의 module transform 비용은 제품 UI 성능으로 세지 않는다.
-- 배포 뒤 공개 URL을 같은 harness로 다시 측정한 결과는 최대 100행, cold open `32.3ms`, warm p95 `46.9ms`, 320px 문서 폭 `320px`, post-GC heap 증가 `219,300B`였다. 10개 페이지 전체 왕복과 최신 복귀, 5회 재개폐를 포함한다.
+- v0.2.9 배포 뒤 공개 URL을 같은 harness로 다시 측정한 결과는 최대 100행, cold open `28.4ms`, warm p95 `40.5ms`, 320px 문서 폭 `320px`, post-GC heap 증가 `257,576B`였다. 10개 페이지 전체 왕복과 최신 복귀, 5회 재개폐를 포함한다.
 - 반복 가능한 공개 Dashboard 스모크가 새 격리 Chrome에서 Speaker 기본값과 두 출력 버튼의 활성 상태, YouTube 단일 상위 소스, 한·영 전환·새로고침 지속성, 320/375/768/1100px의 머리핀·금발 선·가로 overflow를 검사한다.
-- 공개 냉시작 2회 실측: DCL 약 499~536ms, 초기 자원 289,872B 전송 / 1,018,946B decode, DOM 125~127개, 67~72ms long task 1개. 캐시 재방문은 DCL 약 25~28ms, long task 0개였다.
-- 전체 조작 뒤 JS heap은 약 9.2MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
+- v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
+- 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- 전체 테스트: 635/635 통과.
+- 전체 테스트: 654/654 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 343.39 kB raw / 94.14 kB gzip.
-- Dashboard CSS: 56.44 kB raw / 10.59 kB gzip.
+- Dashboard chunk: 356.26 kB raw / 97.66 kB gzip.
+- Dashboard CSS: 59.79 kB raw / 11.32 kB gzip.
 - 탭별 local Speaker lazy chunk: 4.55 kB raw / 1.82 kB gzip.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 382,301B raw / 116,113B gzip / 101,719B brotli.
+- OBS 정적 경로: 382,301B raw / 116,112B gzip / 101,671B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 
 ## 7. 배포 완료와 다음 관문
 
-1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.6` / `eb25839` 배포를 완료했다. 앱 배포 workflow는 `29898336642`다.
-2. GitHub Pages clean install·635개 테스트·build·OBS budget·publish와 production 자산 응답, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
+1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.9` / `f8f78ad` 배포를 완료했다. 앱 배포 workflow는 `29904080444`다.
+2. GitHub Pages clean install·654개 테스트·build·OBS budget·publish와 production 자산 응답, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
 3. 실제 OBS G3, G4, source hide/show, CEF 60분 재생을 통과했다.
-4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
+4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
 5. 최종 송출 관문은 사용자의 실제 청취, 비공개 방송/VOD G5, 10분 마이크↔MR 상호상관 G6다.
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.
