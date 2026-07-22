@@ -48,13 +48,14 @@
 - Protocol v2, Worker lease/identity/fence, 공통 PlaybackEngine, source resolver, deterministic fixture, coordinator, v2 OBS player, bounded prefetch, route split, 로컬 Speaker 분리, 번역 구조와 점진 OBS 설정을 구현했다.
 - production Worker 경로와 staging 경로를 env로 다시 분리했고 production 산출물에 staging URL이 섞이지 않는지 검사했다.
 - 최신 검증 결과:
-  - 전체 자동 테스트 `634/634` PASS.
+  - 전체 자동 테스트 `635/635` PASS.
   - lint PASS, 기존 무관 warning 2.
   - production build PASS, 500KiB chunk/CSS import warning 0.
   - OBS v2 선택 artifact raw `382,301B`, gzip `116,110B`, budget PASS.
   - v2 브라우저 cold-route 전송 `115,317B`, 초기 DOM 15개, 외부 font 요청 0.
   - 4Hz heartbeat 10초 동안 DOM mutation 0, React-facing coordinator publish 0.
   - 공개 Dashboard 냉시작 2회: 289,872B 전송 / 1,018,946B decode, DOM 125~127개, JS heap 약 9.1MiB. 320~1100px 한국어·영어 hairpin/금발 선/설정 dialog와 Speaker 기본값·출력 버튼을 자동 smoke로 확인했다.
+  - v0.2.6 후보의 1,000곡 production-browser 측정은 실제 이력 행 최대 100개, 저장 `290,235B`, 최초 개방 `31.9~259.4ms`, warm p95 `30.6~42.8ms`, 320px overflow 0, post-GC heap 증가 약 0.2MiB로 예산을 통과했다. 공개 배포 후 같은 URL 재측정이 남았다.
 - 과거 staging smoke 11/11과 10초 blob 재생은 초기 인수 증거로 보존하되 현재 Protocol v2/실제 OBS 증거로 승격하지 않는다.
 - 실제 OBS G3 mixer, G4 녹화 artifact, source hide/show와 CEF 60분 재생은 통과했다. 사용자의 실제 청취, ingest/VOD G5와 마이크↔MR G6는 미검증이다.
 
@@ -449,11 +450,11 @@ audio_check_cancel {checkId}
 
 ### P1-09. Dashboard 장시간 세션 예산
 
-- history는 최근 100~200행만 활성 state/DOM에 두거나 virtualization하고 오래된 기록은 IndexedDB로 archive한다.
+- [x] history는 원본 1,000곡을 보존하되 최신·이전·다음 고정 100행 페이지 중 하나만 DOM에 둔다. 닫혀 있을 때는 0행이며, 닫으면 최신 페이지로 초기화한다. 현재 1,000곡 payload가 0.28MiB라 IndexedDB archive는 즉시 필수 조건에서 제외하되 저장 예산을 계속 검사한다.
 - 로컬 감상 Blob은 최근 3~5개 또는 합계 256MiB 같은 count·byte 상한을 두고 object URL 생성·회수 수를 계측한다.
-- 1,000곡 fixture에서 실제 렌더 row 100 이하, 조작 p95 100ms 이하, localStorage payload 1MiB 이하를 합격 기준으로 둔다.
+- [x] 1,000곡 fixture에서 실제 렌더 row 100 이하, warm 조작 p95 100ms 이하, localStorage payload 1MiB 이하를 production Chromium으로 검증한다. 최신 실측은 100행, p95 30.6~42.8ms, `290,235B`다.
 - speaker↔OBS 500회 전환에서 control socket 1개, audible player 1개, stale fetch 0을 확인한다.
-- 숨긴 queue/history도 전체 `.map()`으로 DOM을 유지하지 않게 한다.
+- [x] 닫힌 history는 전체 `.map()`을 실행하지 않고 DOM 행을 0개로 유지한다. queue는 현재 사용자가 실제로 조작할 활성 목록이므로 별도 대량 fixture에서 상한을 정한다.
 
 ### P2-01. 문서 진실원 정리
 

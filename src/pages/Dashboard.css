@@ -1289,7 +1289,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* 히스토리 행: 액션 아이콘들이 세로로 쌓여 행이 비대해지지 않게 가로 정렬 + 대기열 행과 밀도 통일 */
 .history-accordion .history-item { padding: 0.4rem 0.6rem; min-height: 42px; }
 .history-accordion .history-item > div { display: flex; align-items: center; gap: 0.15rem; flex: 0 0 auto; }
-.history-window-actions { display: flex; justify-content: center; margin: 0.55rem 0 0.2rem; }
+.history-window-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.45rem; margin: 0.55rem 0 0.2rem; }
 .history-window-actions.is-bottom { margin: 0.45rem 0 0; }
 .history-window-actions .queue-play-action { min-height: 36px; }
 /* 곡 추가(composer) 뷰포트 잠금 체인: 영역 → song-composer → motion 래퍼 → 패널.

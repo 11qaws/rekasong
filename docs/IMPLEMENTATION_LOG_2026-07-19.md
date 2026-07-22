@@ -1,5 +1,13 @@
 # WEB ↔ OBS 출력 경로 구현 체크포인트 — 2026-07-19
 
+## 2026-07-22 v0.2.6 장기 이력 고정 창 후보
+
+- 누적형 `이전 100곡 더 보기`를 고정 100행 페이지로 교체했다. 최신·이전·다음 페이지 이동 동안 원본 1,000곡과 순서는 보존하지만 DOM에는 언제나 최대 100행만 두며, 이력을 닫으면 0행과 최신 offset으로 돌아간다.
+- production Chromium 전용 harness가 1,000곡 전체 10페이지, 최신 복귀, 5회 재개폐, 320px 모바일, GC 뒤 heap을 측정한다. 저장은 `290,235B`, 최초 개방 `31.9~259.4ms`, warm p95 `30.6~42.8ms`, 모바일 overflow 0, post-GC heap 증가 약 0.2MiB로 각각 1MiB/300ms/100ms/16MiB 예산을 통과했다.
+- 개발 서버의 module transform을 UI 성능으로 잘못 세지 않도록 production build/preview만 합격 판정에 사용하고, 최초 cold open을 warm p95 표본에서 분리했다. 같은 harness는 배포 후 공개 URL도 직접 검사할 수 있다.
+- 한국어·영어 이력 이동 문구를 semantic key로 추가했다. 기존 유레카 금발 3px 선의 불투명도·stacking context·반응형 가시성 회귀 검사는 그대로 유지한다.
+- 이 후보는 아직 frontend `0.2.6`으로 커밋·배포 전이다. Worker와 OBS media graph/protocol에는 변경이 없다.
+
 ## 2026-07-22 유레카 브랜드 선·실제 OBS 장시간 시험 보강
 
 - Dashboard 상단의 얇은 노란 선은 유레카의 금발을 나타내는 **고정 브랜드 요소**다. 흰색 hairpin 묶음 뒤로 항상 이어지며 데스크톱·모바일 반응형 규칙에서 숨기지 않는다. 첫 배포 점검에서 computed style은 노란색·3px·visible이었지만 `z-index:0`이 header 뒤로 빠져 실제 픽셀이 배경색인 문제를 발견했다. bar에 `isolation:isolate`를 적용해 로컬 stacking context 안에서 실제로 칠해지게 했고, 전용 회귀 테스트가 stacking context와 `display:none`, `visibility:hidden`, `opacity:0` 재도입을 차단한다.
@@ -200,7 +208,7 @@
 현재 남은 성능 한계:
 
 - 실제 OBS CEF의 fetch backing store와 decoder 메모리는 헤드리스 Chrome으로 증명할 수 없다. active `64MiB` + prefetch `64MiB`, 100곡 전환, 60분 soak를 실제 OBS에서 측정해야 한다.
-- Dashboard의 history와 local Blob 소유권은 아직 장시간 상한이 없다. 최근 100~200행 또는 virtualization, local Blob 최근 3~5개/합계 byte cap, archive를 적용하기 전에는 1,000곡 세션의 메모리 안전성을 주장하지 않는다.
+- Dashboard history는 1,000곡 원본을 보존하면서 고정 100행 window와 production-browser 예산을 통과했다. local Blob 소유권의 최근 3~5개/합계 byte cap은 아직 없으므로 로컬 파일을 반복 재생하는 장시간 메모리 안전성은 별도 관문으로 남는다.
 - DisplayWidget의 fullscreen blur·particle·animation은 오디오 v2 route에는 들어오지 않지만 실제 OBS display source의 GPU 부하는 별도로 측정해야 한다.
 
 ## 4. UI에서 지켜야 할 진실 계층
@@ -273,9 +281,9 @@ OBS v2가 선택하는 production artifact:
 
 남은 P1 성능 작업:
 
-- Dashboard history를 최근 100~200행으로 제한하거나 virtualize하고 archive를 IndexedDB로 분리한다.
+- [x] Dashboard history를 고정 100행 window로 제한하고 닫힌 상태를 0행으로 만든다. 1,000곡 payload가 1MiB 미만인 동안 archive는 필수 조건이 아니다.
 - 로컬 감상 Blob을 최근 3~5개 또는 합계 256MiB 같은 명시적 예산으로 제한하고 URL 생성·회수 수를 계측한다.
-- 1,000곡 history에서 렌더 row, 조작 p95, localStorage payload를 측정한다.
+- [x] 1,000곡 history에서 렌더 row, cold/warm 조작, localStorage payload, 모바일 overflow, post-GC heap을 production Chromium으로 측정한다.
 - 불필요한 control heartbeat relay를 제거하거나 1Hz로 coalesce한다.
 
 ## 8. 실제 OBS와 배포 순서

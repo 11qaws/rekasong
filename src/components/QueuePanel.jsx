@@ -7,7 +7,7 @@ import { songPrepareState } from '../lib/preparePipeline';
 import {
   HISTORY_WINDOW_BATCH_SIZE,
   createHistoryWindow,
-  expandHistoryWindowLimit,
+  shiftHistoryWindowOffset,
 } from '../lib/historyWindow';
 
 // Stage 6c(계약 §5): 대기열 행의 준비 상태 표시 정의. 실패가 방송 전에 눈에
@@ -70,17 +70,18 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
   const [manualTitle, setManualTitle] = useState('');
   const [manualArtist, setManualArtist] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyRenderLimit, setHistoryRenderLimit] = useState(HISTORY_WINDOW_BATCH_SIZE);
+  const [historyWindowOffset, setHistoryWindowOffset] = useState(0);
   const historyWindow = useMemo(
-    () => createHistoryWindow(history, historyRenderLimit),
-    [history, historyRenderLimit]
+    () => createHistoryWindow(history, historyWindowOffset),
+    [history, historyWindowOffset]
   );
-  const nextHistoryBatchCount = Math.min(HISTORY_WINDOW_BATCH_SIZE, historyWindow.hiddenCount);
+  const olderHistoryBatchCount = Math.min(HISTORY_WINDOW_BATCH_SIZE, historyWindow.olderCount);
+  const newerHistoryBatchCount = Math.min(HISTORY_WINDOW_BATCH_SIZE, historyWindow.newerCount);
 
   const handleHistoryToggle = (event) => {
     const open = event.currentTarget.open;
     setHistoryOpen(open);
-    if (!open) setHistoryRenderLimit(HISTORY_WINDOW_BATCH_SIZE);
+    if (!open) setHistoryWindowOffset(0);
   };
 
   // D-21: 드래그 시작 시의 인덱스가 아니라 entryId로 항목을 식별하고, 드롭
@@ -238,14 +239,16 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                 <Plus size={14} /> {t('queue.history.manual.add.label')}
               </button>
             </form>
-            {historyWindow.hiddenCount > 0 ? (
+            {historyWindow.olderCount > 0 ? (
               <div className="history-window-actions">
                 <button
                   type="button"
                   className="queue-play-action"
-                  onClick={() => setHistoryRenderLimit((current) => expandHistoryWindowLimit(current, history.length))}
+                  onClick={() => setHistoryWindowOffset((current) => (
+                    shiftHistoryWindowOffset(current, 'older', history.length)
+                  ))}
                 >
-                  {t('queue.history.showPrevious', { count: nextHistoryBatchCount })}
+                  {t('queue.history.showOlder', { count: olderHistoryBatchCount })}
                 </button>
               </div>
             ) : null}
@@ -294,12 +297,23 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
             );
           })}
             </div>
-            {historyWindow.visibleCount > HISTORY_WINDOW_BATCH_SIZE ? (
+            {historyWindow.newerCount > 0 ? (
               <div className="history-window-actions is-bottom">
+                {historyWindow.offset > HISTORY_WINDOW_BATCH_SIZE ? (
+                  <button
+                    type="button"
+                    className="queue-play-action"
+                    onClick={() => setHistoryWindowOffset((current) => (
+                      shiftHistoryWindowOffset(current, 'newer', history.length)
+                    ))}
+                  >
+                    {t('queue.history.showNewer', { count: newerHistoryBatchCount })}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="queue-play-action"
-                  onClick={() => setHistoryRenderLimit(HISTORY_WINDOW_BATCH_SIZE)}
+                  onClick={() => setHistoryWindowOffset(0)}
                 >
                   {t('queue.history.showLatest', { count: HISTORY_WINDOW_BATCH_SIZE })}
                 </button>

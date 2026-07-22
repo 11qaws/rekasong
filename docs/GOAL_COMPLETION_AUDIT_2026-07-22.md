@@ -22,8 +22,8 @@
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위) | 현재 후보 배포됨 | 공개 언어 전환 smoke |
-| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | Dashboard 대량 이력 trace |
-| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | 자동 계약 완료 | 현재 후보 배포됨 | 실제 브라우저 performance trace |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
+| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.6 배포 대기 | 공개 URL 재실측 |
 
 현재 공개 Pages의 release 기준은 frontend `0.2.5` / `743ac9a`다. 실제 런타임 UI는 검증된 `7a31155` 이후 동작을 유지하면서 공개 Dashboard smoke와 불필요 의존성 정리를 추가했다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 634/634와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
 
@@ -122,19 +122,20 @@
 
 ## 6. 성능과 자동 검증
 
-- 닫힌 이전 재생 곡은 DOM 행 0개, 최초 개방은 최근 100개다. 1,000곡 원본을 유지한 채 100곡씩만 확장하며, 닫으면 다시 100곡 window로 초기화한다.
+- 닫힌 이전 재생 곡은 DOM 행 0개, 최초 개방은 최근 100개다. `이전 100곡`·`다음 100곡`·`최근 100곡`으로 이동해도 한 번에 한 페이지만 만들어 1,000곡 전체를 탐색하는 동안 실제 이력 행은 항상 100개 이하다. 닫으면 최신 페이지와 0행으로 초기화한다.
+- production build를 격리 Chromium에서 실행한 1,000곡 실측은 저장 payload `290,235B`, 최초 개방 `31.9~259.4ms`, warm 조작 p95 `30.6~42.8ms`, 320px 가로 overflow 0, 닫은 뒤 GC heap 증가 약 `0.2MiB`였다. 각각 1MiB, 300ms, 100ms, 16MiB 예산 안이다. 개발 서버의 module transform 비용은 제품 UI 성능으로 세지 않는다.
 - 반복 가능한 공개 Dashboard 스모크가 새 격리 Chrome에서 Speaker 기본값과 두 출력 버튼의 활성 상태, YouTube 단일 상위 소스, 한·영 전환·새로고침 지속성, 320/375/768/1100px의 머리핀·금발 선·가로 overflow를 검사한다.
 - 공개 냉시작 2회 실측: DCL 약 499~536ms, 초기 자원 289,872B 전송 / 1,018,946B decode, DOM 125~127개, 67~72ms long task 1개. 캐시 재방문은 DCL 약 25~28ms, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.2MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- 전체 테스트: 634/634 통과.
+- 전체 테스트: 635/635 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 342.90 kB raw / 93.98 kB gzip.
-- Dashboard CSS: 56.42 kB raw / 10.59 kB gzip.
+- Dashboard chunk: 343.39 kB raw / 94.14 kB gzip.
+- Dashboard CSS: 56.44 kB raw / 10.59 kB gzip.
 - 탭별 local Speaker lazy chunk: 4.55 kB raw / 1.82 kB gzip.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 382,301B raw / 116,110B gzip / 101,713B brotli.
+- OBS 정적 경로: 382,301B raw / 116,113B gzip / 101,719B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 

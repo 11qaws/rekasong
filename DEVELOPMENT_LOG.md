@@ -1,5 +1,16 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — v0.2.6 장기 이력 고정 창과 브라우저 성능 관문 후보
+
+- 기존의 `이전 100곡 더 보기`는 누를 때마다 100→200→…→1,000행을 한 화면에 누적했다. 닫힌 이력 0행과 최초 100행은 가벼웠지만, 오래 사용할수록 결국 모든 행을 다시 만드는 구조라 장시간 웹 플레이어 예산에 맞지 않았다.
+- 이력은 이제 언제나 한 페이지만 렌더한다. 최근 100곡에서 `이전 100곡 보기`로 이동하고, 오래된 페이지에서는 `다음 100곡 보기` 또는 `최근 100곡 보기`로 돌아간다. 원본 1,000곡, 저장 순서, 삭제·재신청·드래그 식별자는 그대로 유지하면서 DOM에는 최대 100행만 둔다. 이력을 닫으면 행 0개와 최신 페이지로 즉시 초기화한다. 950곡처럼 100의 배수가 아닌 이력도 가장 오래된 50곡과 다음 100곡이 겹치지 않도록 페이지 offset을 batch 경계에 고정했다.
+- 새 버튼 문구는 한국어·영어 semantic key로 함께 추가해 locale catalog parity를 유지했다. 320px에서도 두 개의 돌아가기 버튼이 줄바꿈되며 가로 overflow를 만들지 않는다.
+- `scripts/dashboard-history-performance-smoke.mjs`를 추가해 production build/preview와 공개 URL 모두에서 현실적인 1,000곡 localStorage fixture를 주입하고, 전체 10페이지 왕복·최신 복귀·5회 재개폐·모바일 폭·GC 뒤 heap을 실제 Chromium으로 측정한다. 개발 서버의 module transform 비용이 UI 조작 시간에 섞이는 문제를 발견해 production preview만 성능 판정에 사용하며, 최초 cold open은 warm p95와 분리한다.
+- 반복 실측에서 저장 payload는 `290,235B`, 최대 이력 행은 `100`, 최초 개방은 `31.9~259.4ms`, warm 조작 p95는 `30.6~42.8ms`, 320px 문서 폭은 정확히 `320px`, 닫고 GC한 뒤 heap 증가는 약 `0.2MiB`였다. 기준은 각각 1MiB, 100행, cold 300ms, warm p95 100ms, heap 증가 16MiB다.
+- 유레카의 금발을 뜻하는 3px 노란 선은 기존 stacking-context 회귀 검사와 Dashboard smoke에 계속 포함된다. 이 성능 변경에서도 320/375/768/1100px 한국어·영어 화면의 선 높이·불투명 색·머리핀 범위를 다시 통과했다.
+- 검증: 자동 테스트 635/635, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, 로컬 Dashboard smoke, 1,000곡 production-browser 성능 smoke, OBS 정적 closure budget(raw `382,301B` / gzip `116,113B` / brotli `101,719B`), `git diff --check`를 통과했다.
+- 이 후보는 아직 커밋·배포 전이다. 공개 Pages는 계속 frontend `0.2.5`이며, 배포 뒤 같은 1,000곡 측정을 공개 URL에서 다시 수행한다.
+
 ## 2026-07-22 (Codex) — 실제 OBS 녹화 G4와 숨은 소스 비파괴 복구
 
 - OBS 30.2.0의 `Rekasong` Browser Source에서 로컬 녹화를 시작한 뒤 앱 점검 신호를 재생하고 녹화를 정상 종료했다. 라이브 송출은 시작하지 않았다.
