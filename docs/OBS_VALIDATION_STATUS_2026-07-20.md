@@ -39,6 +39,14 @@
 - OBS 방송은 끈 상태로 로컬 recording만 시작하고 8초 fixture 전체와 전후 여유 구간을 기록했다. 결과 파일은 `C:\Users\Qumin\Videos\2026-07-22 09-57-46.mp4`다.
 - 파일은 33.283초, 5,302,320바이트, H.264 + AAC 48kHz stereo다. 전체 오디오 peak -21.2dB로 clipping이 없었다.
 - band-pass frame 분석에서 880Hz 짧은 pulse 12개와 440Hz 긴 tone 4개를 정확히 검출했다. marker 누락·중복 0, AAC frame 해상도에서 20ms 초과 활성 구간 분할 0으로 이 장비·profile·track 구성의 G4를 통과했다.
+
+### 1.3 2026-07-22 실제 CEF 60분 첫 실행과 control idle 종료
+
+- 실제 OBS Browser Source에서 60분 AAC fixture를 실행했고 약 56분까지 player/OBS 후보 1/1, 같은 lease target, `audible`·`playing`을 매분 확인했다. Rekasong CEF renderer private memory는 약 38.1MiB에서 43.5~46MiB 범위로 회수돼 지속 증가가 관측되지 않았다.
+- 약 56분에 control WebSocket만 `socket_closed`로 종료됐다. OBS mixer 신호는 fixture 자연 종료까지 계속됐고 자연 종료 뒤 무음으로 바뀌었다. 따라서 연결 우선 정책대로 이미 재생 중인 OBS media graph는 제어 연결 손실에 의해 중단·재시작되지 않았다.
+- 직접 원인은 control role이 유휴 중 application frame을 전혀 보내지 않았던 것이다. 30초 간격 최소 control heartbeat를 추가했고 Worker는 reply/storage/attachment/broadcast/lease mutation 없이 소비한다.
+- 같은 coordinator와 control identity를 유지하는 bounded reconnect도 추가했다. 복구 과정은 route·LOAD·PLAY·STOP을 재전송하지 않으며 authoritative snapshot이 기존 run/lease와 일치해야 connection-loss lock을 해제한다.
+- 이 첫 실행은 harness가 자연 종료·strong STOP·deactivate·HTTP 410까지 관측하지 못했으므로 장시간 soak **실패**다. 수정 배포 뒤 60분 전체 재실행이 필요하다.
 - 별도 run에서 test fixture 재생 중 source를 약 1.4초 숨겼다가 다시 표시했다. OBS route는 활성 상태를 유지했고 G2가 16/16 marker로 완료됐다. source hide/show만으로 established media graph를 정지하거나 초기화하지 않는 계약을 실제 OBS에서 확인했다.
 - production UI는 숨은 단일 source를 일반 `OBS 플레이어 없음`으로 표시하며 완전 초기화를 권했다. 최신 후보는 `OBS 소스를 표시해 주세요`와 눈 아이콘 복구 행동을 표시하고 destructive reset 카드를 숨긴다.
 

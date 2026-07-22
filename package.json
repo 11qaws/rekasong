@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,7 +15,8 @@
     "test:obs:v2:continuity": "node scripts/obs-v2-smoke.mjs --continuity",
     "test:obs:v2:continuity:soak": "node scripts/obs-v2-continuity-soak.mjs",
     "test:obs:v2:safety": "node scripts/obs-v2-safety-smoke.mjs",
-    "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs"
+    "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs",
+    "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs"
   },
   "dependencies": {
     "firebase": "^12.16.0",

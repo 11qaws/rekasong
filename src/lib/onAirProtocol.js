@@ -17,6 +17,7 @@ export const PLAYER_CLIENT_KINDS = Object.freeze({
 export const ON_AIR_MESSAGE_TYPES = Object.freeze({
   PLAYER_HELLO: 'player_hello',
   CONTROL_HELLO: 'control_hello',
+  CONTROL_HEARTBEAT: 'control_heartbeat',
   PLAYER_HEARTBEAT: 'player_heartbeat',
   PLAYBACK_EVENT: 'playback_event',
   ROUTE_EVENT: 'route_event',
@@ -100,6 +101,7 @@ export const TEST_EVENT_TYPES = Object.freeze({
 export const ON_AIR_MESSAGE_FAMILIES = Object.freeze({
   PLAYER_HELLO: 'player_hello',
   CONTROL_HELLO: 'control_hello',
+  CONTROL_HEARTBEAT: 'control_heartbeat',
   RUN_COMMAND: 'run_command',
   ROUTE_COMMAND: 'route_command',
   TEST_COMMAND: 'test_command',
@@ -134,6 +136,7 @@ export const ON_AIR_MESSAGE_FAMILIES = Object.freeze({
  * wire/storage policy and therefore intentionally stable.
  */
 export const ON_AIR_SEQUENCE_NAMESPACES = Object.freeze({
+  CONTROL_HEARTBEAT: 'controlHeartbeat',
   HEARTBEAT: 'heartbeat',
   RUN_TELEMETRY: 'runTelemetry',
   RUN_RECEIPT: 'runReceipt',
@@ -601,6 +604,21 @@ function validateHeartbeat(message, errors) {
     ],
     errors,
     ON_AIR_MESSAGE_FAMILIES.HEARTBEAT,
+  );
+}
+
+function validateControlHeartbeat(message, errors) {
+  requireIdentifier(message, 'controlInstanceId', errors);
+  requireIdentifier(message, 'connectionId', errors);
+  requireNonNegativeInteger(message, 'sequence', errors);
+  optionalFiniteNumber(message, 'monotonicTimeMs', errors);
+  if (Number.isFinite(message.monotonicTimeMs) && message.monotonicTimeMs < 0) {
+    addError(errors, 'monotonicTimeMs', 'number_out_of_range');
+  }
+  forbidUnexpectedFields(
+    message,
+    ['type', 'controlInstanceId', 'connectionId', 'sequence', 'monotonicTimeMs'],
+    errors,
   );
 }
 
@@ -1182,6 +1200,8 @@ export function getOnAirMessageFamily(message) {
       return ON_AIR_MESSAGE_FAMILIES.PLAYER_HELLO;
     case ON_AIR_MESSAGE_TYPES.CONTROL_HELLO:
       return ON_AIR_MESSAGE_FAMILIES.CONTROL_HELLO;
+    case ON_AIR_MESSAGE_TYPES.CONTROL_HEARTBEAT:
+      return ON_AIR_MESSAGE_FAMILIES.CONTROL_HEARTBEAT;
     case ON_AIR_MESSAGE_TYPES.PLAYER_HEARTBEAT:
       return ON_AIR_MESSAGE_FAMILIES.HEARTBEAT;
     case ON_AIR_MESSAGE_TYPES.EMERGENCY_STOP:
@@ -1228,6 +1248,9 @@ export function getOnAirMessageFamily(message) {
  */
 export function getOnAirSequenceNamespace(message) {
   const family = getOnAirMessageFamily(message);
+  if (family === ON_AIR_MESSAGE_FAMILIES.CONTROL_HEARTBEAT) {
+    return ON_AIR_SEQUENCE_NAMESPACES.CONTROL_HEARTBEAT;
+  }
   if (family === ON_AIR_MESSAGE_FAMILIES.HEARTBEAT) {
     return ON_AIR_SEQUENCE_NAMESPACES.HEARTBEAT;
   }
@@ -1281,6 +1304,9 @@ export function validateOnAirMessage(message) {
       break;
     case ON_AIR_MESSAGE_FAMILIES.CONTROL_HELLO:
       validateControlHello(message, errors);
+      break;
+    case ON_AIR_MESSAGE_FAMILIES.CONTROL_HEARTBEAT:
+      validateControlHeartbeat(message, errors);
       break;
     case ON_AIR_MESSAGE_FAMILIES.RUN_COMMAND:
       validateRunCommand(message, errors);

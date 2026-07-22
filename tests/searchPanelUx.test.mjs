@@ -104,8 +104,17 @@ test('import APIs persist locale-neutral default source metadata', async () => {
   assert.match(setlinkApi, /name: sourceName \|\| 'Setlink'/);
 });
 
-test('dashboard header keeps the compact hairpin and removes the old subtitle', async () => {
-  const dashboard = await readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8');
+test('dashboard header permanently keeps the blonde line behind the compact hairpin', async () => {
+  const [dashboard, css] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/pages/Dashboard.css', import.meta.url), 'utf8'),
+  ]);
   assert.doesNotMatch(dashboard, /className="subtitle"/);
   assert.match(dashboard, /id="dashboard-output-route-bar"/);
+  const hairlineRules = [...css.matchAll(/\.dashboard-output-route-bar::before\s*\{([^}]*)\}/g)];
+  assert.ok(hairlineRules.length >= 1, 'the blonde line must have a dedicated rule');
+  assert.match(hairlineRules[0][1], /background: var\(--chr-hair\);/);
+  for (const [, rule] of hairlineRules) {
+    assert.doesNotMatch(rule, /display:\s*none|visibility:\s*hidden|opacity:\s*0(?:\D|$)/);
+  }
 });

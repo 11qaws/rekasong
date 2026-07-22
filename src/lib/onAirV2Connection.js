@@ -84,6 +84,7 @@ export const ON_AIR_V2_CONNECTION_CODES = Object.freeze({
 export const ON_AIR_V2_HEARTBEAT_INTERVAL_MS = 250;
 export const ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS = 10_000;
 export const ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS = 30_000;
+export const ON_AIR_V2_CONTROL_HEARTBEAT_INTERVAL_MS = 30_000;
 export const ON_AIR_V2_LIVENESS_WARNING_MS = 500;
 export const ON_AIR_V2_LIVENESS_UNKNOWN_MS = 2_000;
 
@@ -188,6 +189,7 @@ export class OnAirV2Connection {
   #lastObservedNow = 0;
   #heartbeatTimer = null;
   #heartbeatIntervalMs = ON_AIR_V2_HEARTBEAT_INTERVAL_MS;
+  #controlHeartbeatIntervalMs = ON_AIR_V2_CONTROL_HEARTBEAT_INTERVAL_MS;
   #heartbeatLastSentSequence = null;
   #heartbeatLastAckSequence = null;
   #heartbeatLastAckAt = null;
@@ -220,6 +222,7 @@ export class OnAirV2Connection {
     diagnosticLimit = 64,
     heartbeatPayload = null,
     heartbeatIntervalMs = ON_AIR_V2_HEARTBEAT_INTERVAL_MS,
+    controlHeartbeatIntervalMs = ON_AIR_V2_CONTROL_HEARTBEAT_INTERVAL_MS,
     onPlayerCommand = null,
     onFrame = null,
     onCommandResult = null,
@@ -241,6 +244,9 @@ export class OnAirV2Connection {
     requireConfiguration(Number.isSafeInteger(diagnosticLimit) && diagnosticLimit > 0, 'diagnosticLimit', 'positive_safe_integer');
     requireConfiguration(Number.isSafeInteger(heartbeatIntervalMs) && heartbeatIntervalMs >= 250,
       'heartbeatIntervalMs', 'safe_integer_at_least_250');
+    requireConfiguration(Number.isSafeInteger(controlHeartbeatIntervalMs)
+      && controlHeartbeatIntervalMs >= 250,
+    'controlHeartbeatIntervalMs', 'safe_integer_at_least_250');
     if (role === 'player') {
       requireConfiguration(typeof clientKind === 'string' && clientKind.length > 0, 'clientKind', 'identifier');
     }
@@ -257,6 +263,7 @@ export class OnAirV2Connection {
     this.#runtime = immutableJson(runtime);
     this.#diagnosticLimit = diagnosticLimit;
     this.#heartbeatIntervalMs = heartbeatIntervalMs;
+    this.#controlHeartbeatIntervalMs = controlHeartbeatIntervalMs;
     this.#callbacks = {
       heartbeatPayload,
       onPlayerCommand,
@@ -492,6 +499,7 @@ export class OnAirV2Connection {
    * the frame remains storage-free and has no playback or lease authority.
    */
   sendHeartbeatNow() {
+    if (this.#role !== 'player') return false;
     return this.#emitHeartbeat();
   }
 
@@ -760,7 +768,6 @@ export class OnAirV2Connection {
           break;
         }
       }
-      if (this.#state === ON_AIR_V2_CONNECTION_STATES.READY) this.#startHeartbeat();
       for (const record of rebound.outcomeUnknown) {
         this.#call('onEventResult', Object.freeze({
           status: 'outcome_unknown',
@@ -769,6 +776,7 @@ export class OnAirV2Connection {
         }));
       }
     }
+    if (this.#state === ON_AIR_V2_CONNECTION_STATES.READY) this.#startHeartbeat();
     this.#call('onNegotiated', this.snapshot());
   }
 
@@ -1049,7 +1057,9 @@ export class OnAirV2Connection {
     this.#stopHeartbeat();
     this.#heartbeatTimer = this.#setInterval(
       () => this.#emitHeartbeat(),
-      this.#heartbeatIntervalMs,
+      this.#role === 'control'
+        ? this.#controlHeartbeatIntervalMs
+        : this.#heartbeatIntervalMs,
     );
   }
 
@@ -1061,7 +1071,27 @@ export class OnAirV2Connection {
   }
 
   #emitHeartbeat() {
-    if (this.#role !== 'player' || this.#state !== ON_AIR_V2_CONNECTION_STATES.READY) return false;
+    if (this.#state !== ON_AIR_V2_CONNECTION_STATES.READY) return false;
+    if (this.#role === 'control') {
+      const frame = {
+        type: ON_AIR_MESSAGE_TYPES.CONTROL_HEARTBEAT,
+        controlInstanceId: this.#identity.controlInstanceId,
+        connectionId: this.#connectionId,
+        sequence: this.#sequenceCounters.next(ON_AIR_SEQUENCE_NAMESPACES.CONTROL_HEARTBEAT),
+        monotonicTimeMs: this.#now(),
+      };
+      const validation = validateOnAirMessage(frame);
+      if (!validation.ok) {
+        this.#diagnose(ON_AIR_V2_CONNECTION_CODES.INVALID_OUTBOUND_FRAME, validationDetail(validation));
+        return false;
+      }
+      if (!this.#sendWire(frame)) {
+        this.#disconnectCurrent('control_heartbeat_send_failed');
+        return false;
+      }
+      return true;
+    }
+    if (this.#role !== 'player') return false;
     let extension = {};
     try {
       if (typeof this.#callbacks.heartbeatPayload === 'function') {

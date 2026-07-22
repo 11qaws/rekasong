@@ -1018,8 +1018,20 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   box-sizing: border-box;
   color: var(--text-main);
 }
-.dashboard-output-route-bar::after {
-  display: none;
+/* 유레카의 금발을 상징하는 고정 브랜드 선. 반응형에서도 숨기지 않는다. */
+.dashboard-output-route-bar::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--chr-hair);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 .dashboard-output-route-bar-inner {
   position: relative;

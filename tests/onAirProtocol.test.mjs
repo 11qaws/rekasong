@@ -461,6 +461,27 @@ test('heartbeat is run-independent and validates its live connection identity', 
   ]);
 });
 
+test('control heartbeat is a minimal transport-only frame', () => {
+  const heartbeat = {
+    type: ON_AIR_MESSAGE_TYPES.CONTROL_HEARTBEAT,
+    controlInstanceId: identity.controlInstanceId,
+    connectionId: identity.connectionId,
+    sequence: 3,
+    monotonicTimeMs: 30_000,
+  };
+  assertValid(heartbeat, ON_AIR_MESSAGE_FAMILIES.CONTROL_HEARTBEAT);
+  assert.equal(
+    getOnAirSequenceNamespace(heartbeat),
+    ON_AIR_SEQUENCE_NAMESPACES.CONTROL_HEARTBEAT,
+  );
+  assert.deepEqual(errorCodes({ ...heartbeat, commandId: identity.commandId }), [
+    'commandId:unexpected_field',
+  ]);
+  assert.deepEqual(errorCodes({ ...heartbeat, sequence: -1 }), [
+    'sequence:required_non_negative_integer',
+  ]);
+});
+
 test('player-originated frames cannot inject the server-owned target connection', () => {
   const heartbeat = {
     type: ON_AIR_MESSAGE_TYPES.PLAYER_HEARTBEAT,

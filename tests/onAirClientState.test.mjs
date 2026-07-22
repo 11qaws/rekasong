@@ -234,10 +234,10 @@ test('canonical fingerprints ignore object key order but preserve semantic diffe
   );
 });
 
-test('eight sequence streams start at zero, remain isolated, and merge HWM floors upward only', () => {
+test('nine sequence streams start at zero, remain isolated, and merge HWM floors upward only', () => {
   const counters = new OnAirSequenceCounters();
   const namespaces = Object.values(ON_AIR_SEQUENCE_NAMESPACES);
-  assert.equal(namespaces.length, 8);
+  assert.equal(namespaces.length, 9);
   for (const namespace of namespaces) assert.equal(counters.peek(namespace), 0);
 
   assert.equal(counters.next(ON_AIR_SEQUENCE_NAMESPACES.RUN_AUTHORITATIVE), 0);
@@ -260,6 +260,7 @@ test('eight sequence streams start at zero, remain isolated, and merge HWM floor
   assert.equal(snapshot.highWaterMarks.runAuthoritative, 10);
   assert.equal(snapshot.nextValues.route, 5);
   assert.equal(snapshot.highWaterMarks.heartbeat, null);
+  assert.equal(snapshot.highWaterMarks.controlHeartbeat, null);
 });
 
 test('test marker sequence exhaustion is isolated from durable test lifecycle events', () => {

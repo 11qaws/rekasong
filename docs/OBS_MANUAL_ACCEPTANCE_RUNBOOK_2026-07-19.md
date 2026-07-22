@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS 증거 수집 전
+> 상태: 실행 절차 확정 · 실제 OBS G4 통과 · G5/G6 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -113,15 +113,58 @@ Dashboard 장시간 검사는 별도다. 1,000곡 fixture에서 실제 history r
 
 Chrome 통과만으로 OBS CEF 성능을 합격시키지 않는다. 측정마다 CPU, RAM, OBS/CEF 버전, source 크기와 codec을 함께 기록한다.
 
+### 5.2 실제 외부 OBS CEF 재생 soak
+
+`scripts/obs-v2-external-cef-soak.mjs`는 헤드리스 브라우저가 아니라 사용자가 연 실제 OBS Browser Source 하나를 Protocol v2 세션에 연결한다. 세션 credential이 든 URL은 stdout이나 명령행에 출력하지 않고, 권한이 제한된 임시 JSON handoff 파일로만 전달한다.
+
+```powershell
+$env:REKASONG_WORKER='https://<worker-host>'
+$env:REKASONG_APP='https://<frontend-host>'
+$env:REKASONG_CEF_SOAK_ASSET='C:\path\to\60-minute-fixture.m4a'
+$env:REKASONG_CEF_SOAK_MIME='audio/mp4'
+$env:REKASONG_CEF_SOAK_DURATION_MS='3600000'
+$env:REKASONG_CEF_SOAK_PROGRESS_INTERVAL_MS='60000'
+$env:REKASONG_CEF_SOAK_STATUS_FILE='C:\path\to\cef-soak-status.json'
+npm run test:obs:v2:cef-soak
+```
+
+운영 순서:
+
+1. harness가 출력한 `SETUP_FILE`의 `playerUrl`을 현재 시험용 Browser Source URL에 입력한다. URL 자체를 로그나 캡처에 남기지 않는다.
+2. Properties의 `OK`를 눌러 먼저 저장한다.
+3. Properties를 다시 열어 저장된 URL이 동일한지 확인한다.
+4. `Refresh cache of current page`를 누르고 즉시 `OK`를 누른다. OBS 툴바의 일반 새로고침만으로 대체하지 않는다.
+5. Properties 미리보기 CEF는 잠시 뒤 사라지고 본 source CEF가 새 identity로 연결될 수 있다. harness가 하나의 후보를 75초 연속 관측해 확정할 때까지 Properties를 다시 열거나 source를 조작하지 않는다.
+6. `SOAK_PLAYING` 뒤 player 1개, OBS 후보 1개, `audible`, `playing`, 동일 lease target을 주기적으로 기록한다. OBS 본체와 해당 renderer의 working set/private memory도 같은 간격으로 기록한다.
+7. 자연 종료 뒤 harness가 STOP, output deactivate, session end와 HTTP 410 재사용 차단까지 완료하는지 확인한다.
+8. 시험 전 URL을 복원하고, 다시 저장 확인 → cache refresh → 즉시 OK 순서를 지킨다. clipboard에 URL을 남기지 않는다.
+
+합격 기준:
+
+- 준비 단계의 preview→본 source 전환은 lease 전에 흡수되고, 활성 재생 중 player identity 전환은 0건이다.
+- 전체 재생 동안 player/OBS 후보는 정확히 1/1이고 `audible`, `playing`, 동일 target이 유지된다.
+- 자연 종료 시 media duration 오차는 1초 이내, wall duration은 설정한 grace 이내다.
+- OBS player disconnect, duplicate, authoritative unknown/failed lease 관측은 0건이다.
+- control transport disconnect는 원칙적으로 0건이다. 발생하면 60초 안에 같은 control identity로 복구되고 route·media 명령 자동 재전송이 0건이며, 그 사이 OBS media graph가 계속 재생됐다는 별도 mixer/artifact 증거가 있어야 한다. 이 조건을 충족하지 못하면 실패다.
+- renderer crash와 재생 중단이 없고, 메모리가 시간에 비례해 계속 증가하지 않는다.
+- 종료 세션의 status 조회는 HTTP 410이다.
+
+2026-07-22 첫 60분 실행 기록:
+
+- 약 56분까지 player/OBS 후보 1/1, 같은 target, `audible`·`playing`을 유지했다.
+- Rekasong CEF renderer private memory는 약 38.1MiB에서 43.5~46MiB 범위였고 반복 회수가 관측됐다.
+- 약 56분에 명령이 없던 control WebSocket만 `socket_closed`로 종료돼 harness가 실패했다. OBS mixer는 이후에도 fixture 자연 종료까지 움직였으며 종료 뒤 무음으로 바뀌어 media graph 자체는 끊기거나 재시작되지 않았음을 확인했다.
+- 원인에 맞춰 30초 storage-free/no-reply control keepalive와 동일 coordinator 자동 재접속을 추가했다. 수정 배포 뒤 60분 전체를 재실행하기 전까지 이 항목은 **미통과**로 유지한다.
+
 ## 6. G1 — 출력 선택과 단일 lease
 
 ### 6.1 스피커
 
 1. 출력에서 `스피커 · 이 기기에서 듣기`를 선택한다.
-2. eligible `dashboard-speaker`가 정확히 하나인지 확인한다.
-3. `activate_output` 뒤 같은 `switchId`, target, connection, 증가한 lease epoch의 `output_ready`를 기다린다.
-4. 준비 상태에서 media는 paused, source detached, autoplay cancelled, non-audible이어야 한다.
-5. 브라우저 autoplay가 막혔다면 사용자가 명시적으로 `소리 재생 허용`을 누른 뒤에만 재시도한다.
+2. 선택한 탭의 로컬 플레이어가 즉시 준비되는지 확인한다. Worker player 후보, lease, 다른 Dashboard 탭의 제어권은 기다리지 않는다.
+3. 다른 탭·창에서 Speaker를 함께 사용해도 각 탭의 현재 곡, 위치, 볼륨과 재생 상태가 서로 독립적인지 확인한다.
+4. OBS 연결 실패, 후보 없음·중복, heartbeat 지연, 다른 제어 탭이 있어도 Speaker 선택과 play/pause/seek/volume/skip이 잠기지 않는지 확인한다.
+5. 브라우저 autoplay가 막혔다면 현재 재생 시도만 실패로 안내하고, 사용자의 다음 명시적 재생에서 로컬 media session을 다시 준비한다. 서버 경로나 다른 탭을 복구 조건으로 요구하지 않는다.
 
 ### 6.2 OBS
 

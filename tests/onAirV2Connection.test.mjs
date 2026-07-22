@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   ON_AIR_V2_CONNECTION_CODES,
   ON_AIR_V2_CONNECTION_STATES,
+  ON_AIR_V2_CONTROL_HEARTBEAT_INTERVAL_MS,
   ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS,
   ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS,
   OnAirV2Connection,
@@ -22,6 +23,34 @@ import {
 test('production player heartbeats are diagnostics, not a per-second audio clock', () => {
   assert.equal(ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS, 10_000);
   assert.equal(ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS, 30_000);
+  assert.equal(ON_AIR_V2_CONTROL_HEARTBEAT_INTERVAL_MS, 30_000);
+});
+
+test('control keepalive is one storage-free frame every 30 seconds', () => {
+  const harness = createHarness('control');
+  const socket = readyControl(harness, 'control-keepalive-connection');
+  const keepalives = () => socket.messages().filter(
+    (message) => message.type === ON_AIR_MESSAGE_TYPES.CONTROL_HEARTBEAT,
+  );
+
+  harness.clock.advance(29_999);
+  assert.equal(keepalives().length, 0);
+  harness.clock.advance(1);
+  assert.equal(keepalives().length, 1);
+  assert.deepEqual(keepalives()[0], {
+    type: ON_AIR_MESSAGE_TYPES.CONTROL_HEARTBEAT,
+    controlInstanceId: harness.connection.identity.controlInstanceId,
+    connectionId: 'control-keepalive-connection',
+    sequence: 0,
+    monotonicTimeMs: 30_000,
+  });
+  assert.equal(validateOnAirMessage(keepalives()[0]).ok, true);
+
+  harness.clock.advance(30_000);
+  assert.deepEqual(keepalives().map((message) => message.sequence), [0, 1]);
+  socket.serverClose();
+  harness.clock.advance(60_000);
+  assert.equal(keepalives().length, 2, 'closed controls must stop their keepalive timer');
 });
 
 test('an OBS runtime callback can publish one immediate storage-free heartbeat', () => {

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   ON_AIR_OUTPUT_CONTROL_CODES,
+  ON_AIR_OUTPUT_RECONNECT_BASE_DELAY_MS,
+  ON_AIR_OUTPUT_RECONNECT_MAX_DELAY_MS,
   ON_AIR_OUTPUT_SWITCH_STATUSES,
   ON_AIR_PLAYBACK_TRANSITION_REASONS,
   ON_AIR_PLAYBACK_TRANSITION_STATUSES,
@@ -1505,6 +1507,84 @@ test('explicit retry disposes the old coordinator before creating a fresh owner'
   );
   assert.equal(coordinators[1].calls.some(([name]) => ['activateOutput', 'load', 'play'].includes(name)), false);
   assert.equal(controller.getState().outputSwitchState.status, ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE);
+});
+
+test('idle control disconnect reconnects the same coordinator without replaying route or media', () => {
+  const timers = createTimerHarness();
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(), {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+    },
+  });
+  const coordinator = coordinators[0];
+  const disconnected = coordinatorSnapshot(playerSnapshot(), {
+    state: 'disconnected',
+    ready: false,
+    writable: false,
+    unknown: true,
+    authorityUnknown: true,
+    unknownLock: { code: 'control_coordinator_connection_lost' },
+  });
+
+  assert.equal(ON_AIR_OUTPUT_RECONNECT_BASE_DELAY_MS, 1_500);
+  assert.equal(ON_AIR_OUTPUT_RECONNECT_MAX_DELAY_MS, 30_000);
+  coordinator.emit(disconnected);
+  assert.equal(timers.size, 1);
+  assert.equal(timers.runNext(), ON_AIR_OUTPUT_RECONNECT_BASE_DELAY_MS);
+  assert.equal(coordinator.connectCalls, 2, 'automatic recovery reuses the existing coordinator');
+  assert.equal(coordinators.length, 1, 'automatic recovery keeps one page identity and command ledger');
+  assert.equal(
+    coordinator.calls.some(([name]) => [
+      'activateOutput',
+      'deactivateOutput',
+      'load',
+      'play',
+      'pause',
+      'seek',
+      'setVolume',
+      'stop',
+    ].includes(name)),
+    false,
+    'socket recovery never guesses or replays an output/media command',
+  );
+
+  coordinator.emit(coordinatorSnapshot());
+  assert.equal(timers.size, 0);
+  coordinator.emit(disconnected);
+  assert.equal(
+    timers.runNext(),
+    ON_AIR_OUTPUT_RECONNECT_BASE_DELAY_MS,
+    'an authoritative ready snapshot resets reconnect backoff',
+  );
+
+  coordinator.emit(disconnected);
+  assert.equal(timers.size, 1);
+  controller.dispose();
+  assert.equal(timers.size, 0, 'disposing the page cancels its reconnect timer');
+});
+
+test('a terminal session close never enters automatic control reconnect', () => {
+  const timers = createTimerHarness();
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(), {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+    },
+  });
+
+  coordinators[0].emit(coordinatorSnapshot(playerSnapshot(), {
+    state: 'closed',
+    ready: false,
+    writable: false,
+    unknown: true,
+    authorityUnknown: true,
+    unknownLock: { code: 'control_coordinator_session_ended' },
+  }));
+
+  assert.equal(timers.size, 0);
+  assert.equal(coordinators[0].connectCalls, 1);
+  controller.dispose();
 });
 
 test('starting and owner-released connections become manually recoverable after a bounded wait', async (t) => {

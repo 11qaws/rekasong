@@ -5886,6 +5886,50 @@ test('healthy heartbeat is relayed and ACKed without storage, while invalid or d
   assert.ok(findMessage(player, (message) => message.code === 'future_lease_epoch'));
 });
 
+test('control heartbeat keeps only its socket alive without writes, replies, or broadcasts', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const observer = harness.socket('control');
+  const welcome = await registerControl(harness, control);
+  await registerControl(harness, observer, 'control-observer');
+  const putsBefore = harness.storage.puts.length;
+  const messagesBefore = control.messages.length;
+  const observerMessagesBefore = observer.messages.length;
+  const attachmentBefore = structuredClone(control.deserializeAttachment());
+
+  await harness.send(control, {
+    type: 'control_heartbeat',
+    controlInstanceId: 'control-a',
+    connectionId: welcome.connectionId,
+    sequence: 0,
+    monotonicTimeMs: 30_000,
+  });
+
+  assert.equal(control.messages.length, messagesBefore);
+  assert.equal(observer.messages.length, observerMessagesBefore);
+  assert.equal(harness.storage.puts.length, putsBefore);
+  assert.deepEqual(control.deserializeAttachment(), attachmentBefore);
+
+  await harness.send(control, {
+    type: 'control_heartbeat',
+    controlInstanceId: 'control-a',
+    connectionId: 'foreign-connection',
+    sequence: 1,
+    monotonicTimeMs: 60_000,
+  });
+  assert.equal(messagesOfType(control, 'protocol_error').at(-1).code, 'foreign_control_heartbeat');
+
+  await harness.send(control, {
+    type: 'control_heartbeat',
+    controlInstanceId: 'control-a',
+    connectionId: welcome.connectionId,
+    sequence: 2,
+    monotonicTimeMs: 90_000,
+    commandId: 'must-not-look-like-command',
+  });
+  assert.equal(messagesOfType(control, 'protocol_error').at(-1).code, 'invalid_control_heartbeat');
+});
+
 test('heartbeat ACK follows attachment serialization and control relay without a durable liveness write', async () => {
   const harness = createHarness();
   const control = harness.socket('control');

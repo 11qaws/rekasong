@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  ON_AIR_CONTROL_COORDINATOR_CODES,
   OnAirControlCoordinator,
 } from '../lib/onAirControlCoordinator.js';
 import { createControlPageIdentity } from '../lib/onAirClientState.js';
@@ -18,6 +19,8 @@ const UNKNOWN_LEASE_STATES = new Set(['unknown', 'failed', 'emergency_stopping']
 export const ON_AIR_OUTPUT_CONNECTION_TIMEOUT_MS = 10_000;
 export const ON_AIR_OUTPUT_SWITCH_TIMEOUT_MS = 12_000;
 export const ON_AIR_OUTPUT_CANDIDATE_WAIT_MS = 12_000;
+export const ON_AIR_OUTPUT_RECONNECT_BASE_DELAY_MS = 1_500;
+export const ON_AIR_OUTPUT_RECONNECT_MAX_DELAY_MS = 30_000;
 
 export const ON_AIR_OUTPUT_CONTROL_CODES = Object.freeze({
   INVALID_CONFIGURATION: 'output_control_invalid_configuration',
@@ -248,6 +251,10 @@ export class OnAirOutputController {
   #candidateWaitMs;
   #connectionWatchdogTimer = null;
   #switchWatchdogTimer = null;
+  #connectionReconnectTimer = null;
+  #connectionReconnectAttempts = 0;
+  #connectionReconnectBaseDelayMs;
+  #connectionReconnectMaxDelayMs;
 
   constructor({
     session,
@@ -260,6 +267,8 @@ export class OnAirOutputController {
     connectionTimeoutMs = ON_AIR_OUTPUT_CONNECTION_TIMEOUT_MS,
     switchTimeoutMs = ON_AIR_OUTPUT_SWITCH_TIMEOUT_MS,
     candidateWaitMs = ON_AIR_OUTPUT_CANDIDATE_WAIT_MS,
+    reconnectBaseDelayMs = ON_AIR_OUTPUT_RECONNECT_BASE_DELAY_MS,
+    reconnectMaxDelayMs = ON_AIR_OUTPUT_RECONNECT_MAX_DELAY_MS,
     dashboardSpeakerPlayerInstanceId = null,
   } = {}) {
     this.#session = validateSession(session);
@@ -279,7 +288,9 @@ export class OnAirOutputController {
     if (typeof setTimeoutFn !== 'function' || typeof clearTimeoutFn !== 'function'
       || !Number.isFinite(connectionTimeoutMs) || connectionTimeoutMs <= 0
       || !Number.isFinite(switchTimeoutMs) || switchTimeoutMs <= 0
-      || !Number.isFinite(candidateWaitMs) || candidateWaitMs <= 0) {
+      || !Number.isFinite(candidateWaitMs) || candidateWaitMs <= 0
+      || !Number.isFinite(reconnectBaseDelayMs) || reconnectBaseDelayMs <= 0
+      || !Number.isFinite(reconnectMaxDelayMs) || reconnectMaxDelayMs < reconnectBaseDelayMs) {
       throw controlError(ON_AIR_OUTPUT_CONTROL_CODES.INVALID_CONFIGURATION, { field: 'watchdog' });
     }
     this.#buildId = buildId;
@@ -290,6 +301,8 @@ export class OnAirOutputController {
     this.#connectionTimeoutMs = connectionTimeoutMs;
     this.#switchTimeoutMs = switchTimeoutMs;
     this.#candidateWaitMs = candidateWaitMs;
+    this.#connectionReconnectBaseDelayMs = reconnectBaseDelayMs;
+    this.#connectionReconnectMaxDelayMs = reconnectMaxDelayMs;
     this.#dashboardSpeakerPlayerInstanceId = dashboardSpeakerPlayerInstanceId;
     // One browser page is one control participant. Keep its identity stable
     // when the socket/coordinator is rebuilt so a reconnect cannot look like a
@@ -317,6 +330,7 @@ export class OnAirOutputController {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#connected = false;
+    this.#clearAutomaticReconnect(true);
     this.#clearConnectionWatchdog();
     this.#clearSwitchWatchdog();
     this.#switchIntent = null;
@@ -345,6 +359,7 @@ export class OnAirOutputController {
 
   retryConnection() {
     this.#assertUsable();
+    this.#clearAutomaticReconnect(true);
     this.#clearConnectionWatchdog();
     this.#clearSwitchWatchdog();
     this.#switchIntent = null;
@@ -645,6 +660,7 @@ export class OnAirOutputController {
     this.#coordinatorUnsubscribe = coordinator.subscribe((snapshot) => {
       if (this.#disposed || coordinator !== this.#coordinator) return;
       this.#snapshot = snapshot;
+      this.#reconcileAutomaticReconnect();
       this.#reconcileConnectionWatchdog();
       this.#reconcileSwitchIntent();
       this.#reconcilePlaybackTransition();
@@ -676,6 +692,48 @@ export class OnAirOutputController {
     );
     if (foreignOwnerConnected) return false;
     return owner === null && controlLease?.writableConnected === false;
+  }
+
+  #connectionNeedsAutomaticReconnect() {
+    if (!this.#connected || this.#disposed) return false;
+    if (![ON_AIR_V2_CONNECTION_STATES.DISCONNECTED, ON_AIR_V2_CONNECTION_STATES.CLOSED]
+      .includes(this.#snapshot?.state)) return false;
+    return this.#snapshot?.unknownLock?.code
+      !== ON_AIR_CONTROL_COORDINATOR_CODES.SESSION_ENDED;
+  }
+
+  #reconcileAutomaticReconnect() {
+    if (this.#snapshot?.state === ON_AIR_V2_CONNECTION_STATES.READY) {
+      this.#clearAutomaticReconnect(true);
+      return;
+    }
+    if (!this.#connectionNeedsAutomaticReconnect()
+      || this.#connectionReconnectTimer !== null) return;
+    const delay = Math.min(
+      this.#connectionReconnectMaxDelayMs,
+      this.#connectionReconnectBaseDelayMs * (1.5 ** this.#connectionReconnectAttempts),
+    );
+    this.#connectionReconnectTimer = this.#setTimeoutFn(() => {
+      this.#connectionReconnectTimer = null;
+      if (!this.#connectionNeedsAutomaticReconnect()) return;
+      this.#connectionReconnectAttempts += 1;
+      try {
+        this.#coordinator.connect();
+      } catch {
+        // Re-read the authoritative coordinator state before scheduling the
+        // next bounded attempt. Reconnect never replays a route or media command.
+        this.#snapshot = this.#coordinator.snapshot();
+        this.#reconcileAutomaticReconnect();
+      }
+    }, delay);
+  }
+
+  #clearAutomaticReconnect(resetAttempts = false) {
+    if (this.#connectionReconnectTimer !== null) {
+      this.#clearTimeoutFn(this.#connectionReconnectTimer);
+      this.#connectionReconnectTimer = null;
+    }
+    if (resetAttempts) this.#connectionReconnectAttempts = 0;
   }
 
   #reconcileConnectionWatchdog() {

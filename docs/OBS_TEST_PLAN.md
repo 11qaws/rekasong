@@ -155,13 +155,14 @@ npm run test:obs:v2:idle-soak
 - [자동] 오디오 전용 route에서 Google Fonts와 display 이미지 같은 외부 장식 요청은 0건이어야 한다.
 - [자동] 초기 DOM은 상태 wrapper와 단일 `<audio>`만 허용하고 display animation·blur·particle을 만들지 않는다.
 - [자동] 정상 OBS heartbeat는 10초 cadence로 transport 내부에서 처리하며 player React state와 control coordinator snapshot publish를 일으키지 않는다. source active/visible 콜백은 한 번으로 coalesce한 storage-free 즉시 heartbeat를 보내고, runtime 값이 실제로 바뀔 때만 control snapshot을 갱신한다.
+- [자동] 유휴 control은 30초마다 transport-only heartbeat 한 개만 보내며 Worker는 응답·storage write·attachment update·snapshot broadcast·lease mutation 없이 소비한다. 일시 단절 시 같은 control identity로 bounded reconnect하되 route·LOAD·PLAY·STOP을 재전송하지 않고, 종료 session은 재접속하지 않는다.
 - [자동] READY idle 10분 동안 DOM mutation과 long task(`>50ms`)는 0회, main-thread CPU 평균은 기준 PC에서 1% 미만을 목표로 한다.
 - [자동] idle 30분과 곡 전환 100회 뒤 post-GC heap이 단조 증가하지 않고, 마지막 post-GC heap이 warm baseline 대비 `16MiB` 이내인지 확인한다.
 - [자동] player WebSocket, reconnect timer, heartbeat interval, active media element는 각각 최대 1개인지 계측한다.
 - [자동] 64MiB 경계, 64MiB+1, Content-Length 없음, 중단 응답, hint 연속 교체를 포함한 메모리 장애 시험을 실행한다.
 - [자동] Dashboard 1,000곡 history에서 실제 렌더 row 100 이하 또는 virtualization, 조작 p95 100ms 이하, localStorage 1MiB 이하인지 검사한다.
 - [자동] 로컬 감상 Blob은 설정된 count·byte 예산을 넘지 않고 session 교체·삭제·unmount 뒤 object URL 생성/회수 수가 일치하는지 검사한다.
-- [OBS] 60분 재생 soak 동안 CEF renderer crash, audible gap, 중복 player, 지속적인 working-set 증가가 0인지 기록한다.
+- [OBS] 60분 재생 soak 동안 CEF renderer crash, audible gap, 중복 player, authoritative route unknown, 지속적인 working-set 증가가 0인지 기록한다. control gap이 생기면 gap 길이·재접속 횟수·동일 identity·명령 재전송 0회·OBS media 연속성을 별도 증거로 남긴다.
 
 번들 예산 통과는 실행 성능을 대신하지 않고, heap/CPU 통과도 실제 OBS PCM·녹화·싱크 증거를 대신하지 않는다.
 

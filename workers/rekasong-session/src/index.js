@@ -607,6 +607,10 @@ export class SessionRoom {
         await this.handleControlHello(socket, session, message);
         return;
       }
+      if (message.type === 'control_heartbeat') {
+        this.handleV2ControlHeartbeat(socket, message);
+        return;
+      }
 
       const directV2Command = isV2ControlCommandType(message.type);
       if (directV2Command) {
@@ -4184,6 +4188,41 @@ export class SessionRoom {
         const attachment = socket.deserializeAttachment() || {};
         return attachment.role === 'player' && attachment.negotiationState !== 'unnegotiated';
       });
+  }
+
+  handleV2ControlHeartbeat(socket, message) {
+    const attachment = socket.deserializeAttachment() || {};
+    const controlInstanceId = protocolId(message.controlInstanceId);
+    const connectionId = protocolId(message.connectionId);
+    const allowedFields = new Set([
+      'type',
+      'controlInstanceId',
+      'connectionId',
+      'sequence',
+      'monotonicTimeMs'
+    ]);
+    const invalidShape = Object.keys(message).some((field) => !allowedFields.has(field))
+      || !Number.isSafeInteger(message.sequence)
+      || message.sequence < 0
+      || (hasOwn(message, 'monotonicTimeMs')
+        && (!Number.isFinite(message.monotonicTimeMs) || message.monotonicTimeMs < 0));
+    if (attachment.protocolVersion !== PROTOCOL_V2
+      || attachment.negotiationState !== 'negotiated') {
+      return this.sendProtocolError(socket, 'control_heartbeat_requires_negotiation');
+    }
+    if (!controlInstanceId || !connectionId || invalidShape) {
+      return this.sendProtocolError(socket, 'invalid_control_heartbeat');
+    }
+    if (attachment.controlInstanceId !== controlInstanceId
+      || attachment.connectionId !== connectionId) {
+      return this.sendProtocolError(socket, 'foreign_control_heartbeat', {
+        controlInstanceId,
+        connectionId
+      });
+    }
+    // Transport keepalive only: no response, durable write, attachment update,
+    // snapshot broadcast, or control-lease mutation.
+    return undefined;
   }
 
   // A dashboard control is the owner of an active listening/broadcast setup.
