@@ -13,6 +13,7 @@
 - v0.2.25 commit `d6f027fbadcd0be4fdfad7ab84a90f464b8c959b`을 배포했다. Pages workflow `29965464506`은 clean install·720 tests·lint·Worker 문법·production build·새 pseudo-locale layout·OBS bundle·artifact upload·deploy를 모두 통과했고, 새 단계도 Ubuntu Chrome에서 17초 안에 성공했다. 최신 `github-pages` deployment `5564316589`가 같은 SHA를 가리킨다.
 - 이번 run의 `github-pages` artifact와 공개 URL을 독립적으로 비교했다. `index.html`은 `485B`·SHA-256 `ebe5c7dd0ca571285048f1ffb8a012d3c6dc99c0b6ba9500ddb1936176b2850f`, Dashboard는 `370,817B`·`e0efd63ed84fabb2b89443b37eac2f42328d2582035676ed32a4357ff0059250`, Speaker player는 `7,254B`·`99a35db14d9c84e9979497da25b5bb7752641fb328930ebb7efc23eb63d412e5`, OBS player는 `42,343B`·`7da8802df59db5a63969c65977de87aa1ab4e46ee1dcf0b7ed86639fd6c861cb`로 각각 exact match였다. runtime hash가 v0.2.24와 같은 것은 이번 변경이 test/docs-only이기 때문이며 CDN 잔류가 아니다.
 - 배포 후 공개 앱은 기본 Speaker, YouTube/Setlink/Meloming과 Search/Playlist, 한·영 전환·reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼, 금발 선, HTTP 오류·ntfy 요청 0을 통과했다. warm DCL `24.7ms`, warm long task 0, JS heap `7,963,228B`였다. 공개 pseudo smoke도 세 화면×네 폭 overflow·잘림 0, Speaker session HTTP·WebSocket 0, 전체 media source·playing 0을 다시 통과했으며 실제 음악·OBS 연결·점검 신호·방송·녹화는 시작하지 않았다.
+- `docs/GOAL_COMPLETION_AUDIT_2026-07-22.md`의 공개 기준을 v0.2.25로 갱신하고 자동 합격과 실물 관문을 다시 분리했다. 코드·CEF·G3/G4로 끝난 항목은 유지하고, 실제 모바일 백그라운드/잠금 화면·지원 출력 장치 청취, 사용자 OBS 헤드폰 청취, 명시적 승인 뒤 G5, 같은-clock performer 경로 G6만 남은 증거로 기록했다.
 
 ## 2026-07-23 (Codex) — v0.2.24 실제 OBS 활성 곡의 제어 소켓 복구
 
