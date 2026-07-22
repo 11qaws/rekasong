@@ -9,7 +9,8 @@
 - 반복 실측에서 저장 payload는 `290,235B`, 최대 이력 행은 `100`, 최초 개방은 `31.9~259.4ms`, warm 조작 p95는 `30.6~42.8ms`, 320px 문서 폭은 정확히 `320px`, 닫고 GC한 뒤 heap 증가는 약 `0.2MiB`였다. 기준은 각각 1MiB, 100행, cold 300ms, warm p95 100ms, heap 증가 16MiB다.
 - 유레카의 금발을 뜻하는 3px 노란 선은 기존 stacking-context 회귀 검사와 Dashboard smoke에 계속 포함된다. 이 성능 변경에서도 320/375/768/1100px 한국어·영어 화면의 선 높이·불투명 색·머리핀 범위를 다시 통과했다.
 - 검증: 자동 테스트 635/635, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, 로컬 Dashboard smoke, 1,000곡 production-browser 성능 smoke, OBS 정적 closure budget(raw `382,301B` / gzip `116,113B` / brotli `101,719B`), `git diff --check`를 통과했다.
-- 이 후보는 아직 커밋·배포 전이다. 공개 Pages는 계속 frontend `0.2.5`이며, 배포 뒤 같은 1,000곡 측정을 공개 URL에서 다시 수행한다.
+- 첫 Pages workflow `29898243550`은 clean install 뒤 기존 adapter 통합 테스트의 fixture Blob 대기가 CI에서 29ms 만에 만료돼 중단됐다. 제품 timeout이 아니라 `setImmediate` 250회라는 CPU 속도 의존 테스트 상한이 원인이었다. 이를 실제 시간 2초의 bounded wait로 교체해 빠른 로컬과 병렬 Linux CI가 같은 시간 계약을 사용하게 했다. 실제 고착은 여전히 2초 뒤 실패한다.
+- 주 기능은 `511beed`에 커밋했으며 CI 대기 보강은 후속 커밋·배포 전이다. 공개 Pages는 계속 frontend `0.2.5`이며, 배포 뒤 같은 1,000곡 측정을 공개 URL에서 다시 수행한다.
 
 ## 2026-07-22 (Codex) — 실제 OBS 녹화 G4와 숨은 소스 비파괴 복구
 

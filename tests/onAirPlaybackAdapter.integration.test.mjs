@@ -171,10 +171,11 @@ function receivePlayerCommand(socket, command) {
 }
 
 async function waitFor(predicate, label) {
-  for (let attempt = 0; attempt < 250; attempt += 1) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
     const result = predicate();
     if (result) return result;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
   assert.fail(`timed out waiting for ${label}`);
 }
