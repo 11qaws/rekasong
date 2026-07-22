@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS G4 통과 · G5/G6 미실행
+> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · G5/G6 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -155,6 +155,16 @@ npm run test:obs:v2:cef-soak
 - Rekasong CEF renderer private memory는 약 38.1MiB에서 43.5~46MiB 범위였고 반복 회수가 관측됐다.
 - 약 56분에 명령이 없던 control WebSocket만 `socket_closed`로 종료돼 harness가 실패했다. OBS mixer는 이후에도 fixture 자연 종료까지 움직였으며 종료 뒤 무음으로 바뀌어 media graph 자체는 끊기거나 재시작되지 않았음을 확인했다.
 - 원인에 맞춰 30초 storage-free/no-reply control keepalive와 동일 coordinator 자동 재접속을 추가했다. 수정 배포 뒤 60분 전체를 재실행하기 전까지 이 항목은 **미통과**로 유지한다.
+
+2026-07-22 보강 배포 후 60분 재실행 기록:
+
+- 실제 OBS 30.2.0 Browser Source 한 개로 3,600,000ms AAC fixture를 끝까지 재생했다. wall duration은 3,600,150ms로 오차 150ms였고 media duration은 계약과 정확히 일치했다.
+- 전체 관측에서 player/OBS 후보는 1/1, lease는 `audible`, 상태는 `playing`, target은 동일했다. candidate transition, unsafe route, duplicate, authoritative unknown 및 player identity 교체는 모두 0건이었다.
+- control transport disconnect 관측 3건과 reconnect 시도 2건이 있었지만 최대 gap은 825ms였다. 동일 identity로 복구했고 route·LOAD·PLAY·STOP 재전송과 OBS media graph 교체는 0건이었다.
+- Rekasong CEF renderer의 private memory는 14.8MiB, working set은 약 33.5~33.6MiB로 유지됐고 renderer crash나 시간 비례 증가가 없었다.
+- 자연 종료 뒤 strong STOP·output deactivate·session end 정리가 완료됐고 종료 session 조회는 HTTP 410이었다. 이로써 이 실행서의 실제 CEF 60분 장시간 관문은 **통과**다.
+- 시험 URL은 원래 URL과 길이·SHA-256을 대조해 복원하고 cache refresh를 적용했다. clipboard와 credential-bearing 임시 파일은 제거했다.
+- 이 결과는 실제 OBS CEF 재생 경로와 자원 안정성 증거다. 사용자의 물리 모니터링 청취, ingest/VOD(G5), 라이브 마이크↔MR 상대 싱크(G6)는 대체하지 않는다.
 
 ## 6. G1 — 출력 선택과 단일 lease
 

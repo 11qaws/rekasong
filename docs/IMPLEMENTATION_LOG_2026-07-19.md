@@ -8,12 +8,15 @@
 - 원인은 player heartbeat snapshot을 control에 매번 중계하지 않도록 비용을 줄인 뒤 control role에 별도 keepalive가 없었던 것이다. control은 명령이 없으면 장시간 wire frame이 0개였다.
 - 보강 후 control은 30초마다 최소 `control_heartbeat` 한 프레임만 전송한다. Worker는 이를 응답, Durable Object storage write, attachment update, snapshot broadcast, lease mutation 없이 소비한다. 비용은 control 하나당 분당 2개 수신 event이고 playback 권한은 없다.
 - 예외적인 socket close에는 동일 coordinator와 동일 `controlInstanceId`로 1.5초부터 최대 30초의 bounded reconnect를 수행한다. route·LOAD·PLAY·STOP을 자동 재전송하지 않으며 새 authoritative welcome+snapshot이 기존 run/lease와 정확히 일치해야만 연결 손실 표시를 해제한다. 종료된 session은 재접속하지 않는다.
+- 보강판을 production Worker와 Pages에 배포한 뒤 같은 실제 OBS Browser Source에서 60분 전체를 다시 실행했다. wall duration은 3,600,150ms, media duration은 3,600,000ms로 오차 150ms였고, player/OBS 후보 1/1, 같은 lease target, `audible`·`playing`을 종료 직전까지 유지했다. player identity 전환, unsafe route 관측, duplicate, unknown lease는 모두 0건이었고 종료 session 재조회는 HTTP 410이었다.
+- 재실행 중 control transport disconnect 관측은 3건, reconnect 시도는 2건, 최대 gap은 825ms였다. 모두 같은 control/player identity로 복구됐고 route·LOAD·PLAY·STOP 재전송과 media graph 교체는 0건이었다. 따라서 짧은 제어 전송 재접속이 이미 재생 중인 OBS 출력 경로를 끊거나 다시 시작하지 않는다는 연결 우선 계약을 통과했다.
+- 최종 cache refresh 뒤 생성된 실제 Rekasong CEF renderer PID 64028의 private memory는 60분 관측 내내 14.8MiB, working set은 약 33.5~33.6MiB로 유지돼 renderer crash나 시간 비례 메모리 증가가 없었다. 이 결과는 실제 CEF의 장시간 재생·경로·자원 관문이며, 물리 청취 및 ingest 이후 결과물은 여전히 G5/G6에서 별도로 판정한다.
 - 시험 뒤 OBS Browser Source URL은 시험 전 값과 길이·SHA-256이 일치하도록 복원하고 cache refresh 뒤 Properties를 닫았으며 clipboard도 비웠다. credential-bearing URL은 로그와 문서에 남기지 않았다.
-- 이 변경을 배포한 뒤 실제 OBS CEF 60분 시험을 다시 통과해야 장시간 항목을 완료로 판정한다. 현재 G4 녹화 artifact는 통과했고 G5 실제 stream과 G6 마이크↔MR 싱크는 여전히 미실행이다.
+- 실제 OBS CEF 60분 장시간 항목과 G4 녹화 artifact는 통과했다. G5 실제 stream과 G6 마이크↔MR 싱크는 여전히 미실행이다.
 
 > 작업 범위: `D:\Agents\rekasong\Codex\workspace`만 수정했다.
 > 판정 원칙: 실제 OBS CEF·mixer·녹화·stream artifact가 없는 상태를 “OBS 송출 확인 완료”로 표시하지 않는다.
-> 배포 상태: source와 production build만 검증하며 Worker·프런트를 배포하지 않았다.
+> 배포 상태: frontend `0.2.4` / commit `7a31155`, Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 production에 배포했다.
 
 ## 1. 현재 결론
 
@@ -218,12 +221,12 @@ UI는 이 표의 아래 행을 위 행의 증거로 대신하거나, 위 행을 
 
 ## 5. 자동 검증 체크포인트
 
-2026-07-19 최종 회귀 결과:
+2026-07-22 최신 회귀 결과:
 
 ```powershell
-npm test                         # 358/358 pass, 0 fail
-npm run lint                     # exit 0, 기존 무관 warning 6건
-npm run build                    # exit 0, 2,236 modules
+npm test                         # 634/634 pass, 0 fail
+npm run lint                     # exit 0, 기존 무관 warning 2건
+npm run build                    # exit 0, 2,257 modules
 npm run check:obs:bundle         # obs_player_bundle_budget_passed
 ```
 
@@ -239,9 +242,9 @@ OBS v2가 선택하는 production artifact:
 
 | 지표 | 측정값 | 예산 | 판정 |
 |---|---:|---:|---|
-| raw | 376,933B | 460,800B | 통과 |
-| gzip | 112,695B | 133,120B | 통과 |
-| brotli | 97,547B | 참고 | 통과 |
+| raw | 382,301B | 460,800B | 통과 |
+| gzip | 116,110B | 133,120B | 통과 |
+| brotli | 101,713B | 참고 | 통과 |
 
 브라우저 cold-route 비교는 route split 전 231,345B에서 115,317B로 전송량이 50.1% 감소했고, decoded resource는 799,837B에서 384,573B로 51.9% 감소했다. 같은 개발 PC에서 load 중앙값은 244.7ms에서 68.9ms, JS heap은 2.94MB에서 2.43MB로 줄었다. 이 수치는 로컬 Chrome 기준이며 OBS CEF 합격 증거가 아니다.
 

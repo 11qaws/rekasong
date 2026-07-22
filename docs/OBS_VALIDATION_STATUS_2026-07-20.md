@@ -17,6 +17,7 @@
 - OBS 전용 route의 실제 정적 로드는 예산 안이다.
 - 실제 OBS 30.2.0/browser plugin 2.23.5에서 `Control audio via OBS`가 켜진 Rekasong Browser Source로 점검 신호를 실행했고, 앱의 `test_started`/G2 완료와 동시에 OBS 믹서 미터가 약 -25 dB까지 움직이는 것을 화면에서 확인했다.
 - 실제 녹화 artifact에서 기준 패턴을 검출해 G4를 통과했다. **아직 사람이 직접 들은 모니터링 결과, 플랫폼 결과물, 마이크↔반주 싱크는 확인하지 않았다.** 따라서 현재 상태를 `OBS 송출 확인 완료` 또는 `카라오케 싱크 확인 완료`라고 부르면 안 된다.
+- 보강 배포 뒤 실제 OBS CEF 60분 재생도 통과했다. 같은 player identity와 단일 route를 끝까지 유지했고 wall/media 오차는 150ms, renderer 메모리는 private 14.8MiB·working set 약 33.5~33.6MiB로 일정했다. 이는 G5/G6를 승격하지 않는 별도 장시간 안정성 증거다.
 
 ### 1.0 2026-07-22 실제 OBS 영구 대기 원인과 수정
 
@@ -40,13 +41,17 @@
 - 파일은 33.283초, 5,302,320바이트, H.264 + AAC 48kHz stereo다. 전체 오디오 peak -21.2dB로 clipping이 없었다.
 - band-pass frame 분석에서 880Hz 짧은 pulse 12개와 440Hz 긴 tone 4개를 정확히 검출했다. marker 누락·중복 0, AAC frame 해상도에서 20ms 초과 활성 구간 분할 0으로 이 장비·profile·track 구성의 G4를 통과했다.
 
-### 1.3 2026-07-22 실제 CEF 60분 첫 실행과 control idle 종료
+### 1.3 2026-07-22 실제 CEF 60분 첫 실행과 보강 재실행
 
 - 실제 OBS Browser Source에서 60분 AAC fixture를 실행했고 약 56분까지 player/OBS 후보 1/1, 같은 lease target, `audible`·`playing`을 매분 확인했다. Rekasong CEF renderer private memory는 약 38.1MiB에서 43.5~46MiB 범위로 회수돼 지속 증가가 관측되지 않았다.
 - 약 56분에 control WebSocket만 `socket_closed`로 종료됐다. OBS mixer 신호는 fixture 자연 종료까지 계속됐고 자연 종료 뒤 무음으로 바뀌었다. 따라서 연결 우선 정책대로 이미 재생 중인 OBS media graph는 제어 연결 손실에 의해 중단·재시작되지 않았다.
 - 직접 원인은 control role이 유휴 중 application frame을 전혀 보내지 않았던 것이다. 30초 간격 최소 control heartbeat를 추가했고 Worker는 reply/storage/attachment/broadcast/lease mutation 없이 소비한다.
 - 같은 coordinator와 control identity를 유지하는 bounded reconnect도 추가했다. 복구 과정은 route·LOAD·PLAY·STOP을 재전송하지 않으며 authoritative snapshot이 기존 run/lease와 일치해야 connection-loss lock을 해제한다.
 - 이 첫 실행은 harness가 자연 종료·strong STOP·deactivate·HTTP 410까지 관측하지 못했으므로 장시간 soak **실패**다. 수정 배포 뒤 60분 전체 재실행이 필요하다.
+- 보강 배포 뒤 같은 실제 OBS 30.2.0 Browser Source에서 60분 전체를 재실행해 **통과**했다. wall/media duration은 각각 3,600,150ms/3,600,000ms로 오차 150ms였고 player/OBS 후보 1/1, 같은 target, `audible`·`playing`이 유지됐다.
+- candidate transition, unsafe route, duplicate, unknown lease 및 player identity 교체는 0건이었다. control transport에는 3회의 짧은 disconnect 관측과 2회의 reconnect 시도가 있었지만 최대 gap은 825ms였고 동일 identity로 복구했다. route·LOAD·PLAY·STOP 재전송과 media graph 교체는 없었다.
+- 최종 Rekasong CEF renderer의 private memory는 14.8MiB, working set은 약 33.5~33.6MiB로 60분 동안 일정했다. 자연 종료 뒤 session 정리와 HTTP 410 fencing까지 확인했다.
+- 이 통과는 실제 OBS CEF 장시간 경로·재생·자원 안정성의 상한이다. 실제 청취와 ingest 결과물, 마이크↔MR 상대 싱크는 여전히 G5/G6 증거가 필요하다.
 - 별도 run에서 test fixture 재생 중 source를 약 1.4초 숨겼다가 다시 표시했다. OBS route는 활성 상태를 유지했고 G2가 16/16 marker로 완료됐다. source hide/show만으로 established media graph를 정지하거나 초기화하지 않는 계약을 실제 OBS에서 확인했다.
 - production UI는 숨은 단일 source를 일반 `OBS 플레이어 없음`으로 표시하며 완전 초기화를 권했다. 최신 후보는 `OBS 소스를 표시해 주세요`와 눈 아이콘 복구 행동을 표시하고 destructive reset 카드를 숨긴다.
 
@@ -75,7 +80,7 @@
 
 | 검증 | 결과 |
 |---|---|
-| 전체 테스트 | 최신 후보 626/626 통과 |
+| 전체 테스트 | 최신 후보 634/634 통과 |
 | Worker·출력 제어 집중 테스트 | 374건 통과 |
 | v2 adapter/protocol/hibernation 집중 테스트 | 105건 통과 |
 | lint | exit 0, 기존 warning 2개, 신규 warning 0 |
@@ -191,7 +196,7 @@
 | 항목 | 결과 |
 |---|---|
 | production build | 약 1.0초 |
-| OBS route 실제 closure | 381,216B raw / 115,958B gzip / 101,625B brotli |
+| OBS route 실제 closure | 382,301B raw / 116,110B gzip / 101,713B brotli |
 | 예산 | 460.8KB raw / 133.1KB gzip |
 | gzip 여유 | 약 14% |
 | OBS DOM | 16 nodes, `<audio>` 1, image/iframe/svg 0 |
@@ -201,7 +206,7 @@
 
 기존 bundle checker는 `onAirTestFixture` 정적 의존 약 63.6KB raw를 누락했다. manifest 기반 전체 static closure로 보강해 실제 수치를 릴리스 게이트에 포함했다. 현재도 예산은 통과하지만 gzip 여유가 크지 않으므로 새 공용 의존을 OBS route에 넣을 때 주의한다.
 
-최신 Dashboard JS chunk는 340.98KB raw / 93.45KB gzip이고 CSS는 56.22KB raw / 10.56KB gzip이다. 로컬 Speaker는 4.55KB raw / 1.82KB gzip lazy chunk로 분리돼 있으며, OBS Protocol v2 정적 closure에 Dashboard 번역·검색 catalog를 넣지 않는다. OBS 정적 closure는 381,216B raw / 115,958B gzip / 101,625B brotli다.
+최신 Dashboard JS chunk는 342.90KB raw / 93.98KB gzip이고 CSS는 56.42KB raw / 10.59KB gzip이다. 로컬 Speaker는 4.55KB raw / 1.82KB gzip lazy chunk로 분리돼 있으며, OBS Protocol v2 정적 closure에 Dashboard 번역·검색 catalog를 넣지 않는다. OBS 정적 closure는 382,301B raw / 116,110B gzip / 101,713B brotli다.
 
 ### 3.8 설정 안 OBS 오디오 점검 UI
 
@@ -260,7 +265,7 @@ CDP의 전체 `Nodes` 계수는 297→162로 감소했지만 live document Mutat
 - hint churn·곡 전환 100회: stale fetch 0, cache 1개, retained 128MiB 이하
 - 단일 탭 Speaker↔OBS 500회: OBS control socket 1개, 같은 탭에서 중복 audible output 0. 별도 Speaker 탭들은 각자 재생 가능해야 하므로 전역 audible player 1개 제한을 두지 않는다.
 - Dashboard history 1,000곡: render row 100 이하, 조작 p95 100ms 이하, localStorage 1MiB 이하
-- 실제 OBS CEF 60분: crash/dropout/중복 player/지속 working-set 증가 0
+- [완료] 실제 OBS CEF 60분: renderer crash, 중복 player, unsafe route, identity 전환, 지속 working-set 증가 0. 물리 mixer의 60분 독립 녹음은 G5/G6와 별도다.
 
 history는 닫힌 상태에서 행을 만들지 않고, 열면 최근 100곡부터 100곡씩 점진 렌더한다. 1,000곡 window·원본 보존 계약은 자동 통과했다. 실제 브라우저 조작 p95·localStorage 크기와 로컬 Blob의 전역 count·byte cap은 아직 `not-run`이다.
 

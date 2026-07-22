@@ -185,7 +185,7 @@ npm run test:obs:v2:idle-soak
 2. 완료: run/player/connection/lease identity, OBS 중복 candidate 차단, route postcondition, 10초 관측 heartbeat와 30/60초 warning/stale 경계, emergency·mutation race를 Protocol v2 자동 테스트로 고정했다.
 3. 완료: 공통 PlaybackEngine과 player adapter가 연결 손실·emergency에 physical stop/detach하고 자동 resume를 금지한다.
 4. 완료: 전체 Blob source resolver와 bounded prefetch 수신 경계를 구현했다. OBS는 Protocol v2 adapter를, Dashboard Speaker는 탭별 `DashboardLocalSpeaker` controller를 사용하며 물리 재생 엔진만 공유한다.
-5. 부분 완료/P0: v2 route split, heavy graph/font 제외, raw/gzip budget, OBS 10초 heartbeat 무렌더, active/prefetch 64MiB cap은 완료했다. 실제 OBS CEF 60분 soak와 Dashboard history/local Blob 상한은 남아 있다.
+5. 부분 완료/P0: v2 route split, heavy graph/font 제외, raw/gzip budget, OBS 10초 heartbeat 무렌더, active/prefetch 64MiB cap과 실제 OBS CEF 60분 soak는 완료했다. Dashboard history/local Blob 상한은 남아 있다. 60분 실측은 wall/media 3,600,150/3,600,000ms, player/OBS 후보 1/1, unsafe route와 identity 전환 0건, renderer private 14.8MiB·working set 약 33.5~33.6MiB였다.
 6. 완료: Speaker를 서버 출력 selector/lease에서 분리했다. 새 탭은 즉시 Speaker로 시작하고, 각 탭의 현재 곡과 run은 독립적이며, 다른 탭·OBS 제어 상태·legacy Speaker 후보 수 때문에 버튼이나 transport가 잠기지 않는다. OBS 후보 없음·중복은 OBS 선택에만 명시적으로 fail-closed하고 Speaker는 계속 사용할 수 있다.
 7. 부분 완료/P0: 같은 graph의 결정적 생성 pulse, reliable marker, 설정 안 시작·중지·진행·안전 정지 UI와 `OBS 출력 중 로컬 무음은 정상` 안내를 구현했다. 앱 재생 증거(G2)와 OBS mixer 직접 확인(G3)을 분리해 표시하며, 실제 G2 뒤 사용자가 정확한 OBS meter의 움직임/미움직임을 기록하는 로컬 확인 UI와 room·player·check 식별 저장도 구현했다. 이 기록은 route나 재생을 바꾸지 않으며, 실제 mixer 관측과 녹화 artifact 판정은 여전히 수동 관문이다.
 8. 완료: authoritative/test sequence gap, 강한 종료 증거, outcome unknown 뒤 수동 reconciliation contract를 구현했다. 정상 run 자동 resume는 제공하지 않는다.

@@ -44,18 +44,18 @@
 
 ### 2.3 Codex
 
-- 기준 HEAD는 Claude와 같은 `9b7f98e`이며, 이 문서 시점의 변경은 `D:\Agents\rekasong\Codex\workspace` working tree에만 있고 커밋·배포하지 않았다.
-- Protocol v2, Worker lease/identity/fence, 공통 PlaybackEngine, source resolver, deterministic fixture, coordinator, v2 OBS player, bounded prefetch와 route split을 구현했다.
+- 현재 HEAD와 공개 `master`는 `7a31155`이며 frontend `0.2.4`와 production Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 배포했다.
+- Protocol v2, Worker lease/identity/fence, 공통 PlaybackEngine, source resolver, deterministic fixture, coordinator, v2 OBS player, bounded prefetch, route split, 로컬 Speaker 분리, 번역 구조와 점진 OBS 설정을 구현했다.
 - production Worker 경로와 staging 경로를 env로 다시 분리했고 production 산출물에 staging URL이 섞이지 않는지 검사했다.
 - 최신 검증 결과:
-  - 전체 자동 테스트 `358/358` PASS.
-  - lint PASS, 기존 무관 warning 6.
+  - 전체 자동 테스트 `634/634` PASS.
+  - lint PASS, 기존 무관 warning 2.
   - production build PASS, 500KiB chunk/CSS import warning 0.
-  - OBS v2 선택 artifact raw `376,933B`, gzip `112,695B`, budget PASS.
+  - OBS v2 선택 artifact raw `382,301B`, gzip `116,110B`, budget PASS.
   - v2 브라우저 cold-route 전송 `115,317B`, 초기 DOM 15개, 외부 font 요청 0.
   - 4Hz heartbeat 10초 동안 DOM mutation 0, React-facing coordinator publish 0.
 - 과거 staging smoke 11/11과 10초 blob 재생은 초기 인수 증거로 보존하되 현재 Protocol v2/실제 OBS 증거로 승격하지 않는다.
-- 실제 OBS 녹화, stream artifact, CEF 장시간 memory, 마이크↔MR drift는 미검증이다.
+- 실제 OBS G3 mixer, G4 녹화 artifact, source hide/show와 CEF 60분 재생은 통과했다. 사용자의 실제 청취, ingest/VOD G5와 마이크↔MR G6는 미검증이다.
 
 ### 2.4 Opencode 및 Gemini artifacts
 
@@ -93,12 +93,12 @@ OBS
 
 | 대상 | 현재 상태 | 판정 |
 |---|---|---|
-| `127.0.0.1:5000` | listener 없음 | Claude staging frontend 내려감 |
-| `127.0.0.1:5001`, `:5100` | listener 없음 | Codex dev/production preview 검증 후 종료됨 |
-| OBS | 프로세스 없음, 4455 listener 없음 | 실제 OBS 재검증 불가 상태 |
-| GitHub Pages | HEAD `9b7f98e` 배포 workflow 성공, HTTP 200 | prod frontend 배포됨 |
+| `127.0.0.1:5000`, `:5001` | Node listener 동작 중 | 로컬 frontend 접근 가능 |
+| `127.0.0.1:5100` | listener 없음 | 별도 preview는 종료됨 |
+| OBS | OBS 30.2.0 프로세스 1개 동작, 4455 listener 없음 | 수동 UI 검증 가능, obs-websocket 자동화는 미사용 |
+| GitHub Pages | HEAD `7a31155` 배포 workflow 성공, HTTP 200 | frontend `0.2.4` 배포됨 |
 | `rekasong.pages.dev` | root/search HTTP 200 | production API 도달 가능 |
-| prod/staging Worker | root 404, 보호 audio 401 | edge 도달 가능; DO session 건강은 미검증 |
+| prod/staging Worker | root 404, 보호 audio 401 | production DO session은 실제 OBS CEF 60분으로 검증됨 |
 | VPS prepare service | active | **현재 target=staging** |
 
 가장 먼저 다룰 운영 위험은 VPS가 staging만 폴링한다는 점이다. 기존 prod R2 캐시는 재생되지만 새 prod prepare job은 소비되지 않을 수 있다. 테스트 때마다 단일 서비스의 target을 뒤집는 방식은 중단 사고를 반복하므로 prod/staging 서비스를 분리해야 한다.
@@ -245,9 +245,9 @@ eventId + entryId + runId + leaseEpoch + playerInstanceId
 - 진행 상태:
   1. [x] App route, Widget mode, v2 player를 각각 lazy boundary로 분리한다.
   2. [x] v2 graph에서 Dashboard/Firebase/framer-motion/react-youtube/legacy player와 외부 font를 제외한다.
-  3. [x] production cold-route artifact 예산을 raw 450KiB, gzip 130KiB로 자동 검사한다. 현재 raw 376,933B/gzip 112,695B다.
+  3. [x] production cold-route artifact 예산을 raw 450KiB, gzip 130KiB로 자동 검사한다. 현재 raw 382,301B/gzip 116,110B다.
   4. [x] heartbeat 4Hz가 React render를 만들지 않는지 회귀 테스트한다.
-  5. [ ] idle 10분, post-GC heap 30분, 곡 전환 100회, 실제 OBS CEF 60분을 release 환경에서 측정한다.
+  5. [부분 완료] release 환경의 READY idle 10분과 실제 OBS CEF 60분은 통과했다. CEF 60분은 wall/media 오차 150ms, 단일 player/route, renderer private 14.8MiB·working set 약 33.5~33.6MiB였다. post-GC heap 30분과 곡 전환 100회는 남아 있다.
   6. [x] OBS direct LOAD와 prefetch를 각각 64MiB로 제한하고 retained 128MiB 상한을 둔다. 실제 transient/CEF process memory 계측과 disk-backed 초과 경로는 남아 있다.
 - 완료 기준: artifact 예산, 외부 장식 요청 0, idle long task 0, 평균 CPU 1% 미만, heap warm baseline 대비 16MiB 이내, CEF crash/dropout 0.
 

@@ -75,7 +75,7 @@
 - 실제 Chrome 10분 continuity soak에서 600초/57,600,044바이트 WAV를 완전 준비하고 590초를 관측했다. media 경과 590,065.3ms와 wall 경과 590,063.1ms의 차이는 2.2ms였으며, 추가 PLAY·pause·ended·emptied·waiting·stalled·error는 모두 0이었다. 물리 OBS mixer·마이크↔MR 상대 싱크는 별도 G3~G6로 남는다.
 - Protocol v2 실제 Chrome에서 8초 PCM fixture 재생, 16개 marker, waiting/stalled/error/backwards 0.
 - 10분 READY idle에서 long task 0, DOM mutation 0, 평균 main-thread CPU 0.199267%.
-- OBS 정적 경로 번들(2026-07-22 최신 후보): raw 381,225B, gzip 115,962B, brotli 101,613B. 예산 raw 450KiB, gzip 130KiB 이내.
+- OBS 정적 경로 번들(2026-07-22 최신 후보): raw 382,301B, gzip 116,110B, brotli 101,713B. 예산 raw 450KiB, gzip 130KiB 이내.
 
 ## 2. 실제 OBS 없이는 끝낼 수 없는 필수 관문
 
@@ -105,7 +105,7 @@ G3에서 반드시 바꿔 보아야 할 항목:
 ### P1 — 장애·장시간·부하
 
 1. offline/online, WebSocket 1011, PC sleep/resume, background throttle를 실제 브라우저에 주입한다.
-2. 일반 Chrome 30분과 OBS CEF 60분 soak에서 crash, dropout, 중복 player, post-GC heap, working set을 기록한다.
+2. [OBS CEF 60분 완료] 실제 OBS에서 단일 player/route, wall/media 오차 150ms, renderer private 14.8MiB·working set 약 33.5~33.6MiB, crash·unsafe route·identity 전환 0을 기록했다. 일반 Chrome 30분 post-GC heap과 물리 mixer 장시간 캡처는 남아 있다.
 3. hint 교체와 곡 전환 100회: stale fetch 0, retained Blob 1개, aggregate Blob 예산 준수.
 4. Speaker↔OBS 전환 500회: OBS 전환 중 local/OBS 동시 audible 0, OBS control socket 1개, 자동 fallback 0. 여러 Speaker 탭의 독립 재생은 허용한다.
 5. [렌더 계약 완료] history 1,000곡: 닫힌 상태 0행, 최초 개방 최근 100행, 100곡씩 점진 확장으로 바꿨다. 실제 브라우저 조작 p95 100ms 이하와 localStorage 1MiB 이하는 배포 전 performance trace로 남긴다.
