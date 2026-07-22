@@ -76,3 +76,21 @@ test('production Speaker keeps local files page-owned until explicit OBS demand'
     'every physical controller-ready notification must drain commands even across ready-to-ready remounts',
   );
 });
+
+test('Speaker transport never treats tab visibility or OBS proof as playback authority', async () => {
+  const [dashboard, localSpeaker, localController] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/DashboardLocalSpeaker.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/lib/localSpeakerController.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.doesNotMatch(
+    `${localSpeaker}\n${localController}`,
+    /addEventListener\(['"]visibilitychange|document\.hidden|addEventListener\(['"]pagehide|new WebSocket|leaseTarget|heartbeatTimer|sendHeartbeat/,
+  );
+  assert.match(dashboard, /const outputRouteStable = speakerPlayerMode \? true : establishedObsRouteConnected/);
+  assert.match(
+    dashboard,
+    /if \(mode === 'speaker'\) \{[\s\S]*?setOutputModePreference\('speaker'\)[\s\S]*?return;/,
+  );
+});

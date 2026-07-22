@@ -116,7 +116,7 @@ G3에서 반드시 바꿔 보아야 할 항목:
 ### P1 — 리모컨 사용성
 
 1. [자동 완료] 마지막 사용자 play/pause/seek/volume 요청과 플레이어가 실제 적용한 결과를 정확한 command/run/value로 분리해 보여 준다. ACK나 optimistic 값은 적용 증거로 쓰지 않고, 5초 지연은 재생 중단·재전송 없이 다음 확인 행동만 안내한다. 실제 OBS 연결 화면에서의 사용성 확인은 G3에 포함한다.
-2. [완료] 지원 브라우저 전용 `selectAudioOutput` + `setSinkId` 장치 선택과 autoplay 해제 안내를 구현했다. 장치 실패는 재생·OBS route를 막지 않고, 미지원 브라우저에서는 시스템 기본 출력으로 조용히 계속 재생한다.
+2. [완료] 지원 브라우저 전용 `selectAudioOutput` + `setSinkId` 장치 선택과 autoplay 해제 안내를 구현했다. 장치 실패는 재생·OBS route를 막지 않고, 미지원 브라우저에서는 시스템 기본 출력으로 조용히 계속 재생한다. v0.2.22는 OS `devicechange`에서 선택 sink 소실을 감지해 같은 media element를 기본 sink로만 폴백하며, 겹친 이벤트와 오래된 실패가 새 사용자 선택을 덮지 못하게 한다. 실제 USB/Bluetooth 청취는 수동 관문이다.
 3. [완료] 스피커 감상 볼륨과 OBS player gain을 별도 지속 프로필로 분리했다. 기존 단일 값은 양쪽에 무손실 승계하고, 현재 run의 실제 출력만 조절한다. 실제 Speaker 34% 새로고침 복원과 자동 테스트를 통과했다.
 4. [완료] 실제 Speaker run에만 Media Session metadata와 play/pause/next/seek handler를 연결했다. OBS·idle에서는 모두 제거하고 API 실패는 비차단한다. 실제 모바일 잠금 화면·알림·헤드셋 조작은 수동 확인한다.
 5. 세션마다 바뀌는 OBS URL을 stable pairing/revoke/rotate 방식으로 바꿀지 결정한다.

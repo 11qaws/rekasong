@@ -66,6 +66,7 @@ import {
   DEFAULT_SPEAKER_OUTPUT_DEVICE,
   applySpeakerOutputDevice,
   loadSpeakerOutputDevice,
+  observeSpeakerOutputDeviceChanges,
   requestSpeakerOutputDevice,
   saveSpeakerOutputDevice,
   supportsSpeakerOutputDeviceSelection,
@@ -558,6 +559,10 @@ export default function Dashboard() {
   });
   const speakerOutputDeviceRef = useRef(speakerOutputDevice);
   speakerOutputDeviceRef.current = speakerOutputDevice;
+  const commitSpeakerOutputDevice = useCallback((nextDevice) => {
+    speakerOutputDeviceRef.current = nextDevice;
+    setSpeakerOutputDevice(nextDevice);
+  }, []);
   const speakerMediaSessionController = useMemo(() => (
     createSpeakerMediaSessionController({
       mediaSession: typeof navigator === 'undefined' ? null : navigator.mediaSession,
@@ -762,12 +767,12 @@ export default function Dashboard() {
       typeof window === 'undefined' ? null : window.localStorage,
       DEFAULT_SPEAKER_OUTPUT_DEVICE,
     );
-    setSpeakerOutputDevice({
+    commitSpeakerOutputDevice({
       supported: speakerOutputDeviceSupported,
       phase: 'failed',
       ...DEFAULT_SPEAKER_OUTPUT_DEVICE,
     });
-  }, [speakerOutputDeviceSupported]);
+  }, [commitSpeakerOutputDevice, speakerOutputDeviceSupported]);
 
   // key={runId} 리마운트로 새 요소가 만들어질 때 볼륨과 선택한 Speaker sink를
   // 즉시 적용한다. sink 실패는 playback lifecycle과 무관하며 기본 출력으로
@@ -1373,12 +1378,12 @@ export default function Dashboard() {
       || typeof navigator === 'undefined'
       || !navigator.mediaDevices) return;
     const previous = speakerOutputDeviceRef.current;
-    setSpeakerOutputDevice({ ...previous, phase: 'choosing' });
+    commitSpeakerOutputDevice({ ...previous, phase: 'choosing' });
     try {
       const selectedDevice = await requestSpeakerOutputDevice(navigator.mediaDevices);
       await applySpeakerSinkToCurrentMedia(selectedDevice.deviceId);
       const persisted = saveSpeakerOutputDevice(window.localStorage, selectedDevice);
-      setSpeakerOutputDevice({
+      commitSpeakerOutputDevice({
         supported: true,
         phase: 'selected',
         ...selectedDevice,
@@ -1386,22 +1391,27 @@ export default function Dashboard() {
       showToast(t('settings.speakerDevice.selected'), 'success');
       if (!persisted) showToast(t('settings.speakerDevice.saveFailed'), 'info');
     } catch {
-      setSpeakerOutputDevice({ ...previous, phase: 'failed' });
+      commitSpeakerOutputDevice({ ...previous, phase: 'failed' });
       showToast(t('settings.speakerDevice.failed'), 'info');
     }
-  }, [applySpeakerSinkToCurrentMedia, showToast, speakerOutputDeviceSupported]);
+  }, [
+    applySpeakerSinkToCurrentMedia,
+    commitSpeakerOutputDevice,
+    showToast,
+    speakerOutputDeviceSupported,
+  ]);
 
   const handleResetSpeakerOutputDevice = useCallback(async () => {
     if (!speakerOutputDeviceSupported) return;
     const previous = speakerOutputDeviceRef.current;
-    setSpeakerOutputDevice({ ...previous, phase: 'choosing' });
+    commitSpeakerOutputDevice({ ...previous, phase: 'choosing' });
     try {
       await applySpeakerSinkToCurrentMedia('');
       const persisted = saveSpeakerOutputDevice(
         typeof window === 'undefined' ? null : window.localStorage,
         DEFAULT_SPEAKER_OUTPUT_DEVICE,
       );
-      setSpeakerOutputDevice({
+      commitSpeakerOutputDevice({
         supported: true,
         phase: 'default',
         ...DEFAULT_SPEAKER_OUTPUT_DEVICE,
@@ -1409,10 +1419,42 @@ export default function Dashboard() {
       showToast(t('settings.speakerDevice.resetDone'), 'success');
       if (!persisted) showToast(t('settings.speakerDevice.saveFailed'), 'info');
     } catch {
-      setSpeakerOutputDevice({ ...previous, phase: 'failed' });
+      commitSpeakerOutputDevice({ ...previous, phase: 'failed' });
       showToast(t('settings.speakerDevice.failed'), 'info');
     }
-  }, [applySpeakerSinkToCurrentMedia, showToast, speakerOutputDeviceSupported]);
+  }, [
+    applySpeakerSinkToCurrentMedia,
+    commitSpeakerOutputDevice,
+    showToast,
+    speakerOutputDeviceSupported,
+  ]);
+
+  useEffect(() => {
+    if (!speakerOutputDeviceSupported || typeof navigator === 'undefined') return undefined;
+    const monitor = observeSpeakerOutputDeviceChanges({
+      mediaDevices: navigator.mediaDevices,
+      getSelectedDeviceId: () => {
+        const current = speakerOutputDeviceRef.current;
+        return current.phase === 'choosing' ? '' : current.deviceId;
+      },
+      applyDevice: applySpeakerSinkToCurrentMedia,
+      onUnavailable: ({ deviceId }) => {
+        // A user selection may finish while an older devicechange check is in
+        // flight. Only retire the exact preference that failed validation.
+        const current = speakerOutputDeviceRef.current;
+        if (current.phase === 'choosing' || current.deviceId !== deviceId) return false;
+        handleSpeakerSinkRestoreFailure();
+        showToast(t('settings.speakerDevice.failed'), 'info');
+        return true;
+      },
+    });
+    return () => monitor.dispose();
+  }, [
+    applySpeakerSinkToCurrentMedia,
+    handleSpeakerSinkRestoreFailure,
+    showToast,
+    speakerOutputDeviceSupported,
+  ]);
 
   const recordObsMixerVerification = useCallback((outcome) => {
     if (!obsMixerVerification.canConfirm

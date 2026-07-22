@@ -1,5 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.22 Speaker 출력 장치 탈착 복구
+
+- Speaker에는 `visibilitychange`, `document.hidden`, PiP, OBS route proof, heartbeat를 이유로 재생을 끊는 경로가 없음을 Graphify 연결 추적과 소스 검토로 다시 확인했다. 이 불변식을 정적 회귀 테스트로 고정해 이후 검증 로직이 Speaker transport에 다시 들어오지 못하게 했다.
+- 남아 있던 실제 취약점은 선택한 USB/Bluetooth 출력 장치가 재생 중 사라지는 경우였다. 지원 브라우저에서만 OS `devicechange`를 구독하고 현재 선택 sink를 재확인한다. 장치가 없어졌으면 같은 media element에 시스템 기본 sink(`''`)를 best-effort로 적용하고 저장된 선호를 비운 뒤 기존 번역 문구로 다시 선택할 행동을 알린다.
+- 장치 이벤트는 이벤트 기반이며 timer, polling, Worker 요청, WebSocket frame을 추가하지 않는다. 연속 `devicechange`는 한 번의 in-flight 검사와 최대 한 번의 후속 검사로 합치며, 사용자가 그 사이 새 장치를 고르면 오래된 실패가 새 sink를 기본값으로 덮지 못하게 exact device ID와 `choosing` 상태로 차단한다. 어떤 실패도 pause·stop·seek·detach나 playback run 실패를 만들지 않는다.
+- 실제 headless Chrome의 로컬 파일 smoke에서 `setSinkId`/장치 선택 API를 모사하고 5초 WAV의 동일 `<audio>`에 선택 sink 성공→장치 제거→선택 sink 실패→기본 sink 적용 순서 `['smoke-speaker', '']`를 관측했다. 같은 source가 유지됐고 저장 선호는 기본값으로 정리됐으며 Worker 요청은 0, 320px 가로 overflow는 0이었다.
+- 30초 싱크 cadence는 제품 timer로 추가하지 않았다. 실제 물리 출력·입력 clock은 브라우저 `currentTime` 비교만으로 증명할 수 없고, 기존 5분 fixture가 이미 `observe_only_no_seek_restart_or_rate_change`와 `reanchor_next_song_at_zero_keep_route`를 자동 검증한다. 곡 중 seek·restart·재생속도 보정과 route 차단은 계속 금지한다.
+- 전체 `715/715` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법, production build, OBS bundle 예산을 통과했다. Dashboard는 `370.33kB raw / 101.41kB gzip`으로 v0.2.21보다 약 `0.50kB / 0.13kB` 증가했고, OBS closure는 `383,782B raw / 117,551B gzip / 102,979B brotli`로 예산 안이다.
+- production preview smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 320px 영문 설정, 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `22.2ms`, warm long task 0, JS heap 약 `7.89MiB`였다.
+
 ## 2026-07-23 (Codex) — v0.2.21 OBS 준비 대기와 경로 고장 분리
 
 - OBS를 처음 선택했지만 Browser Source가 아직 열리지 않은 정상 설정 단계를 기존 코드가 즉시 `selectOutputMode('obs')`로 넘겼고, coordinator의 exact-one 후보 검사가 이를 전환 실패로 확정했다. 그 결과 실제 고장이 아닌 `OBS 플레이어 없음`이 `송출 경로 확인 필요`·완전 초기화·긴급 정지 UI로 승격됐다.

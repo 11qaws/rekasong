@@ -37,5 +37,7 @@ test('Dashboard keeps Speaker sink selection outside OBS and playback command pa
   assert.match(dashboard, /speakerOutputDevice=\{speakerOutputDevice\}/);
   assert.match(dashboard, /sinkId=\{speakerOutputDevice\.deviceId\}/);
   assert.match(dashboard, /onSinkError=\{handleSpeakerSinkRestoreFailure\}/);
+  assert.match(dashboard, /observeSpeakerOutputDeviceChanges\(\{[^]*?applyDevice: applySpeakerSinkToCurrentMedia/);
+  assert.match(dashboard, /onUnavailable: \(\{ deviceId \}\)[^]*?handleSpeakerSinkRestoreFailure\(\)/);
   assert.match(localSpeaker, /setSinkId\(deviceId\)[^]*?applySpeakerOutputDevice\(audioRef\.current, deviceId\)/);
 });

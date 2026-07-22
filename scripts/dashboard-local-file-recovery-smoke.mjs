@@ -9,6 +9,7 @@ import {
   SHARED_SYNC_STORAGE_KEY,
   TAB_SYNC_STORAGE_KEY,
 } from '../src/lib/syncStorageKeys.js';
+import { SPEAKER_OUTPUT_DEVICE_STORAGE_KEY } from '../src/lib/speakerOutputDevice.js';
 
 const executableCandidates = [
   process.env.REKASONG_CHROMIUM_PATH,
@@ -18,6 +19,27 @@ const executableCandidates = [
 ].filter(Boolean);
 const executablePath = executableCandidates.find((candidate) => existsSync(candidate));
 assert.ok(executablePath, 'Chrome or Edge is required for the local-file recovery smoke test.');
+
+const createSilentWav = ({ seconds = 5, sampleRate = 48_000 } = {}) => {
+  const sampleCount = Math.round(seconds * sampleRate);
+  const bytes = Buffer.alloc(44 + sampleCount * 2);
+  bytes.write('RIFF', 0);
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WAVE', 8);
+  bytes.write('fmt ', 12);
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(sampleRate, 24);
+  bytes.writeUInt32LE(sampleRate * 2, 28);
+  bytes.writeUInt16LE(2, 32);
+  bytes.writeUInt16LE(16, 34);
+  bytes.write('data', 36);
+  bytes.writeUInt32LE(sampleCount * 2, 40);
+  return bytes;
+};
+
+const silentWav = createSilentWav();
 
 const fixtureState = {
   queue: [{
@@ -144,10 +166,41 @@ try {
     sharedState,
     tabState,
     legacyKey,
+    speakerDeviceKey,
     sharedKey,
     tabKey,
   }) => {
     window.__rekasongBlobLifecycle = { created: [], revoked: [] };
+    window.__rekasongSinkLifecycle = { available: true, calls: [] };
+    const mediaDevices = navigator.mediaDevices || new EventTarget();
+    if (!navigator.mediaDevices) {
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: mediaDevices,
+      });
+    }
+    Object.defineProperty(mediaDevices, 'selectAudioOutput', {
+      configurable: true,
+      value: async () => ({ deviceId: 'smoke-speaker', label: 'Smoke headphones' }),
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, 'setSinkId', {
+      configurable: true,
+      value: async function setSinkId(deviceId) {
+        window.__rekasongSinkLifecycle.calls.push({
+          deviceId,
+          mediaId: this.dataset.rekasongSinkMediaId || '',
+          paused: this.paused,
+          source: this.currentSrc || this.src || '',
+        });
+        if (deviceId && !window.__rekasongSinkLifecycle.available) {
+          throw new DOMException('selected output removed', 'NotFoundError');
+        }
+        Object.defineProperty(this, 'sinkId', {
+          configurable: true,
+          value: deviceId,
+        });
+      },
+    });
     const createObjectURL = URL.createObjectURL.bind(URL);
     const revokeObjectURL = URL.revokeObjectURL.bind(URL);
     URL.createObjectURL = (...args) => {
@@ -161,6 +214,10 @@ try {
     };
     try {
       localStorage.removeItem(legacyKey);
+      localStorage.setItem(speakerDeviceKey, JSON.stringify({
+        deviceId: 'smoke-speaker',
+        label: 'Smoke headphones',
+      }));
       localStorage.setItem(sharedKey, sharedState);
       sessionStorage.setItem(tabKey, tabState);
     } catch {
@@ -170,6 +227,7 @@ try {
     sharedState: sharedFixtureJson,
     tabState: tabFixtureJson,
     legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    speakerDeviceKey: SPEAKER_OUTPUT_DEVICE_STORAGE_KEY,
     sharedKey: SHARED_SYNC_STORAGE_KEY,
     tabKey: TAB_SYNC_STORAGE_KEY,
   });
@@ -211,7 +269,7 @@ try {
   await queueChooser.setFiles({
     name: 'queue-restored.wav',
     mimeType: 'audio/wav',
-    buffer: Buffer.from('RIFF0000WAVEfmt data'),
+    buffer: silentWav,
   });
   await queueRestore.waitFor({ state: 'detached' });
   assert.equal(await page.locator('.queue-row.is-source-expired').count(), 0);
@@ -228,7 +286,7 @@ try {
   await historyChooser.setFiles({
     name: 'history-restored.wav',
     mimeType: 'audio/wav',
-    buffer: Buffer.from('RIFF0000WAVEfmt data'),
+    buffer: silentWav,
   });
   await page.waitForFunction(() => document.querySelectorAll('.queue-row').length === 2);
   assert.equal(await historyRestore.isVisible(), true, 'History remains a record after adding a restored copy.');
@@ -255,6 +313,43 @@ try {
   assert.equal(
     persistedTab.queue.every((entry) => entry.song.localSourceExpired === true),
     true,
+  );
+
+  await page.locator('.queue-row .queue-play-action').first().click();
+  await page.locator('.live-players-hidden audio').waitFor({ state: 'attached' });
+  await page.evaluate(() => {
+    const audio = document.querySelector('.live-players-hidden audio');
+    if (audio) audio.dataset.rekasongSinkMediaId = 'active-speaker-audio';
+  });
+  await page.waitForFunction(() => window.__rekasongSinkLifecycle.calls.some((call) => (
+    call.deviceId === 'smoke-speaker'
+  )));
+  const sourceBeforeDeviceChange = await page.locator('.live-players-hidden audio').evaluate(
+    (audio) => audio.currentSrc || audio.src,
+  );
+  await page.evaluate(() => {
+    window.__rekasongSinkLifecycle.available = false;
+    navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+  });
+  await page.waitForFunction(() => window.__rekasongSinkLifecycle.calls.some((call) => (
+    call.deviceId === '' && call.mediaId === 'active-speaker-audio'
+  )));
+  await page.locator('.toast').filter({ hasText: '장치를 바꾸지 못했습니다' }).waitFor({
+    state: 'visible',
+  });
+  const sinkRecovery = await page.evaluate((speakerDeviceKey) => {
+    const audio = document.querySelector('.live-players-hidden audio');
+    return {
+      calls: window.__rekasongSinkLifecycle.calls,
+      currentSource: audio?.currentSrc || audio?.src || '',
+      stored: JSON.parse(localStorage.getItem(speakerDeviceKey) || '{}'),
+    };
+  }, SPEAKER_OUTPUT_DEVICE_STORAGE_KEY);
+  assert.equal(sinkRecovery.currentSource, sourceBeforeDeviceChange);
+  assert.equal(sinkRecovery.stored.deviceId, '');
+  assert.deepEqual(
+    sinkRecovery.calls.slice(-2).map((call) => call.deviceId),
+    ['smoke-speaker', ''],
   );
 
   await page.setViewportSize({ width: 320, height: 900 });
@@ -295,6 +390,7 @@ try {
       persistedBlobUrls: 0,
       unmountRevokedBlobUrls: blobLifecycle.revoked.length,
       workerRequests: workerRequests.length,
+      removedSinkFallback: sinkRecovery.calls.slice(-2).map((call) => call.deviceId),
       mobileWidth: mobile.viewportWidth,
       mobileDocumentWidth: mobile.documentWidth,
     },
