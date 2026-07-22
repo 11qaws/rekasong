@@ -9,6 +9,8 @@
 - 30초 싱크 cadence는 제품 timer로 추가하지 않았다. 실제 물리 출력·입력 clock은 브라우저 `currentTime` 비교만으로 증명할 수 없고, 기존 5분 fixture가 이미 `observe_only_no_seek_restart_or_rate_change`와 `reanchor_next_song_at_zero_keep_route`를 자동 검증한다. 곡 중 seek·restart·재생속도 보정과 route 차단은 계속 금지한다.
 - 전체 `715/715` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법, production build, OBS bundle 예산을 통과했다. Dashboard는 `370.33kB raw / 101.41kB gzip`으로 v0.2.21보다 약 `0.50kB / 0.13kB` 증가했고, OBS closure는 `383,782B raw / 117,551B gzip / 102,979B brotli`로 예산 안이다.
 - production preview smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 320px 영문 설정, 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `22.2ms`, warm long task 0, JS heap 약 `7.89MiB`였다.
+- v0.2.22 commit `c307e2007675e3dbb3b1ded09f62566546422670`을 배포했다. Pages workflow `29959351699`는 clean install·715 tests·lint·Worker 문법·build·OBS budget·artifact upload·deploy를 모두 통과했고 최신 `github-pages` deployment도 같은 SHA를 가리킨다. 공개 main/Dashboard/장치 자산은 `index-DEqzO-M1.js` / `Dashboard-BLv-mhXw.js` / `speakerOutputDevice-CS9Ii3JE.js`이며 장치 자산에 실제 `devicechange` 복구 코드가 포함됐다.
+- 공개 격리 smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `29.9ms`, warm long task 0, JS heap 약 `7.92MiB`였다. 일반 Chrome은 출력 장치 선택 API 미지원 상태를 기존처럼 복잡한 경고 없이 처리했다.
 
 ## 2026-07-23 (Codex) — v0.2.21 OBS 준비 대기와 경로 고장 분리
 
