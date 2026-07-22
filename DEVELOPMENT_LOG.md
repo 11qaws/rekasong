@@ -463,6 +463,13 @@
 - OBS player lifecycle audit: generated `playerInstanceId` now lives in a page ref and the effect depends on the protocol identity value rather than the caller object's reference. Recreating `{ playerInstanceId: 'same-id' }` during a normal render cannot dispose an established media graph; URL, room, token, client kind, a genuinely different player ID, real unmount, and terminal/explicit stop boundaries remain lifecycle changes.
 - OBS runtime callbacks now coalesce into one immediate storage-free heartbeat. The Worker broadcasts a fresh control snapshot only when runtime attestation actually changes or a reconnect is restored, so scene state reaches the Dashboard immediately without returning to per-second WebSocket traffic or Durable Object writes. Actual Chrome safety smoke proved inactive/invisible telemetry preserved the established lease, blob, playing event count, and advancing media time; the later explicit emergency command alone physically stopped and detached both players.
 
+## 2026-07-22 (Codex) — 실제 OBS 숨김 상태 안내 일관성
+
+- 공개 배포본과 실제 OBS 30.2.0을 함께 사용해 `Rekasong` Browser Source의 눈 아이콘을 끄고 다시 켰다. 숨김 중에도 기존 OBS lease와 media graph는 유지됐고, 다시 표시한 뒤 약 2초 안에 `OBS 플레이어 정상 · 1개 연결됨`으로 자동 복구됐다. 라이브 송출과 녹화는 시작하지 않았다.
+- 연결은 유지됐지만 기존 UI가 같은 화면에서 `OBS 송출 중`, `OBS 플레이어 없음`, `연결된 OBS On-Air 플레이어가 없습니다`를 동시에 표시하는 모순을 확인했다. 이 상태에서 완전 초기화를 권하거나 경로를 끊는 것은 연결 우선 원칙에 어긋난다.
+- 숨겨진 단일 OBS 소스를 별도 상태로 표시한다. 상단은 `OBS 소스 숨김 · 연결 유지`, 다음 행동은 눈 아이콘을 켜라는 지시와 재선택이 불필요하다는 설명을 제공한다. 설정의 플레이어 상태와 오디오 점검도 `플레이어 없음` 대신 숨김 상태를 표시하며, 점검 신호 시작만 안전하게 막는다.
+- 한국어와 영어 메시지 키를 함께 추가했다. 626개 전체 테스트, lint(기존 Gemini escape 경고 2건만 유지), production build, `git diff --check`, OBS 정적 번들 예산(raw 381,225B / gzip 115,957B / brotli 101,631B)을 통과했다.
+
 ## 2026-07-22 (Codex) — public deployment comparison before v0.2.2 approval
 
 - Read-only production inspection confirmed Pages serves HTTP 200 with `assets/index-Cr5lSL-w.js` and a Last-Modified time matching commit `2c7dca5` (`0.2.1`). Public `master`, `origin/master`, and local HEAD all point to that commit; the `0.2.2` candidate remains uncommitted and undeployed. Cloudflare reports Worker version `797ef6e2-34bc-4037-8c7a-10f596fe5d96` (number 30) at 100%, deployed less than two minutes before the Pages artifact.

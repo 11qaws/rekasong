@@ -198,6 +198,15 @@ test('OBS audio check starts only from one exact authoritative idle OBS route', 
     'obs.audioCheck.block.candidateDuplicate',
     'the actionable duplicate cause must win over a generic inactive-OBS message',
   );
+
+  const hiddenButConnected = derive({
+    obsSourceInactive: true,
+    snapshot: coordinatorSnapshot({
+      playerSnapshot: protocolSnapshot({ eligibleCandidates: { obs: [] } }),
+    }),
+  });
+  assert.equal(hiddenButConnected.canStart, false);
+  assert.equal(hiddenButConnected.messageKey, 'obs.audioCheck.block.sourceInactive');
 });
 
 test('missing connection state is actionable while explicit authority or route uncertainty stays unknown', () => {

@@ -335,22 +335,6 @@ export default function Dashboard() {
         messageKey: 'onair.output.status.obs.heartbeatDelayed',
       }
       : outputControl.outputView;
-  const obsAudioCheck = deriveObsAudioCheckView({
-    snapshot: outputControl.snapshot,
-    actualOutputMode,
-    outputRouteStable,
-    outputSwitchState: outputControl.outputSwitchState,
-    playbackTransitionState,
-  });
-  const obsMixerPlayerInstanceId = activeOutputLease?.clientKind === 'obs-browser-source'
-    ? activeOutputLease.leaseTarget
-    : null;
-  const obsMixerVerification = deriveObsMixerVerificationView({
-    record: obsMixerVerificationRecord,
-    room: onAirSession?.room ?? null,
-    playerInstanceId: obsMixerPlayerInstanceId,
-    obsAudioCheck,
-  });
   const obsPlayerCandidate = outputControl.outputView?.candidates?.obs ?? null;
   const connectedObsPlayers = outputControl.snapshot?.playerSnapshot?.players?.filter((player) => (
     player?.clientKind === 'obs-browser-source'
@@ -363,6 +347,23 @@ export default function Dashboard() {
     connectedObsPlayers[0]?.runtime?.sourceActive === false
     || connectedObsPlayers[0]?.runtime?.sourceVisible === false
   );
+  const obsAudioCheck = deriveObsAudioCheckView({
+    snapshot: outputControl.snapshot,
+    actualOutputMode,
+    outputRouteStable,
+    obsSourceInactive,
+    outputSwitchState: outputControl.outputSwitchState,
+    playbackTransitionState,
+  });
+  const obsMixerPlayerInstanceId = activeOutputLease?.clientKind === 'obs-browser-source'
+    ? activeOutputLease.leaseTarget
+    : null;
+  const obsMixerVerification = deriveObsMixerVerificationView({
+    record: obsMixerVerificationRecord,
+    room: onAirSession?.room ?? null,
+    playerInstanceId: obsMixerPlayerInstanceId,
+    obsAudioCheck,
+  });
   const canEndBroadcastSession = !useOnAirPlayer || Boolean(
     outputControllerReady
     && !currentEntry

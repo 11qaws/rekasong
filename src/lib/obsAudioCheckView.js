@@ -83,6 +83,7 @@ function blockedMessageKey({
   outputRouteStable,
   obsCandidates,
   exactObsTarget,
+  obsSourceInactive,
   switchStatus,
   transitionStatus,
 }) {
@@ -91,6 +92,7 @@ function blockedMessageKey({
       ? 'obs.audioCheck.block.otherController'
       : 'obs.audioCheck.block.connection';
   }
+  if (obsSourceInactive) return 'obs.audioCheck.block.sourceInactive';
   if (obsCandidates.length === 0) return 'obs.audioCheck.block.candidateNone';
   if (obsCandidates.length !== 1) return 'obs.audioCheck.block.candidateDuplicate';
   if (actualOutputMode !== 'obs') return 'obs.audioCheck.block.mode';
@@ -116,6 +118,7 @@ export function deriveObsAudioCheckView({
   snapshot = null,
   actualOutputMode = null,
   outputRouteStable = false,
+  obsSourceInactive = false,
   outputSwitchState = 'idle',
   playbackTransitionState = 'idle',
 } = {}) {
@@ -250,6 +253,7 @@ export function deriveObsAudioCheckView({
       outputRouteStable,
       obsCandidates,
       exactObsTarget,
+      obsSourceInactive,
       switchStatus,
       transitionStatus,
     });

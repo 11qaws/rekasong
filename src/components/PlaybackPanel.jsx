@@ -16,11 +16,16 @@ function WidgetStatusChip({
   candidateState = null,
   duplicateLabel = '',
   unknownLabel = '',
+  connectedButInactive = false,
+  connectedButInactiveLabel = '',
 }) {
   const candidateAware = ['none', 'single', 'duplicate', 'unknown'].includes(candidateState);
-  const isHealthy = candidateAware ? candidateState === 'single' : Boolean(connected);
+  const isHealthy = !connectedButInactive
+    && (candidateAware ? candidateState === 'single' : Boolean(connected));
   const isDuplicate = candidateAware && candidateState === 'duplicate';
-  const label = isHealthy
+  const label = connectedButInactive
+    ? connectedButInactiveLabel
+    : isHealthy
     ? connectedLabel
     : isDuplicate
       ? duplicateLabel
@@ -289,6 +294,7 @@ export default function PlaybackPanel({
     targetMode: failedSelectionMode ?? transitionTargetMode,
     targetCandidateState,
     targetSourceInactive: failedSelectionMode === 'obs' && obsSourceInactive,
+    activeSourceInactive: selectedOutputMode === 'obs' && obsSourceInactive,
     reasonCode: outputSwitchReasonCode,
   });
   const outputNextActionKey = derivePlaybackOutputNextAction({
@@ -1293,6 +1299,8 @@ export default function PlaybackPanel({
                     // 최종 방송 오디오가 확인됐다는 의미로 사용하지 않는다.
                     <WidgetStatusChip
                       candidateState={onAirPlayerCandidate?.state ?? 'unknown'}
+                      connectedButInactive={obsSourceInactive}
+                      connectedButInactiveLabel={t('obs.setup.player.candidate.sourceInactive')}
                       connectedLabel={t('obs.setup.player.candidate.single')}
                       waitingLabel={t('obs.setup.player.candidate.none')}
                       duplicateLabel={t('obs.setup.player.candidate.duplicate', {

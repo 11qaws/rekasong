@@ -27,6 +27,13 @@ test('output status always maps to a concrete next action', () => {
   );
   assert.equal(
     derivePlaybackOutputNextAction({
+      statusKey: 'onair.output.header.active.obs.sourceInactive',
+      confirmedOutputMode: 'obs',
+    }),
+    'onair.output.nextAction.obs.sourceInactiveConnected',
+  );
+  assert.equal(
+    derivePlaybackOutputNextAction({
       statusKey: 'onair.output.header.active.attention',
       targetMode: 'obs',
     }),
@@ -129,6 +136,19 @@ test('Speaker ignores server startup, candidate, ownership, and route failures',
 });
 
 test('an explicitly hidden OBS source gets a non-destructive actionable status', () => {
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      confirmedOutputMode: 'obs',
+      isRouteStable: true,
+      activeSourceInactive: true,
+    }),
+    {
+      key: 'onair.output.header.active.obs.sourceInactive',
+      tone: 'attention',
+      mode: 'obs',
+    },
+  );
+
   assert.deepEqual(
     derivePlaybackOutputStatus({
       outputSwitchState: 'blocked',

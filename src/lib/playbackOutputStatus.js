@@ -15,6 +15,9 @@ export function derivePlaybackOutputNextAction({
   if (controlRecoveryRequired) return 'onair.output.nextAction.control';
   if (statusKey === 'onair.output.header.active.speaker') return 'onair.output.nextAction.speaker.active';
   if (statusKey === 'onair.output.header.active.obs') return 'onair.output.nextAction.obs.active';
+  if (statusKey === 'onair.output.header.active.obs.sourceInactive') {
+    return 'onair.output.nextAction.obs.sourceInactiveConnected';
+  }
   if (statusKey === 'onair.output.header.connecting.speaker') return 'onair.output.nextAction.speaker.connecting';
   if (statusKey === 'onair.output.header.connecting.obs') return 'onair.output.nextAction.obs.connecting';
   if (statusKey === 'onair.output.header.blocked.obs.sourceInactive') {
@@ -50,6 +53,7 @@ export function derivePlaybackOutputStatus({
   targetMode = null,
   targetCandidateState = null,
   targetSourceInactive = false,
+  activeSourceInactive = false,
   reasonCode = null,
 } = {}) {
   const mode = VALID_OUTPUT_MODES.has(confirmedOutputMode) ? confirmedOutputMode : null;
@@ -119,6 +123,14 @@ export function derivePlaybackOutputStatus({
         : 'onair.output.header.active.inactive',
       tone: mode ? 'attention' : 'pending',
       mode: null,
+    };
+  }
+
+  if (mode === 'obs' && activeSourceInactive === true) {
+    return {
+      key: 'onair.output.header.active.obs.sourceInactive',
+      tone: 'attention',
+      mode,
     };
   }
 

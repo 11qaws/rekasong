@@ -165,6 +165,7 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
     'block.otherController',
     'block.mode',
     'block.candidateNone',
+    'block.sourceInactive',
     'block.candidateDuplicate',
     'block.switching',
     'block.activeWork',
@@ -463,6 +464,9 @@ test('a connected but hidden OBS source gets a direct recovery action without fu
     /const obsSourceInactive = connectedObsPlayers\.length === 1[\s\S]*?sourceActive === false[\s\S]*?sourceVisible === false/,
   );
   assert.match(panelSource, /targetSourceInactive: failedSelectionMode === 'obs' && obsSourceInactive/);
+  assert.match(panelSource, /activeSourceInactive: selectedOutputMode === 'obs' && obsSourceInactive/);
+  assert.match(panelSource, /connectedButInactive=\{obsSourceInactive\}/);
+  assert.match(panelSource, /obs\.setup\.player\.candidate\.sourceInactive/);
   assert.match(
     panelSource,
     /const outputNeedsDestructiveReset = outputNeedsAttention && !\([\s\S]*?failedSelectionMode === 'obs' && obsSourceInactive/,
@@ -470,8 +474,12 @@ test('a connected but hidden OBS source gets a direct recovery action without fu
 
   for (const key of [
     'onair.output.header.blocked.obs.sourceInactive',
+    'onair.output.header.active.obs.sourceInactive',
     'onair.output.nextAction.obs.sourceInactive',
+    'onair.output.nextAction.obs.sourceInactiveConnected',
     'onair.output.selector.status.sourceInactive',
+    'obs.audioCheck.block.sourceInactive',
+    'obs.setup.player.candidate.sourceInactive',
   ]) {
     assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean hidden-source copy for ${key}`);
     assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English hidden-source copy for ${key}`);
@@ -494,6 +502,7 @@ test('compact output header and settings diagnostics have Korean and English cop
     'onair.output.header.blocked.obs.none',
     'onair.output.header.blocked.obs.duplicate',
     'onair.output.header.blocked.obs.sourceInactive',
+    'onair.output.header.active.obs.sourceInactive',
     'onair.output.header.active.attention',
     'onair.output.header.active.inactive',
     'onair.output.details.title',
