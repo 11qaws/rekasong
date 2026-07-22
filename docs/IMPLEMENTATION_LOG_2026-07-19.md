@@ -2,7 +2,7 @@
 
 ## 2026-07-22 유레카 브랜드 선·실제 OBS 장시간 시험 보강
 
-- Dashboard 상단의 얇은 노란 선은 유레카의 금발을 나타내는 **고정 브랜드 요소**다. 흰색 hairpin 묶음 뒤로 항상 이어지며 데스크톱·모바일 반응형 규칙에서 숨기지 않는다. 전용 회귀 테스트가 `display:none`, `visibility:hidden`, `opacity:0` 재도입을 차단한다.
+- Dashboard 상단의 얇은 노란 선은 유레카의 금발을 나타내는 **고정 브랜드 요소**다. 흰색 hairpin 묶음 뒤로 항상 이어지며 데스크톱·모바일 반응형 규칙에서 숨기지 않는다. 첫 배포 점검에서 computed style은 노란색·3px·visible이었지만 `z-index:0`이 header 뒤로 빠져 실제 픽셀이 배경색인 문제를 발견했다. bar에 `isolation:isolate`를 적용해 로컬 stacking context 안에서 실제로 칠해지게 했고, 전용 회귀 테스트가 stacking context와 `display:none`, `visibility:hidden`, `opacity:0` 재도입을 차단한다.
 - 실제 OBS 30.2.0의 `Rekasong` Browser Source에서 60분 AAC fixture를 재생했다. 56분까지 player 1개, OBS 후보 1개, 같은 lease target, `audible`·`playing`이 매분 유지됐고 Rekasong CEF renderer private memory는 약 38.1MiB에서 43.5~46MiB 범위로 회수돼 시간 비례 증가가 관측되지 않았다.
 - 첫 장시간 실행은 약 56분에 **Dashboard control WebSocket만** 유휴 종료되어 harness가 실패했다. 실제 OBS mixer 신호는 그 뒤에도 자연 종료 시점까지 계속됐고, 즉 이미 재생 중인 OBS media graph는 제어 연결 손실 때문에 pause·detach·재시작되지 않았다.
 - 원인은 player heartbeat snapshot을 control에 매번 중계하지 않도록 비용을 줄인 뒤 control role에 별도 keepalive가 없었던 것이다. control은 명령이 없으면 장시간 wire frame이 0개였다.
