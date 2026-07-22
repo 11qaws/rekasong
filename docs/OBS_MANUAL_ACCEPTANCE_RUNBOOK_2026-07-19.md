@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · G6 장시간 측정 완료/시작 offset 실패/5분 drift 재판정 · G5 미실행
+> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · G6 장시간 측정 완료/시작 offset 실패/5분 drift 경계·재검 필요 · G5 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -288,7 +288,7 @@ result: G4 passed for this exact OBS/profile/track configuration
 ## 11. G6 — 카라오케 마이크↔반주 싱크
 
 1. MR fixture와 마이크 기준 신호를 가능한 한 분리 track으로 녹화한다.
-2. 시작 count-in과 주기 marker를 함께 기록한다.
+2. 시작 count-in과 주기 marker를 함께 기록한다. 10초 주기 5분 시험은 `0초`와 `300초` endpoint를 포함해 31개 marker여야 한다.
 3. 실제 최대 곡 길이인 5분 동안 scene 전환 없이 한 곡의 기준 상태를 측정한다. 필요하면 같은 fixture를 10분까지 늘려 stress 진단을 별도로 기록한다.
 4. 같은 시험을 scene hide/show, monitor mode 변경, source refresh 시나리오와 섞지 않는다. 장애 시험은 별도 run으로 분리한다.
 5. 시작·중간·끝 구간의 mic↔MR 상대 offset과 marker interval을 계산한다.
@@ -306,9 +306,11 @@ result: G4 passed for this exact OBS/profile/track configuration
 - artifact: `C:\Users\Qumin\Videos\2026-07-22 21-55-45.mkv`
 - MR track 2, FIFINE K670 마이크 track 3, marker 60/60
 - jitter p95 `1.832ms` 통과
-- 중앙 offset `43.25ms`는 시작 offset 기준 실패. 10분 drift `15.5–17.32ms`는 stress 진단값이며, 5분 곡 단위 구간은 별도로 재산출한다.
+- 중앙 offset `43.25ms`는 시작 offset 기준 실패. 10분 drift `15.5–17.32ms`는 stress 진단값이다.
+- endpoint-inclusive 31-marker rolling 5분 재분석은 edge drift 최악 `9.753ms`로 통과했지만 linear-fit drift 최악 `10.408ms`로 `0.408ms` 초과했다. 8kHz 교차 분석도 `9.825ms` / `10.428ms`로 재현됐다.
+- 30초 상대 변화는 중앙 `1.047ms`, p95 `2.486ms`, 최악 `3.471ms`였다. 30초마다 관찰만 하고 곡 중 seek·restart·속도 보정은 하지 않는다.
 - OBS Browser Sync Offset `+69ms` 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 복원
-- 판정: **장시간 측정 완료·시작 offset 실패·5분 drift 재판정 필요**. established OBS route와 재생은 유지하며 같은 audio clock 장치 또는 저지연 performer-monitor 경로에서 재실행
+- 판정: **장시간 측정 완료·시작 offset 실패·5분 drift 경계/재검 필요**. established OBS route와 재생은 유지하며 같은 audio clock 장치 또는 저지연 performer-monitor 경로에서 재실행
 - 상세 설계: [OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md](./OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md)
 
 ## 12. 장애 주입 매트릭스

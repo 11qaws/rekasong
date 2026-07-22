@@ -30,7 +30,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages의 앱 release 기준은 frontend `0.2.15` / `94efd537e34862ca84b30b1f6cdc2e666cc2018f`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `2b819923-49bb-4002-9407-848321a6c6f7`다. 전체 테스트 `686/686`와 실제 OBS CEF 60분 재생을 통과했다. G6는 실제 10분 물리 stress를 측정했고 현재 장치 조합의 시작 offset은 실패, 5분 곡 단위 drift는 재판정 대기다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages의 앱 release 기준은 frontend `0.2.15` / `94efd537e34862ca84b30b1f6cdc2e666cc2018f`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `2b819923-49bb-4002-9407-848321a6c6f7`다. 전체 테스트 `686/686`와 실제 OBS CEF 60분 재생을 통과했다. G6는 실제 10분 물리 stress와 endpoint-inclusive 5분 창을 측정했고 현재 장치 조합의 시작 offset은 실패, 5분 drift는 edge 통과·linear-fit 약 `0.4ms` 초과로 경계/재검 필요다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
@@ -111,7 +111,7 @@
 - G3 기계 관측: 앱 점검 신호 동안 정확한 `Rekasong` OBS Audio Mixer source meter가 약 -25dB까지 움직였다.
 - G4 녹화 artifact: 33.283초 MP4의 AAC 48kHz stereo track에서 880Hz pulse 12개와 440Hz tone 4개를 모두 검출했다. marker 누락·중복 및 clipping은 0이었다.
 - source hide/show: fixture 재생 중 약 1.4초 숨겼다가 다시 표시해도 established route를 유지하고 16/16 marker로 완료했다.
-- G6 물리 측정: track 2 MR·track 3 FIFINE 마이크로 60/60 marker를 기록했고 jitter p95 `1.832ms`는 통과했다. offset은 `43.25ms`, 10분 stress drift는 `15.5–17.32ms/590초`였다. 제품 관문은 최대 5분 한 곡으로 재정의했으므로 시작 offset은 실패, 5분 drift는 재산출 대기다. 재생 중 route 교체·restart·seek·강제 정지는 없었다.
+- G6 물리 측정: track 2 MR·track 3 FIFINE 마이크로 60/60 marker를 기록했고 jitter p95 `1.832ms`는 통과했다. offset은 `43.25ms`, 10분 stress drift는 `15.5–17.32ms/590초`였다. endpoint-inclusive 31-marker/300초 재분석은 edge 최악 `9.753ms` 통과, linear-fit 최악 `10.408ms` 경계 초과였다. 30초 변화 p95는 `2.486ms`였으며 관찰만 하고 재생을 보정하지 않는다. 재생 중 route 교체·restart·seek·강제 정지는 없었다.
 - `+69ms` OBS Browser Sync Offset 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 되돌렸다. 서로 다른 하드웨어 clock의 drift 보정으로 사용하지 않는다.
 - 각 곡은 새 run과 `position: 0`으로 기준점을 다시 잡되 OBS route와 lease는 유지한다. 정확한 이전 run stop proof 뒤에만 다음 media run을 load/play하며, 곡 중간에는 자동 seek·restart·속도 보정을 하지 않는다.
 - 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증, scene 전환·source refresh·OBS 재시작 변형이다.
@@ -166,5 +166,5 @@
 2. GitHub Pages clean install·686개 테스트·build·OBS budget·publish, production 자산 hash, ntfy 요청 0·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
 3. 실제 OBS G3, G4, source hide/show, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
-5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 재판정 대기다.
+5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.

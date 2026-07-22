@@ -1460,7 +1460,7 @@ OBS stable player URL
 2026-07-22 실행 업데이트:
 
 - 제품 내 analyzer/certificate UI는 아직 미구현이므로 위 체크박스는 완료로 올리지 않는다.
-- 다만 실제 OBS의 분리 track과 외부 분석기로 짧은 기준선 및 60-cycle/10분 stress 시험을 실행했다. marker·jitter는 통과했고 현재 온보드 출력+USB 마이크 조합의 offset은 `43.25ms`, 장시간 drift는 `15.5–17.32ms/590초`였다. 시작 offset은 실패이며 5분 곡 단위 drift는 별도로 재판정한다.
+- 다만 실제 OBS의 분리 track과 재현 가능한 외부 분석기로 짧은 기준선 및 60-cycle/10분 stress 시험을 실행했다. marker·jitter는 통과했고 현재 온보드 출력+USB 마이크 조합의 offset은 `43.25ms`, 장시간 drift는 `15.5–17.32ms/590초`였다. endpoint-inclusive 31-marker/300초 재분석은 edge 최악 `9.753ms` 통과, linear-fit 최악 `10.408ms` 경계 초과였다. 시작 offset 실패와 5분 경계 판정은 같은-clock 경로에서 재검한다.
 - `+69ms` OBS Sync Offset 비교는 상대 지연을 악화시켰고 `0ms`로 복원했다. 연결 검사가 이 실패를 이유로 established route를 끊어서는 안 된다.
 - 후속 제품 설계와 같은-clock 재검 절차는 [OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md](./OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md)를 따른다.
 

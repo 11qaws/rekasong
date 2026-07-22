@@ -27,9 +27,11 @@
 | 선형 drift | `17.32ms/590초` | 실패 (`≤10ms`) |
 | 중앙 offset | `43.25ms` | 실패 (`±20ms`) |
 
+같은 artifact를 endpoint-inclusive 31-marker/300초 rolling window로 다시 계산하면 edge drift 최악은 `9.753ms`였지만 linear-fit drift 최악은 `10.408ms`였다. 8kHz 교차 분석도 각각 `9.825ms`, `10.428ms`로 같았다. 따라서 5분 drift는 경계·재검 필요, fixed offset은 실패로 유지한다.
+
 MR 재생 자체와 OBS media graph는 10분 동안 끊김·restart·seek 없이 유지됐다. 기존 10분 기준을 넘은 값은 연결 불안정이 아니라 서로 다른 출력·입력 하드웨어 clock을 지나는 현재 monitoring chain의 상대 drift다. 여기서 “시계가 늦어진다”는 말은 한 장치가 갑자기 멈춘다는 뜻이 아니다. 두 장치가 각각 48,000 sample을 1초라고 세는 실제 속도가 아주 조금 달라서, 처음의 작은 차이가 시간에 비례해 누적된다는 뜻이다.
 
-제품의 실제 싱크 단위는 무한히 이어지는 한 재생기가 아니라 **한 곡**이다. OBS route와 player lease는 곡 사이에도 유지하지만, 각 곡은 새 `runId`와 `position: 0`으로 새 재생 기준점을 만든다. 이전 곡은 정확한 정지 증거 뒤에만 교체하며, 재생 중인 곡에는 telemetry·analyzer 결과를 이유로 자동 seek·restart·playback-rate 보정을 하지 않는다. 최대 곡 길이는 5분을 수용 창으로 사용하고, 10분 fixture는 drift 속도와 장시간 연속성을 알아보는 보수적인 스트레스 진단으로만 사용한다.
+제품의 실제 싱크 단위는 무한히 이어지는 한 재생기가 아니라 **한 곡**이다. OBS route와 player lease는 곡 사이에도 유지하지만, 각 곡은 새 `runId`와 `position: 0`으로 새 재생 기준점을 만든다. 이전 곡은 정확한 정지 증거 뒤에만 교체하며, 재생 중인 곡에는 telemetry·analyzer 결과를 이유로 자동 seek·restart·playback-rate 보정을 하지 않는다. 최대 곡 길이는 5분을 수용 창으로 사용하고, 10분 fixture는 drift 속도와 장시간 연속성을 알아보는 보수적인 스트레스 진단으로만 사용한다. 30초 cadence를 사용하더라도 위치 비교·기록만 수행하며, 보정은 다음 곡 시작 경계로 미룬다.
 
 Browser Source에 `+69ms` Sync Offset을 적용한 비교에서는 마이크 상대 지연이 약 `82–84ms`로 더 커졌다. Sync Offset은 이 장치 간 drift의 해법이 아니므로 `0ms`로 복원했다.
 
@@ -138,7 +140,7 @@ karaokeSyncEvidence
 처리 순서:
 
 1. 48 kHz로 각 track decode/resample
-2. MR 직접 track에서 5분 제품 시험의 30개 cycle 또는 10분 스트레스 시험의 60개 cycle 검출
+2. MR 직접 track에서 5분 제품 시험의 endpoint-inclusive 31개 marker 또는 10분 스트레스 시험의 60개 cycle 검출
 3. mic/monitor track에서 같은 880/440 Hz marker 검출
 4. cycle별 cross-correlation과 440 Hz edge를 독립 계산
 5. fixed offset, 선형 drift, 첫 5↔마지막 5 중앙값 drift, detrended jitter p95 계산
@@ -151,7 +153,7 @@ karaokeSyncEvidence
 
 | 항목 | 기준 |
 |---|---:|
-| 5분 marker | 30/30, 누락·중복 0 |
+| 5분 marker | 31/31 (`0..300초`), 누락·중복 0 |
 | 보정 후 fixed offset | `±20ms` 이내 |
 | 한 곡(최대 5분) relative drift | `≤10ms` |
 | jitter p95 | `≤5ms` |
@@ -173,7 +175,7 @@ karaokeSyncEvidence
 
 ## 10. 실행 순서
 
-1. 완료: 10분 물리 분리 track을 측정해 MR 연속성과 현재 장치의 장시간 drift를 수치화했다. 이 결과는 새 5분 곡 단위 관문의 통과·실패로 자동 환산하지 않는다.
+1. 완료: 10분 물리 분리 track을 측정해 MR 연속성과 현재 장치의 장시간 drift를 수치화하고, 31-marker/300초 rolling window로 재분석했다. 5분 edge 통계는 통과했지만 linear-fit이 약 `0.4ms` 초과해 경계·재검 필요로 유지한다.
 2. 구현: streaming active/unknown일 때 점검 신호를 UI·Coordinator·Worker·OBS player에서 차단한다.
 3. 구현: 설정 안에 접힌 performer-monitor 연결 안내를 추가한다.
 4. 다음: G6 certificate schema와 artifact import/analyzer를 lazy module로 만든다.

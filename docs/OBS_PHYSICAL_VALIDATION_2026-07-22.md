@@ -169,11 +169,36 @@ OBS Recording Stop: 22:06:26.770
 
 따라서 기존 10분 G6 기준으로는 **측정 완료·수용 실패**였다. 앱/OBS의 MR 시간축과 established media graph는 안정적이었지만, 현재의 온보드 스피커 출력과 별도 USB 마이크 입력은 서로 다른 하드웨어 clock을 사용한다. 관측된 누적 상대 drift는 이 물리 monitoring chain의 clock 차이와 일치하며, 앱 연결 검사로 해결하거나 route를 끊어야 할 종류의 문제가 아니다.
 
-이후 제품 수용 단위는 실제 최대 곡 길이인 5분으로 정리했다. 곡마다 새 `runId`와 `position: 0`으로 기준점을 다시 잡고 OBS route는 유지한다. 따라서 이 10분 결과는 장시간 stress 자료로 보존하되, 5분 구간의 drift를 별도로 재산출하기 전에는 새 곡 단위 관문의 통과·실패를 주장하지 않는다. 중앙 offset `43.25ms`는 여전히 현재 물리 monitoring 경로의 시작 offset 기준을 넘으므로 같은-clock 또는 실제 헤드폰 경로에서 다시 측정해야 한다.
+이후 제품 수용 단위는 실제 최대 곡 길이인 5분으로 정리했다. 곡마다 새 `runId`와 `position: 0`으로 기준점을 다시 잡고 OBS route는 유지한다. 5분 창은 아래처럼 기존 60-cycle artifact에서 직접 재분석했다. 중앙 offset `43.25ms`는 여전히 현재 물리 monitoring 경로의 시작 offset 기준을 넘으므로 같은-clock 또는 실제 헤드폰 경로에서 다시 측정해야 한다.
+
+### 7.4 5분 곡 창 직접 재분석
+
+재현 도구는 `scripts/analyze-obs-karaoke-window.py`다. 10초 주기의 5분 창은 구간이 30개지만 시작 `0초`와 끝 `300초`를 모두 직접 포함하려면 marker가 **31개** 필요하다. 초기 분석의 30개/290초 창은 마지막 10초를 추정하게 만드는 off-by-one이었으므로 폐기했다. 기존 녹화에는 0~300초 endpoint가 모두 있어 재녹화 없이 직접 판정할 수 있었다.
+
+```powershell
+python scripts/analyze-obs-karaoke-window.py `
+  "C:\Users\Qumin\Videos\2026-07-22 21-55-45.mkv" `
+  --ffmpeg "D:\Downloads\open-video-downloader\ffmpeg.exe" `
+  --sample-rate 16000
+```
+
+| 항목 | 16 kHz | 8 kHz 교차 확인 | 판정 |
+|---|---:|---:|---|
+| endpoint-inclusive marker | 31개 / 300초 | 31개 / 300초 | 직접 관측 |
+| 첫 5분 edge drift | `8.943 ms` | `8.954 ms` | 통과 |
+| 마지막 5분 edge drift | `5.753 ms` | `5.781 ms` | 통과 |
+| 모든 rolling 5분 중 최악 edge drift | `9.753 ms` | `9.825 ms` | `≤10 ms`, 통과 |
+| 모든 rolling 5분 중 최악 linear-fit drift | `10.408 ms` | `10.428 ms` | `0.408–0.428 ms` 초과 |
+| 30초 상대 변화 중앙값 / p95 / 최악 | `1.047 / 2.486 / 3.471 ms` | `1.083 / 2.483 / 3.485 ms` | 관찰값 |
+| 중앙 fixed offset | `43.262 ms` | `43.234 ms` | `±20 ms`, 실패 |
+
+두 해상도의 결과가 거의 같아 분석 재현성은 확인됐다. 직접 edge 통계는 기준 안이지만 전체 endpoint 자료의 선형 적합이 약 `0.4ms` 넘으므로 현재 장치 조합을 확실한 G6 통과로 승격하지 않는다. 판정은 **5분 drift 경계·재검 필요, 시작 offset 실패**다.
+
+30초 값은 동기 보정 명령이 아니라 관찰 cadence다. 이 녹화에서 30초 동안의 실제 상대 변화는 p95 약 `2.5ms`였으므로 매번 seek·restart·playback-rate를 바꾸면 drift보다 측정 jitter를 따라갈 가능성이 크다. 앱은 곡 시작에서만 기준점을 새로 잡고, 곡 중 30초 관찰은 route와 media graph를 바꾸지 않는다.
 
 OBS Browser Source에 `+69 ms` sync offset을 넣은 비교 녹화(`2026-07-22 21-45-35.mkv`)에서는 상대 마이크 지연이 약 `82–84 ms`로 더 커졌다. 이 offset은 MR과 마이크 사이의 물리 clock drift를 고치지 못하므로 `0 ms`로 복원했다. 자동 보정값으로 사용하지 않는다.
 
-다음 G6 재검증은 입력·출력이 같은 audio clock을 공유하는 장치 또는 별도의 저지연 performer monitoring 경로에서 같은 60-cycle fixture로 수행한다. 점검 결과는 설정 안내로만 제공하고, 실패·미측정·일시적인 telemetry 손실을 이유로 이미 연결된 OBS route나 재생을 중단하지 않는다.
+다음 G6 재검증은 입력·출력이 같은 audio clock을 공유하는 장치 또는 별도의 저지연 performer monitoring 경로에서 endpoint-inclusive 31-marker 5분 fixture와 짧은 반복 시험으로 수행한다. 점검 결과는 설정 안내로만 제공하고, 실패·미측정·일시적인 telemetry 손실을 이유로 이미 연결된 OBS route나 재생을 중단하지 않는다.
 
 ## 8. OBS → Speaker 재생 중 전환
 
@@ -225,7 +250,7 @@ OBS Browser Source에 `+69 ms` sync offset을 넣은 비교 녹화(`2026-07-22 2
 ### 아직 별도 검증이 필요한 것
 
 - 실제 플랫폼으로 내보낸 비공개 stream/VOD의 오디오 트랙 G5. 이번에는 안전상 의도적으로 실행하지 않았다.
-- 현재의 온보드 스피커+USB FIFINE 마이크 조합은 G6 drift 기준을 넘었다. 같은 clock을 공유하는 입력·출력 또는 저지연 performer monitoring 경로로 다시 측정해야 한다.
+- 현재의 온보드 스피커+USB FIFINE 마이크 조합은 5분 edge 기준은 통과했지만 linear-fit이 약 `0.4ms` 넘고 fixed offset도 실패해 G6 전체 기준을 통과하지 못했다. 같은 clock을 공유하는 입력·출력 또는 저지연 performer monitoring 경로로 다시 측정해야 한다.
 - 다른 헤드폰·오디오 인터페이스·monitoring chain의 지연과 drift는 이번 장치 결과로 대신할 수 없다.
 - Android/iOS의 화면 잠금·앱 전환·PiP·블루투스 장치 전환은 지원 기기별 수동 검증이 필요하다.
 
