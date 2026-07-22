@@ -24,6 +24,28 @@ test('production player heartbeats are diagnostics, not a per-second audio clock
   assert.equal(ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS, 30_000);
 });
 
+test('an OBS runtime callback can publish one immediate storage-free heartbeat', () => {
+  const harness = createHarness('player', {
+    heartbeatPayload: () => ({ runtime: { sourceActive: false, sourceVisible: false } }),
+  });
+  const socket = readyPlayer(harness, 'runtime-callback-connection');
+
+  assert.equal(harness.connection.sendHeartbeatNow(), true);
+  const heartbeats = socket.messages().filter(
+    (message) => message.type === ON_AIR_MESSAGE_TYPES.PLAYER_HEARTBEAT,
+  );
+  assert.equal(heartbeats.length, 1);
+  assert.equal(heartbeats[0].sequence, 0);
+  assert.deepEqual(heartbeats[0].runtime, {
+    sourceActive: false,
+    sourceVisible: false,
+  });
+
+  const controlHarness = createHarness('control');
+  readyControl(controlHarness);
+  assert.equal(controlHarness.connection.sendHeartbeatNow(), false);
+});
+
 class FakeSocket {
   readyState = 0;
   sent = [];

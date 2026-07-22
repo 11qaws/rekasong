@@ -103,6 +103,7 @@ function createHarness({
   const eventRecords = [];
   const abandonedEvents = [];
   const commands = [];
+  let immediateHeartbeatCount = 0;
   let eventSequence = 0;
   let connectionCallbacks;
   let engineCallbacks;
@@ -112,6 +113,9 @@ function createHarness({
     mediaPaused: true,
     runId: null,
     position: 0,
+    duration: 30,
+    readyState: 4,
+    seeking: false,
     volume: 1,
   };
   const engine = {
@@ -228,6 +232,10 @@ function createHarness({
     connect() {
       return 1;
     },
+    sendHeartbeatNow() {
+      immediateHeartbeatCount += 1;
+      return true;
+    },
     close() {
       connectionState.state = ON_AIR_V2_CONNECTION_STATES.CLOSED;
     },
@@ -286,6 +294,9 @@ function createHarness({
     engineState,
     eventRecords,
     events,
+    get immediateHeartbeatCount() {
+      return immediateHeartbeatCount;
+    },
   };
 }
 
@@ -433,14 +444,14 @@ test('activation proves a detached, paused, non-audible output path before LOAD'
   assert.deepEqual(heartbeat.runtime, { sourceActive: true, sourceVisible: true });
 });
 
-test('OBS heartbeat never derives sourceActive from media attachment and fails closed when unproven', async () => {
+test('OBS heartbeat never derives sourceActive from media attachment or invents initial inactivity', async () => {
   const harness = createHarness();
   harness.engineState.sourceAttached = true;
 
   const heartbeat = harness.connectionCallbacks.heartbeatPayload({ now: 20 });
 
-  assert.equal(harness.connectionCallbacks.runtime.sourceActive, false);
-  assert.deepEqual(heartbeat.runtime, { sourceActive: false });
+  assert.equal(Object.hasOwn(harness.connectionCallbacks.runtime, 'sourceActive'), false);
+  assert.equal(Object.hasOwn(heartbeat, 'runtime'), false);
 });
 
 test('speaker heartbeat does not invent an OBS sourceActive attestation', () => {
@@ -483,6 +494,7 @@ test('OBS scene active and visibility changes never tear down an established med
       const stopped = await harness.adapter.handleRuntimeAttestation(runtime, {
         phase: 'obs_callback',
       });
+      await flushMicrotasks();
 
       assert.equal(stopped, false);
       assert.deepEqual(harness.commands, []);
@@ -490,6 +502,7 @@ test('OBS scene active and visibility changes never tear down an established med
       assert.equal(harness.engineState.mediaPaused, false);
       assert.equal(harness.engineState.sourceAttached, true);
       assert.equal(harness.events.length, 0);
+      assert.equal(harness.immediateHeartbeatCount, 1);
       const snapshot = harness.adapter.snapshot();
       assert.equal(snapshot.routeState, 'ready_event_sent');
       assert.equal(snapshot.safetyLocked, false);
@@ -512,6 +525,7 @@ test('scene telemetry cannot latch the route or block later transport commands',
   runtime.sourceActive = false;
   runtime.sourceVisible = false;
   assert.equal(await harness.adapter.handleRuntimeAttestation(runtime), false);
+  await flushMicrotasks();
   await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PAUSE, {
     commandId: 'pause-while-scene-hidden',
   }));
@@ -522,6 +536,7 @@ test('scene telemetry cannot latch the route or block later transport commands',
   assert.equal(harness.engineState.status, 'paused');
   assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
   assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.immediateHeartbeatCount, 1);
 });
 
 test('run frames cannot bypass local route readiness before activation', async () => {
@@ -913,7 +928,21 @@ test('emergency aborts a hanging output-path probe so a later explicit activatio
 test('losing a READY connection keeps the local graph alive and waits for reconnect', async () => {
   const harness = createHarness();
   await activate(harness);
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY));
+  harness.engineState.position = 12.5;
   harness.commands.length = 0;
+  harness.events.length = 0;
+
+  const pendingPlayback = harness.eventRecords.at(-1).result.entry;
+  harness.connectionCallbacks.onEventResult({
+    status: 'outcome_unknown',
+    entry: pendingPlayback,
+    retryAllowed: false,
+  });
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.deepEqual(harness.commands, []);
 
   harness.connectionCallbacks.onStateChange({
     previous: ON_AIR_V2_CONNECTION_STATES.READY,
@@ -933,9 +962,55 @@ test('losing a READY connection keeps the local graph alive and waits for reconn
     state: ON_AIR_V2_CONNECTION_STATES.READY,
     detail: {},
   });
+  const reasserted = harness.events.at(-1);
   assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
   assert.equal(harness.adapter.snapshot().safetyLocked, false);
   assert.equal(harness.adapter.snapshot().connectionRecovering, false);
+  assert.equal(reasserted.type, ON_AIR_MESSAGE_TYPES.PLAYBACK_EVENT);
+  assert.equal(reasserted.event, RUN_EVENT_TYPES.PLAYING);
+  assert.equal(reasserted.entryId, 'entry-1');
+  assert.equal(reasserted.runId, 'run-1');
+  assert.equal(reasserted.mediaTime, 12.5);
+  assert.equal(reasserted.paused, false);
+  assert.deepEqual(harness.commands, []);
+});
+
+test('reconnect proof ambiguity never stops the surviving playback graph', async () => {
+  let failReconnectProof = false;
+  const harness = createHarness({
+    emitEvent(draft) {
+      if (failReconnectProof && draft.event === RUN_EVENT_TYPES.PLAYING) {
+        return { status: 'outcome_unknown' };
+      }
+      return { status: 'created' };
+    },
+  });
+  await activate(harness);
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY));
+  harness.commands.length = 0;
+
+  harness.connectionCallbacks.onStateChange({
+    previous: ON_AIR_V2_CONNECTION_STATES.READY,
+    state: ON_AIR_V2_CONNECTION_STATES.DISCONNECTED,
+    detail: { reason: 'socket_closed' },
+  });
+  failReconnectProof = true;
+  harness.connectionCallbacks.onStateChange({
+    previous: ON_AIR_V2_CONNECTION_STATES.NEGOTIATING,
+    state: ON_AIR_V2_CONNECTION_STATES.READY,
+    detail: {},
+  });
+  await flushMicrotasks();
+
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(harness.adapter.snapshot().connectionRecovering, false);
+  assert.equal(
+    harness.adapter.snapshot().lastError.code,
+    ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+  );
+  assert.deepEqual(harness.commands, []);
 });
 
 test('speaker connection loss is recoverable and does not stop the local media graph', async () => {
@@ -2043,7 +2118,7 @@ test('connection loss clears test state and suppresses late test evidence', asyn
   assert.equal(harness.commands.at(-1).type, PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP);
 });
 
-test('authoritative event send ambiguity immediately lowers local truth and stops media', async () => {
+test('ordinary playback evidence ambiguity preserves an established media graph', async () => {
   let failNext = false;
   const harness = createHarness({
     emitEvent() {
@@ -2052,17 +2127,29 @@ test('authoritative event send ambiguity immediately lowers local truth and stop
     },
   });
   await activate(harness);
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY));
   harness.commands.length = 0;
   failNext = true;
 
-  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  harness.engineCallbacks.onEvidence({
+    type: RUN_EVENT_TYPES.PLAYING,
+    runId: 'run-1',
+    mediaTime: 8,
+    paused: false,
+  });
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(harness.adapter.snapshot().routeState, 'unknown');
-  assert.equal(harness.adapter.snapshot().confirmation, 'unknown');
+  assert.equal(harness.adapter.snapshot().routeState, 'ready_event_sent');
+  assert.equal(harness.adapter.snapshot().confirmation, 'local_event_sent');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
+  assert.equal(
+    harness.adapter.snapshot().lastError.code,
+    ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+  );
   assert.equal(
     harness.commands.some((command) => command.type === PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP),
-    true,
+    false,
   );
 });

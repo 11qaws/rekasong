@@ -1,7 +1,9 @@
 import { useMemo, useState, useEffect } from 'react';
-import { toQueueEntry } from '../lib/queueEntry';
+import { toQueueEntry } from '../lib/queueEntry.js';
 
 const STORAGE_KEY = 'karaoke_app_state';
+const DEV_HISTORY_FIXTURE_QUERY = '__rekasong_history_fixture';
+const DEV_HISTORY_FIXTURE_MAX = 2000;
 
 // v2 스키마 (SONG_LIFECYCLE §1, PHASE_08 §4-1):
 //  - queue / history 는 QueueEntry[] (history는 completed 항목만 담는다, INV-3)
@@ -67,6 +69,9 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
         entryId: source.active.entryId,
         runId: source.active.runId,
         phase: typeof source.active.phase === 'string' && source.active.phase ? source.active.phase : 'starting',
+        ...(source.active.outputMode === 'speaker' || source.active.outputMode === 'obs'
+          ? { outputMode: source.active.outputMode }
+          : {}),
         // Stage 3 런타임 부속 정보 — finishing의 예정 완료 사유(§4-3),
         // 스킵/바로 재생이 예약한 다음 전환 대상(§4-6), failed의 실패 사유(§4-5).
         ...(typeof source.active.pendingCompletionReason === 'string' && source.active.pendingCompletionReason
@@ -112,8 +117,42 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
   return next;
 };
 
+// Repeatable browser performance fixture. Vite replaces DEV with false and
+// removes this branch from production builds; it never reads or writes the
+// user's persisted state. Keeping the fixture at the state boundary exercises
+// the real Dashboard/QueuePanel projection without test-only UI controls.
+const readDevelopmentHistoryFixture = () => {
+  if (import.meta.env?.DEV !== true || typeof window === 'undefined') return null;
+  const rawCount = new URLSearchParams(window.location.search).get(DEV_HISTORY_FIXTURE_QUERY);
+  if (!/^\d+$/.test(rawCount || '')) return null;
+  const count = Math.min(Number(rawCount), DEV_HISTORY_FIXTURE_MAX);
+  if (!Number.isSafeInteger(count) || count <= 0) return null;
+  const createdAt = 1700000000000;
+  return {
+    ...defaultState,
+    history: Array.from({ length: count }, (_, index) => ({
+      entryId: `history-performance-fixture-${index}`,
+      song: {
+        type: 'local',
+        src: '',
+        title: `Performance history track ${String(index + 1).padStart(4, '0')}`,
+        artist: 'Rekasong fixture',
+        tags: [],
+        source: 'manual',
+        mediaType: 'audio',
+        manual: true,
+      },
+      phase: 'completed',
+      completionReason: null,
+      createdAt: createdAt + index,
+    })),
+  };
+};
+
 const readStoredState = () => {
   let droppedLocalSongs = 0;
+  const developmentFixture = readDevelopmentHistoryFixture();
+  if (developmentFixture) return { state: normaliseState(developmentFixture), droppedLocalSongs };
   try {
     const item = window.localStorage.getItem(STORAGE_KEY);
     if (!item) return { state: defaultState, droppedLocalSongs };
@@ -129,6 +168,36 @@ const readStoredState = () => {
   }
 };
 
+/**
+ * Persist only durable/shared library state. A playing song belongs to the
+ * browser tab that owns its HTMLMediaElement; publishing currentEntry/active
+ * through localStorage makes another tab display a phantom player and lets its
+ * controls invalidate the real tab's run identity.
+ */
+export const createPersistedSyncState = (candidate) => ({
+  ...normaliseState(candidate),
+  currentEntry: null,
+  active: null,
+});
+
+/**
+ * Apply durable changes from another tab without importing that tab's player
+ * runtime. Queue, history, songbooks and preferences may remain shared, while
+ * each Speaker tab keeps its own current song and run identity.
+ */
+export const mergeCrossTabSyncState = (localState, incomingState) => {
+  const shared = normaliseState(incomingState, {
+    fromStorage: true,
+    resetCurrentSong: true,
+  });
+  const localRuntime = normaliseState(localState);
+  return normaliseState({
+    ...shared,
+    currentEntry: localRuntime.currentEntry,
+    active: localRuntime.active,
+  });
+};
+
 export function useSyncState() {
   const [initial] = useState(readStoredState);
   const [state, setState] = useState(initial.state);
@@ -138,7 +207,8 @@ export function useSyncState() {
     const handleStorageChange = (e) => {
       if (e.key === STORAGE_KEY && e.newValue) {
         try {
-          setState(normaliseState(JSON.parse(e.newValue), { fromStorage: true }));
+          const incoming = JSON.parse(e.newValue);
+          setState((localState) => mergeCrossTabSyncState(localState, incoming));
         } catch (error) {
           console.warn('Error reading synced localStorage state', error);
         }
@@ -153,7 +223,7 @@ export function useSyncState() {
     setState((prevState) => {
       const candidate = typeof newStateOrUpdater === 'function' ? newStateOrUpdater(prevState) : newStateOrUpdater;
       const nextState = normaliseState(candidate);
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(createPersistedSyncState(nextState)));
       return nextState;
     });
   };

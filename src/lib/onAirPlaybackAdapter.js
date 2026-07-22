@@ -246,6 +246,7 @@ export class OnAirPlaybackAdapterError extends Error {
 export class OnAirPlaybackAdapter {
   #safetyProfile = ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT;
   #connectionRecovering = false;
+  #runtimeReportScheduled = false;
   #sourceResolver;
   #prefetchSources;
   #testFixtureFactory;
@@ -351,10 +352,6 @@ export class OnAirPlaybackAdapter {
       ...runtimeMetadata,
       ...sanitizedRuntime(this.#runtimeProbe({ phase: 'hello' })),
     };
-    if (requiresSourceActiveAttestation
-      && typeof initialRuntime.sourceActive !== 'boolean') {
-      initialRuntime.sourceActive = false;
-    }
     this.#sourceActiveReported = typeof initialRuntime.sourceActive === 'boolean';
     this.connection = connectionFactory({
       ...connectionOptions,
@@ -373,9 +370,10 @@ export class OnAirPlaybackAdapter {
         };
         if (typeof currentRuntime.sourceActive === 'boolean') {
           this.#sourceActiveReported = true;
-        } else if (this.#sourceActiveReported || requiresSourceActiveAttestation) {
+        } else if (this.#sourceActiveReported) {
           // Never keep replaying a stale `true` attestation. Worker runtime is
-          // merge-only, so an unavailable probe must fail closed explicitly.
+          // merge-only, so a probe that loses previously observed evidence
+          // must fail closed explicitly. Initial unobserved state stays absent.
           currentRuntime.sourceActive = false;
         }
         // OBS source callbacks are bridged directly by OnAirPlayerV2 and the
@@ -396,12 +394,21 @@ export class OnAirPlaybackAdapter {
       },
       onEventResult: (result) => {
         const testResultHandled = this.#handleTestEventResult(result);
-        if (!testResultHandled && result?.status === 'outcome_unknown'
-          && !this.#connectionRecovering) {
-          this.#markUnknown(
-            ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
-            { eventId: result.entry?.eventId ?? null },
-          );
+        if (!testResultHandled && result?.status === 'outcome_unknown') {
+          const continuityPlayback = result.entry?.message?.type
+            === ON_AIR_MESSAGE_TYPES.PLAYBACK_EVENT;
+          if (continuityPlayback) {
+            if (!this.#connectionRecovering) {
+              this.#recordContinuityDeliveryUnknown(result.entry?.message, 'event_outcome_unknown', {
+                eventId: result.entry?.eventId ?? null,
+              });
+            }
+          } else if (!this.#connectionRecovering) {
+            this.#markUnknown(
+              ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+              { eventId: result.entry?.eventId ?? null },
+            );
+          }
         }
         safeNotify(userEventResult, result);
       },
@@ -442,9 +449,26 @@ export class OnAirPlaybackAdapter {
    * the dashboard. Explicit STOP, deactivate, emergency stop, dispose, and a
    * terminal session event remain authoritative local-stop paths.
    */
-  handleRuntimeAttestation(value) {
+  handleRuntimeAttestation(value, { phase = 'runtime_callback' } = {}) {
     if (this.#disposed || !this.#requiresRuntimeSourceAttestation) return Promise.resolve(false);
     sanitizedRuntime(value);
+    // Runtime callbacks are observational: promptly mirror them to the
+    // dashboard but never turn them into a local stop. Active/visible events
+    // often arrive as a pair, so one microtask coalesces them into one
+    // storage-free heartbeat. The periodic heartbeat path must not recurse.
+    if (phase !== 'heartbeat' && !this.#runtimeReportScheduled) {
+      this.#runtimeReportScheduled = true;
+      this.#defer(() => {
+        this.#runtimeReportScheduled = false;
+        if (this.#disposed) return;
+        try {
+          this.connection.sendHeartbeatNow?.();
+        } catch {
+          // A callback racing a socket gap is telemetry loss, not proof that
+          // the established audio graph stopped.
+        }
+      });
+    }
     return Promise.resolve(false);
   }
 
@@ -906,6 +930,67 @@ export class OnAirPlaybackAdapter {
     this.#emitSnapshot();
   }
 
+  #recordContinuityDeliveryUnknown(draft, reason, detail = {}) {
+    this.#lastError = immutableJson({
+      code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
+      detail: {
+        type: draft?.type ?? null,
+        event: draft?.event ?? null,
+        reason,
+        ...detail,
+      },
+    });
+    this.#emitSnapshot();
+  }
+
+  #reassertSurvivingPlaybackAfterReconnect() {
+    if (this.#disposed || this.#sessionEnded || this.#activeTest
+      || !this.#activeEntryId || !this.#activeRunId) return false;
+
+    let engine;
+    try {
+      engine = this.engine.snapshot();
+    } catch {
+      return false;
+    }
+    if (engine?.runId !== this.#activeRunId || engine.sourceAttached !== true
+      || !Number.isFinite(engine.position) || engine.position < 0) return false;
+
+    const draft = {
+      ...this.#eventBase(ON_AIR_MESSAGE_TYPES.PLAYBACK_EVENT, this.#activeLeaseEpoch),
+      entryId: this.#activeEntryId,
+      runId: this.#activeRunId,
+      mediaTime: engine.position,
+    };
+    if (engine.status === RUN_EVENT_TYPES.PLAYING && engine.mediaPaused === false) {
+      draft.event = RUN_EVENT_TYPES.PLAYING;
+      draft.paused = false;
+    } else if (engine.status === RUN_EVENT_TYPES.PAUSED && engine.mediaPaused === true) {
+      draft.event = RUN_EVENT_TYPES.PAUSED;
+      draft.paused = true;
+    } else if (engine.status === RUN_EVENT_TYPES.BUFFERING && engine.mediaPaused === false
+      && Number.isSafeInteger(engine.readyState) && engine.readyState >= 0 && engine.readyState <= 3) {
+      draft.event = RUN_EVENT_TYPES.BUFFERING;
+      draft.readyState = engine.readyState;
+    } else if (engine.status === RUN_EVENT_TYPES.READY && engine.mediaPaused === true
+      && Number.isFinite(engine.duration) && engine.duration >= 0
+      && Number.isSafeInteger(engine.readyState) && engine.readyState >= 2 && engine.readyState <= 4) {
+      draft.event = RUN_EVENT_TYPES.READY;
+      draft.duration = engine.duration;
+      draft.readyState = engine.readyState;
+      draft.paused = true;
+    } else if (engine.status === RUN_EVENT_TYPES.ENDED && engine.mediaPaused === true
+      && Number.isFinite(engine.duration) && engine.duration >= 0) {
+      draft.event = RUN_EVENT_TYPES.ENDED;
+      draft.duration = engine.duration;
+      draft.paused = true;
+    } else {
+      return false;
+    }
+
+    return this.#sendEvent(draft, { continuity: true });
+  }
+
   #handleConnectionState(change) {
     if (this.#sessionEnded
       && change?.state !== ON_AIR_V2_CONNECTION_STATES.READY) {
@@ -943,8 +1028,10 @@ export class OnAirPlaybackAdapter {
       return;
     }
     if (change?.state === ON_AIR_V2_CONNECTION_STATES.READY) {
+      const recovered = this.#connectionRecovering;
       this.#connectionRecovering = false;
       this.#lastError = null;
+      if (recovered) this.#reassertSurvivingPlaybackAfterReconnect();
     }
     this.#emitSnapshot();
   }
@@ -1138,13 +1225,15 @@ export class OnAirPlaybackAdapter {
     };
   }
 
-  #sendEvent(draft, { telemetry = false } = {}) {
+  #sendEvent(draft, { telemetry = false, continuity = false } = {}) {
     try {
+      const preservesPlaybackContinuity = continuity
+        || draft?.type === ON_AIR_MESSAGE_TYPES.PLAYBACK_EVENT;
       const before = this.connection.snapshot();
       const result = this.connection.emitEvent(draft);
       const after = this.connection.snapshot();
       if (!sameReadyConnection(before, after)) {
-        if (this.#connectionRecovering) {
+        if (this.#connectionRecovering || preservesPlaybackContinuity) {
           if (this.#safetyProfile === ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT
             && draft.type === ON_AIR_MESSAGE_TYPES.TEST_EVENT) {
             this.#markUnknown(
@@ -1152,11 +1241,12 @@ export class OnAirPlaybackAdapter {
               { type: draft.type, event: draft.event ?? null, reason: 'connection_reconnecting' },
             );
           }
-          this.#lastError = immutableJson({
-            code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
-            detail: { type: draft.type, event: draft.event ?? null, reason: 'connection_reconnecting' },
-          });
-          this.#emitSnapshot();
+          this.#recordContinuityDeliveryUnknown(
+            draft,
+            this.#connectionRecovering
+              ? 'connection_reconnecting'
+              : 'connection_changed_during_send',
+          );
           return false;
         }
         if (this.#routeState !== 'unknown') {
@@ -1169,12 +1259,11 @@ export class OnAirPlaybackAdapter {
         return false;
       }
       if (result?.status === 'outcome_unknown') {
-        if (this.#connectionRecovering) {
-          this.#lastError = immutableJson({
-            code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
-            detail: { type: draft.type, event: draft.event ?? null, reason: 'connection_reconnecting' },
-          });
-          this.#emitSnapshot();
+        if (this.#connectionRecovering || preservesPlaybackContinuity) {
+          this.#recordContinuityDeliveryUnknown(
+            draft,
+            this.#connectionRecovering ? 'connection_reconnecting' : 'event_outcome_unknown',
+          );
           return false;
         }
         this.#markUnknown(
@@ -1187,12 +1276,10 @@ export class OnAirPlaybackAdapter {
       if (result?.status === 'dropped') return telemetry;
       return true;
     } catch (error) {
-      if (this.#connectionRecovering) {
-        this.#lastError = immutableJson({
-          code: ON_AIR_PLAYBACK_ADAPTER_CODES.EVENT_DELIVERY_UNKNOWN,
-          detail: safeErrorDetail(error),
-        });
-        this.#emitSnapshot();
+      const preservesPlaybackContinuity = continuity
+        || draft?.type === ON_AIR_MESSAGE_TYPES.PLAYBACK_EVENT;
+      if (this.#connectionRecovering || preservesPlaybackContinuity) {
+        this.#recordContinuityDeliveryUnknown(draft, 'event_send_failed', safeErrorDetail(error));
         return false;
       }
       this.#markUnknown(

@@ -1,0 +1,145 @@
+# Rekasong 목표 완료 감사 — 2026-07-22
+
+> 작업 위치: `D:\Agents\rekasong\Codex\workspace`
+>
+> 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
+
+## 1. 현재 결론
+
+| 사용자 목표 | 로컬 후보 | 공개 배포 | 남은 증거 |
+|---|---|---|---|
+| 앱을 열면 스피커로 바로 시작 | 완료 | 이전 후보 배포됨 | 최신 후보 배포 후 공개 smoke |
+| Speaker를 일반 웹 플레이어처럼 사용 | 완료 | 이전 후보 배포됨 | 모바일 OS별 백그라운드 수동 확인 |
+| 잠금 화면·알림·헤드셋의 Speaker 제어 | 자동 계약 완료 | 미배포 | 실제 지원 모바일에서 수동 확인 |
+| Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | 완료 | 미배포 | 배포 후 공개 다중 탭 재확인 |
+| Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | 미배포 | 배포 후 설정 화면 재확인 |
+| Speaker 감상 볼륨과 OBS 방송 gain 분리 | 완료 | 미배포 | 배포 후 두 모드 값 유지 smoke |
+| 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 미배포 | 실제 지원 장치에서 물리 청취 확인 |
+| OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 이전 Worker 배포됨 | 사용자 청취·G5·G6 |
+| OBS 재접속 중 재생 연결을 우선 보존 | 자동 검증 + 실제 source hide/show 완료 | 이전 Worker 배포됨 | scene 전환·source refresh·OBS 재시작 |
+| OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 미배포 | 실제 OBS 연결 상태에서 설정 카드 확인 |
+| 헤더 머리핀 UI: 현재 출력 + 설정 | 완료 | 이전 UI 일부 배포됨 | 최신 후보 공개 시각 smoke |
+| YouTube 검색/목록을 한 소스로 묶기 | 완료 | 미배포 | 최신 후보 공개 smoke |
+| 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | 미배포 | 최신 후보 공개 smoke |
+| 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위) | 미배포 | 공개 배포 후 smoke |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 미배포 | 장시간 메모리/CEF soak |
+| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | 자동 계약 완료 | 미배포 | 배포 후 실제 브라우저 performance trace |
+
+현재 공개 Pages와 Worker는 정상 응답하지만 `master`의 `2c7dca5` 기준이다. 이 문서가 감사한 최신 로컬 후보는 아직 커밋·배포하지 않았다.
+
+### 공개 배포 실측 — 2026-07-22
+
+- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 `Last-Modified: 2026-07-22 04:11:53 KST`, 메인 자산은 `assets/index-Cr5lSL-w.js`다. 시각은 `2c7dca5` 커밋 시각과 일치하고 공개 `master`와 로컬 HEAD도 모두 `2c7dca5`다.
+- 공개 Worker의 현재 활성 배포는 version `797ef6e2-34bc-4037-8c7a-10f596fe5d96`(version number 30, 100%)이며 배포 시각은 `2026-07-22 04:10:41 KST`다. Pages/HEAD 배포 시각과 2분 이내로 일치한다.
+- 공개 Worker 루트의 HTTP 404는 장애가 아니라 루트 라우트를 제공하지 않는 현재 설계다. 세션·WebSocket·미디어 API는 `/v1/...` 아래에서만 제공한다.
+- 공개 첫 화면은 Speaker 기본, `스피커 송출 중`, 부제 제거, 활성 Speaker 라디오를 확인했다. Speaker 선택 자체는 잠겨 있지 않다.
+- 그러나 공개 설정은 Speaker 상태에서도 `OBS 오디오 점검`, OBS URL, 장면 전환 체크리스트, 방송 세션 종료, `다른 탭이 출력 제어 중입니다`를 한꺼번에 노출한다. 일반 웹 플레이어로 보이는 화면에서 제거해야 할 방송 전용 복잡성과 제한성 문구가 아직 남아 있다.
+- 공개 곡 행 클릭은 실제로 곡 정보 준비 화면을 만들지만 즉시 표시되지 않고 약 5초 뒤 페이지 아래쪽에서 확인됐다. 눌린 직후 행의 포커스 외에는 명확한 진행 표시가 없어 사용자가 클릭 실패로 오해할 수 있다.
+- 공개 상단 소스는 아직 `YouTube 검색`, `YouTube 목록`, `Setlink`, `멜로밍` 네 개이며 언어 선택도 없다. 최신 로컬 후보의 점진 OBS 설정, YouTube 단일 소스, 즉시 곡 준비 표시, 한국어/영어 전환은 배포 전이다.
+
+## 2. Speaker 사용자 흐름
+
+### 확정한 동작
+
+- 새 탭의 기본 출력은 항상 Speaker다. 이전 OBS 선택을 복원해 사용자를 연결 대기 상태에 넣지 않는다.
+- Speaker의 재생·일시정지·탐색·볼륨·스킵·재시도·버리기는 OBS control owner, output lease, player 후보 수, heartbeat, 재연결 상태를 보지 않는다.
+- 탭마다 현재 곡과 재생 run을 따로 가진다. 대기열·이력·노래책·언어 같은 지속 데이터만 탭 사이에 공유한다.
+- `localStorage`에는 현재 곡과 active run을 쓰지 않는다. 다른 탭의 storage event가 현재 곡을 만들거나 덮어쓰지 못한다.
+- Worker의 과거 Speaker 후보가 여러 개 남아 있어도 exact-one gate로 Speaker를 차단하지 않는다.
+- Speaker와 OBS는 서로 다른 지속 볼륨 값을 사용한다. 기존 단일 볼륨은 두 값으로 무손실 승계하고, 현재 재생 중인 run의 실제 출력 모드만 조절한다.
+- `selectAudioOutput`과 `setSinkId`를 모두 지원하는 브라우저에서만 Speaker 출력 장치 선택을 보여 준다. 장치 선택·복원 실패는 playback run이나 OBS 상태를 바꾸지 않고 기존/기본 출력으로 계속 재생한다.
+- 브라우저 Media Session은 현재 active run의 실제 출력이 Speaker일 때만 곡 정보와 play/pause/next/seek를 제공한다. OBS run·유휴·화면 종료에서는 metadata와 handler를 제거하며, API 오류는 현재 곡이나 연결 상태를 바꾸지 않는다.
+- media session 또는 lazy player 준비가 끝나지 않으면 명령은 최대 12초만 대기하고 현재 시도를 실패로 확정한다. 다음 재생 클릭은 세션 생성을 다시 시도하며, 이 실패가 Speaker 헤더를 경로 확인 상태로 바꾸지 않는다.
+- 미디어 READY 증거 안에서 PLAY를 재진입 호출하지 않는다. 다음 microtask에서 같은 run인지 다시 확인해 시작하며, 그 사이 pause·stop·교체·dispose가 있으면 예약된 시작을 취소한다.
+- 설정을 Speaker 상태로 열면 언어, Speaker/OBS 선택, 현재 Speaker 안내만 먼저 보인다. OBS 연결·복구·오디오 점검은 OBS를 선택하거나 OBS 선택 실패를 확인하려고 눌렀을 때만 열린다.
+
+### 실제 브라우저 증거
+
+- 로컬 Chrome 첫 탭에서 `Best Friend`, 둘째 탭에서 `IDOL`을 각각 즉시 재생했다.
+- 최종 현재 재생 표시는 첫 탭 `Best Friend 0:00 / 5:25`, 둘째 탭 `IDOL 0:00 / 3:34`로 동시에 유지됐다.
+- 둘째 탭을 연 순간 현재 곡은 비어 있었고 첫 탭의 재생 상태를 가져오지 않았다.
+- 곡 행 클릭 뒤 `곡 정보 확인`과 `즉시 재생` 행동이 실제로 나타났다.
+- 실제 492×995 좁은 브라우저에서 영문 Speaker 설정 대화상자는 좌우 16px 여백 안에 들어왔고, 페이지·대화상자 모두 가로 overflow가 없었다. `Playing through speakers` 외에 경로 확인/서버 대기 경고도 나타나지 않았다.
+- 실제 두 Dashboard 탭 상태에서 둘째 탭이 OBS를 선택하려 해도 Speaker radio는 `disabled=false`, `aria-disabled=false`를 유지했다. 첫 탭 종료 뒤 OBS 재선택은 `OBS 플레이어 없음`과 구체적인 다음 행동으로 수렴했다.
+- 위 OBS 실패 상태에서 Speaker를 다시 누르자 추가 초기화나 서버 경로 증명 없이 즉시 `checked=true`, local player `data-local-speaker-state=ready`로 복귀했다. OBS 실패가 Speaker 선택·재생기를 잠그지 않았다.
+- 390×844 viewport에서 흰 머리핀 헤더, YouTube→Setlink→Meloming 순서, YouTube 내부 Search/Playlist, 곡 클릭 직후 Review track/Play now 전환을 확인했다. 설정은 가로 overflow 없이 세로 스크롤만 사용했다.
+- `Best Friend`를 새로 재생해 실제 `<audio>`가 `readyState=4`, `paused=false`이고 재생 시간이 증가함을 확인했다. 이는 이전의 영구 `준비 중` 교착이 실제 브라우저에서도 해소됐다는 증거다.
+- Speaker 볼륨을 34%로 변경하고 곡을 버린 뒤 새로고침해 다시 재생했다. `Speaker volume` 슬라이더는 34%로 복원됐고 활성 상태였으며, 곡은 계속 진행됐다. 최종 버리기 뒤에는 media가 paused이고 source가 분리됐다.
+- 현재 로컬 브라우저는 `setSinkId` 미지원이었다. 장치 선택 UI와 기술 경고는 노출되지 않았고 가로 overflow도 없었다. 같은 상태에서 `Best Friend`는 `readyState=4`, `paused=false`, 13.49초까지 진행됐으며 버리기 뒤 pause와 source 분리를 확인했다. 지원 환경의 실제 물리 장치 전환 청취는 별도 수동 증거로 남긴다.
+- OBS 리모컨 적용 확인 후보를 포함한 최신 화면에서도 Speaker의 `Best Friend`가 `readyState=4`, `paused=false`로 진행됐고 헤더·Speaker 설정의 OBS 확인 카드는 0개였다. 버리기 뒤에는 media가 `paused=true`였으며 페이지 가로 overflow도 없었다.
+
+### 의도적으로 남긴 경계
+
+- YouTube 음원 준비와 임시 자산 접근에는 방송과 같은 media session 서비스를 사용할 수 있다. 이것은 Speaker 출력 소유권이 아니다.
+- 여러 Speaker 탭에서 각각 소리를 내는 것은 허용된 정상 동작이다. 사용자가 각 탭에서 직접 멈춘다.
+- 준비 음원 인증은 한 Speaker만 차지하는 소유권이나 소비형 토큰이 아니다. 앱은 탭·창 수를 세거나 대표 Speaker 하나를 고르지 않는다.
+- 모바일 OS가 백그라운드 탭 자체를 정지시키는 정책까지 앱이 우회한다고 약속하지 않는다. 앱 내부의 다른 탭 증거 부족은 Speaker를 차단하지 않는다.
+- Media Session은 OS 조작 표면을 제공할 뿐 백그라운드 재생 지속을 보장하지 않는다. 실제 잠금 화면·알림·헤드셋 버튼은 지원 모바일에서 별도 수동 확인한다.
+
+## 3. OBS 사용자 흐름
+
+### 자동으로 확정한 동작
+
+- OBS만 정확한 단일 active Browser Source와 단일 output lease를 요구한다.
+- 새 OBS 활성화는 중복 후보·소스 비활성·알 수 없는 제어권을 성공으로 추측하지 않는다.
+- 이미 성립한 OBS media graph는 장면의 visible/active 변화, heartbeat 지연, 일시적인 control WebSocket 단절만으로 멈추거나 detach하지 않는다.
+- 같은 OBS player identity가 재접속하면 10초 heartbeat를 기다리지 않고 hello에서 route를 복원한다.
+- 살아 있는 playback은 재접속 후 현재 상태를 다시 보고하지만, 이 보고 결과가 불명확하다는 이유로 재생을 끊지 않는다.
+- 일반 control socket 단절은 새 welcome과 authoritative snapshot이 일치하면 명령 재전송 없이 해제한다. 진행 중 명령 결과 불명과 identity 불일치는 계속 수동 복구 대상으로 남긴다.
+- source active/visible 콜백은 한 번의 storage-free 즉시 heartbeat로 합쳐 전송하고, runtime 값이 바뀔 때만 Dashboard snapshot을 갱신한다. 장면 상태는 빠르게 보이되 established graph를 멈추지 않는다.
+- 실제 OBS 플레이어 heartbeat는 10초다. 최신 Dashboard Speaker는 Worker player WebSocket과 heartbeat가 없으며, 구버전 호환 Speaker만 30초 cadence를 사용한다. Worker의 정상 heartbeat 처리는 durable storage write 없이 ACK·relay만 수행한다.
+- Dashboard는 마지막으로 사용자가 누른 OBS play/pause/seek/volume의 정확한 `commandId`와 run을 탭 메모리에만 보관한다. Worker는 기존 `command_applied`/`command_failed` snapshot에 그 명령 식별자를 보존하고, Dashboard는 실제 media 상태 또는 적용된 seek/volume 값까지 일치할 때만 `적용됨`으로 표시한다. 수신 ACK·desired 값은 성공 증거가 아니며, 5초 지연도 재생 중단·명령 재전송·추가 WebSocket traffic을 만들지 않는다.
+- G2 신호가 실제 재생된 뒤 사용자가 정확한 OBS Audio Mixer meter의 pulse를 확인하거나 실패로 기록할 수 있다. 이 기록은 현재 room·player·check에만 묶이고 Worker 명령이나 route 전이를 만들지 않으며, 실제 G3 관측 자체를 대신하지 않는다.
+- 실제 Chrome normal-playback continuity smoke에서 30초 세션 WAV를 Blob으로 완전히 준비한 뒤 재생 중 player WebSocket을 명시적으로 close했다. Worker가 `target_disconnected`를 관측한 동안에도 같은 media element/blob이 약 0.358초에서 2.436초로 진행했고, 같은 player/entry/run이 `output_reconnected`로 복원됐다. PLAY/PLAYING은 각 1회이며 재접속 pause·detach·waiting·stalled·error는 0이었다.
+- 10분 continuity soak에서는 600초/57,600,044바이트 WAV를 완전히 준비해 590초를 연속 관측했다. media 경과 590,065.3ms와 wall 경과 590,063.1ms의 차이는 2.2ms였고, 명령 재전송과 재생 중단 이벤트는 0이었다. 이는 브라우저의 반주 시간축 연속성을 증명하지만 실제 OBS mixer에서 마이크와 반주의 상대 싱크를 재는 G6 증거는 아니다.
+
+### 실제 장비에서 확정한 상한과 남은 동작
+
+- G3 기계 관측: 앱 점검 신호 동안 정확한 `Rekasong` OBS Audio Mixer source meter가 약 -25dB까지 움직였다.
+- G4 녹화 artifact: 33.283초 MP4의 AAC 48kHz stereo track에서 880Hz pulse 12개와 440Hz tone 4개를 모두 검출했다. marker 누락·중복 및 clipping은 0이었다.
+- source hide/show: fixture 재생 중 약 1.4초 숨겼다가 다시 표시해도 established route를 유지하고 16/16 marker로 완료했다.
+- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 라이브 마이크↔MR 10분 싱크(G6), scene 전환·source refresh·OBS 재시작 변형이다.
+
+세부 증거와 남은 절차는 `docs/OBS_REMAINING_VALIDATION_PLAN_2026-07-20.md`에 유지한다.
+
+## 4. UI와 편의성
+
+- 헤더의 흰 머리핀 영역에는 현재 출력 상태와 설정 버튼만 둔다.
+- 노란 띠와 큰 설명 패널은 제거했다.
+- 출력 변경, OBS URL, 연결 상태, 복구, 오디오 점검, 방송 세션 종료는 톱니 안에 둔다.
+- UI는 상태 이름만 제시하지 않고 `다음 행동`을 함께 말한다.
+- YouTube는 상단에서 하나의 소스이며 내부에 검색/플레이리스트가 있다. 상단 순서는 YouTube → Setlink → 멜로밍이다.
+- 노래책 본문은 읽기 쉬운 진한 녹색을 사용하고 emerald는 연결 상태·장식에 남긴다.
+- 곡 행은 클릭 가능한 버튼이며 바쁜 상태를 즉시 보여 준 뒤 검토 화면으로 이동한다.
+
+## 5. 번역 구조
+
+- 앱 locale은 `ko`/`en`만 정식 노출한다. 선택은 `rekasong.locale`에 저장하고 `<html lang>`과 함께 바뀐다.
+- 출력/OBS, 검색, 노래책, 스테이징, 대기열, 재생 오류, AI 진행, 오류 경계의 앱 작성 문구는 semantic key로 관리한다.
+- AI 분석 상태는 한국어 문장을 정규식으로 읽지 않는다. locale-neutral 단계 값과 message key를 저장하므로 언어를 바꾸면 현재 상태도 다시 번역된다.
+- Display Widget은 큰 대시보드 catalog를 가져오지 않는 작은 전용 catalog를 쓴다. 복사하는 Widget URL에 `lang`을 포함한다.
+- 곡명·가수명·태그·사용자 입력·외부 고유명사는 번역 대상이 아니다.
+- 서버 원문 오류를 그대로 사용자 문구로 쓰지 않고 앱의 안정적인 오류 key로 바꾼다.
+
+## 6. 성능과 자동 검증
+
+- 닫힌 이전 재생 곡은 DOM 행 0개, 최초 개방은 최근 100개다. 1,000곡 원본을 유지한 채 100곡씩만 확장하며, 닫으면 다시 100곡 window로 초기화한다.
+- 전체 테스트: 626/626 통과.
+- lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
+- production build 통과.
+- Dashboard chunk: 341.66 kB raw / 93.60 kB gzip.
+- Dashboard CSS: 56.22 kB raw / 10.56 kB gzip.
+- 탭별 local Speaker lazy chunk: 4.55 kB raw / 1.82 kB gzip.
+- Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
+- OBS 정적 경로: 381,225B raw / 115,962B gzip / 101,613B brotli.
+- OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
+- Worker 문법 검사와 `git diff --check` 통과.
+
+## 7. 배포 전·후 순서
+
+1. 사용자가 현재 로컬 후보 UI를 검토한다.
+2. 승인 뒤에만 변경 파일을 선별해 커밋한다. `graphify-out/`은 포함하지 않는다.
+3. Worker를 먼저 배포하고 배포 version을 기록한다.
+4. Pages를 배포하고 공개 asset hash와 GitHub Actions 성공을 기록한다.
+5. 공개 새 프로필에서 기본 Speaker, 두 탭 독립 재생, 영어 전환, OBS 미연결 안내를 smoke한다.
+6. 실제 OBS G3~G6을 수행해 최종 송출 합격 여부를 별도로 기록한다.

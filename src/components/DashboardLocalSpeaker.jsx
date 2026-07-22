@@ -12,6 +12,7 @@ import {
   ON_AIR_PREFETCH_MAX_CACHED_BYTES,
 } from '../lib/onAirPrefetchCache.js';
 import { createOnAirSourceResolver } from '../lib/onAirSourceResolver.js';
+import { applySpeakerOutputDevice } from '../lib/speakerOutputDevice.js';
 
 /**
  * The dashboard's normal music-player output. It downloads prepared media
@@ -22,14 +23,16 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
   apiBaseUrl,
   room,
   token,
+  sinkId = '',
   onEvidence = null,
+  onSinkError = null,
   onStateChange = null,
 }, ref) {
   const audioRef = useRef(null);
   const controllerRef = useRef(null);
-  const callbacksRef = useRef({ onEvidence, onStateChange });
+  const callbacksRef = useRef({ onEvidence, onSinkError, onStateChange });
   const [state, setState] = useState('initializing');
-  callbacksRef.current = { onEvidence, onStateChange };
+  callbacksRef.current = { onEvidence, onSinkError, onStateChange };
 
   useImperativeHandle(ref, () => ({
     sendCommand(command) {
@@ -44,7 +47,20 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
     snapshot() {
       return controllerRef.current?.snapshot() ?? null;
     },
+    setSinkId(deviceId) {
+      return applySpeakerOutputDevice(audioRef.current, deviceId);
+    },
   }), []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || typeof audio.setSinkId !== 'function') return undefined;
+    let cancelled = false;
+    applySpeakerOutputDevice(audio, sinkId).catch((error) => {
+      if (!cancelled) callbacksRef.current.onSinkError?.(error);
+    });
+    return () => { cancelled = true; };
+  }, [sinkId]);
 
   useEffect(() => {
     setState('initializing');

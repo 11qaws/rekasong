@@ -7,6 +7,7 @@ import {
   outputMessageCatalog,
   outputSwitchFailureMessageKey,
 } from '../src/copy/outputMessages.js';
+import { appMessageCatalog } from '../src/copy/appMessages.js';
 import {
   ON_AIR_OUTPUT_ACTIONS,
   ON_AIR_OUTPUT_GATE_CODES,
@@ -65,12 +66,13 @@ test('every translated locale entry preserves Korean placeholder names', () => {
   }
 });
 
-test('PlaybackPanel references only existing output catalog keys', async () => {
+test('PlaybackPanel references only existing merged app catalog keys', async () => {
   const source = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
   const usedKeys = [...source.matchAll(/\bt\('([^']+)'/g)].map((match) => match[1]);
   assert.ok(usedKeys.length >= 60, 'expected PlaybackPanel copy to use the translation facade');
 
-  const missing = [...new Set(usedKeys)].filter((key) => !Object.hasOwn(outputMessageCatalog.ko, key));
+  const koreanAppCatalog = { ...outputMessageCatalog.ko, ...appMessageCatalog.ko };
+  const missing = [...new Set(usedKeys)].filter((key) => !Object.hasOwn(koreanAppCatalog, key));
   assert.deepEqual(missing, []);
 });
 
@@ -113,8 +115,20 @@ test('OBS audio check stays inside settings, exposes evidence accessibly, and st
   assert.match(panelSource.slice(checkStart), /aria-describedby="obs-audio-check-scope obs-audio-check-status obs-audio-check-prompt"/);
   assert.match(panelSource.slice(checkStart), /onStartObsAudioCheck/);
   assert.match(panelSource.slice(checkStart), /onStopObsAudioCheck/);
+  const obsConfigurationGate = panelSource.indexOf('{isObsConfigurationVisible && (', modalStart);
+  assert.ok(
+    obsConfigurationGate > modalStart && obsConfigurationGate < checkStart,
+    'Speaker settings must not expose OBS verification until OBS configuration is requested',
+  );
+  assert.match(panelSource, /if \(mode === 'obs'\) setIsObsConfigurationVisible\(true\)/);
+  assert.match(panelSource, /if \(mode === 'speaker'\) setIsObsConfigurationVisible\(false\)/);
   assert.match(dashboardSource, /onStartObsAudioCheck=\{outputControl\.startTest\}/);
   assert.match(dashboardSource, /onStopObsAudioCheck=\{outputControl\.stopTest\}/);
+  assert.match(dashboardSource, /onConfirmObsMixerSignal=\{handleConfirmObsMixerSignal\}/);
+  assert.match(dashboardSource, /onReportMissingObsMixerSignal=\{handleReportMissingObsMixerSignal\}/);
+  assert.match(panelSource.slice(checkStart), /obs-mixer-verification/);
+  assert.match(panelSource.slice(checkStart), /onConfirmObsMixerSignal/);
+  assert.match(panelSource.slice(checkStart), /onReportMissingObsMixerSignal/);
   assert.doesNotMatch(viewSource, /rmsDbfs|peakDbfs/);
 
   assert.match(outputMessageCatalog.ko['obs.audioCheck.scope'], /G2/);
@@ -171,6 +185,24 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
     'action.stopping',
     'action.startFailed',
     'action.stopFailed',
+    'mixerVerification.title',
+    'mixerVerification.runFirst',
+    'mixerVerification.awaiting',
+    'mixerVerification.passed',
+    'mixerVerification.failed',
+    'mixerVerification.stale',
+    'mixerVerification.checkedAt',
+    'mixerVerification.action.seen',
+    'mixerVerification.action.missing',
+    'mixerVerification.help.controlAudio',
+    'mixerVerification.help.unmute',
+    'mixerVerification.help.singleSource',
+    'mixerVerification.help.retry',
+    'mixerVerification.userScope',
+    'mixerVerification.unavailable',
+    'mixerVerification.saveFailed',
+    'mixerVerification.savedPassed',
+    'mixerVerification.savedFailed',
   ].map((suffix) => `${prefix}${suffix}`);
   assert.deepEqual(required.filter((key) => !keysByLocale.ko.includes(key)), []);
 
@@ -186,6 +218,24 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
 
   assert.match(outputMessageCatalog.ko['obs.audioCheck.block.activeWork'], /끝내거나.*제거/);
   assert.match(outputMessageCatalog.en['obs.audioCheck.block.activeWork'], /Finish or remove/);
+  assert.match(outputMessageCatalog.ko['obs.audioCheck.mixerVerification.userScope'], /사용자.*G3-user/);
+  assert.match(outputMessageCatalog.ko['obs.audioCheck.mixerVerification.userScope'], /녹화.*별도/);
+  assert.match(outputMessageCatalog.en['obs.audioCheck.mixerVerification.userScope'], /only what you saw/i);
+});
+
+test('local speaker failures tell the listener what to do and never expose engine codes', async () => {
+  const dashboardSource = await readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8');
+
+  assert.match(outputMessageCatalog.ko['playback.localSpeaker.autoplayBlocked'], /재생 버튼을 한 번 눌러/);
+  assert.match(outputMessageCatalog.ko['playback.localSpeaker.startFailed'], /다시 재생하거나 버려/);
+  assert.match(outputMessageCatalog.en['playback.localSpeaker.autoplayBlocked'], /play button once/i);
+  assert.match(outputMessageCatalog.en['playback.localSpeaker.startFailed'], /retry or discard/i);
+  assert.doesNotMatch(
+    dashboardSource,
+    /evidence\.code \|\| t\('playback\.localSpeaker\.loadFailed'\)/,
+  );
+  assert.match(dashboardSource, /evidence\.code === 'play_rejected'/);
+  assert.match(dashboardSource, /evidence\.code === 'media_postcondition_failed'/);
 });
 
 test('Speaker is a local choice while every blocked OBS route remains recoverable', async () => {
@@ -400,8 +450,32 @@ test('read-only and reconnecting tabs disable OBS mutations but never local Spea
   );
   assert.match(source, /const transportControlsLocked = isStarting \|\| controlsLocked \|\| outputAuthorityLocked;/);
   assert.match(source, /onClick=\{toggleMute\}[\s\S]*?disabled=\{transportControlsLocked\}/);
-  assert.match(source, /aria-label=\{t\('playback\.control\.volume'\)\}[\s\S]*?disabled=\{transportControlsLocked\}/);
+  assert.match(source, /aria-label=\{t\('playback\.control\.volumeForOutput',[\s\S]*?disabled=\{transportControlsLocked\}/);
   assert.match(source, /onClick=\{\(\) => onSkip\(\)\}[\s\S]*?disabled=\{transportControlsLocked\}/);
+});
+
+test('a connected but hidden OBS source gets a direct recovery action without full reset', async () => {
+  const dashboardSource = await readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8');
+  const panelSource = await readFile(new URL('../src/components/PlaybackPanel.jsx', import.meta.url), 'utf8');
+
+  assert.match(
+    dashboardSource,
+    /const obsSourceInactive = connectedObsPlayers\.length === 1[\s\S]*?sourceActive === false[\s\S]*?sourceVisible === false/,
+  );
+  assert.match(panelSource, /targetSourceInactive: failedSelectionMode === 'obs' && obsSourceInactive/);
+  assert.match(
+    panelSource,
+    /const outputNeedsDestructiveReset = outputNeedsAttention && !\([\s\S]*?failedSelectionMode === 'obs' && obsSourceInactive/,
+  );
+
+  for (const key of [
+    'onair.output.header.blocked.obs.sourceInactive',
+    'onair.output.nextAction.obs.sourceInactive',
+    'onair.output.selector.status.sourceInactive',
+  ]) {
+    assert.ok(outputMessageCatalog.ko[key]?.trim(), `missing Korean hidden-source copy for ${key}`);
+    assert.ok(outputMessageCatalog.en[key]?.trim(), `missing English hidden-source copy for ${key}`);
+  }
 });
 
 test('compact output header and settings diagnostics have Korean and English copy', () => {
@@ -419,6 +493,7 @@ test('compact output header and settings diagnostics have Korean and English cop
     'onair.output.header.blocked.speaker.foreign',
     'onair.output.header.blocked.obs.none',
     'onair.output.header.blocked.obs.duplicate',
+    'onair.output.header.blocked.obs.sourceInactive',
     'onair.output.header.active.attention',
     'onair.output.header.active.inactive',
     'onair.output.details.title',
@@ -489,6 +564,8 @@ test('prepare status and control ownership copy is complete in Korean and Englis
     'queue.history.replay.title',
     'queue.history.replay.unavailableTitle',
     'queue.history.remove.title',
+    'queue.history.showPrevious',
+    'queue.history.showLatest',
     'onair.output.header.control.otherTab',
     'onair.output.selector.status.otherTab',
     'onair.control.otherTab.title',

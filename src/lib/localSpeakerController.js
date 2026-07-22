@@ -55,6 +55,7 @@ export function createLocalSpeakerController({
   let disposed = false;
   let sequence = 0;
   let pendingAutoplayRunId = null;
+  let scheduledAutoplayRunId = null;
   let activeSong = null;
   let engine = null;
 
@@ -63,23 +64,45 @@ export function createLocalSpeakerController({
     return `local-speaker-${kind}-${sequence}`;
   };
 
+  const reportAutoplayFailure = (runId, error) => {
+    safeNotify(onEvidence, Object.freeze({
+      type: PLAYBACK_EVIDENCE_TYPES.ERROR,
+      runId,
+      mediaTime: engine.snapshot().position,
+      duration: engine.snapshot().duration,
+      code: error?.code || LOCAL_SPEAKER_CODES.INVALID_COMMAND,
+      detail: error?.detail || {},
+    }));
+  };
+
   const playWhenReady = (evidence) => {
     safeNotify(onEvidence, evidence);
     if (disposed || evidence?.type !== PLAYBACK_EVIDENCE_TYPES.READY
-      || evidence.runId !== pendingAutoplayRunId) return;
-    pendingAutoplayRunId = null;
-    Promise.resolve(engine.play({
-      commandId: nextCommandId('autoplay'),
-      runId: evidence.runId,
-    })).catch((error) => {
-      safeNotify(onEvidence, Object.freeze({
-        type: PLAYBACK_EVIDENCE_TYPES.ERROR,
-        runId: evidence.runId,
-        mediaTime: engine.snapshot().position,
-        duration: engine.snapshot().duration,
-        code: error?.code || LOCAL_SPEAKER_CODES.INVALID_COMMAND,
-        detail: error?.detail || {},
-      }));
+      || evidence.runId !== pendingAutoplayRunId
+      || scheduledAutoplayRunId === evidence.runId) return;
+    const readyRunId = evidence.runId;
+    scheduledAutoplayRunId = readyRunId;
+    // PlaybackEngine deliberately rejects commands issued from an evidence
+    // observer. Leave that observer frame before PLAY, while retaining the run
+    // identity so a pause, stop, replacement load, or dispose can cancel this
+    // queued autoplay without letting an old song start later.
+    queueMicrotask(() => {
+      if (scheduledAutoplayRunId === readyRunId) scheduledAutoplayRunId = null;
+      if (disposed || pendingAutoplayRunId !== readyRunId) return;
+      pendingAutoplayRunId = null;
+      let operation;
+      try {
+        operation = engine.play({
+          commandId: nextCommandId('autoplay'),
+          runId: readyRunId,
+        });
+      } catch (error) {
+        reportAutoplayFailure(readyRunId, error);
+        return;
+      }
+      Promise.resolve(operation).catch((error) => {
+        reportAutoplayFailure(readyRunId, error);
+      });
     });
   };
 
@@ -126,13 +149,17 @@ export function createLocalSpeakerController({
           volume: Number.isFinite(command.volume) ? command.volume : 100,
         })).catch((error) => {
           if (pendingAutoplayRunId === runId) pendingAutoplayRunId = null;
+          if (scheduledAutoplayRunId === runId) scheduledAutoplayRunId = null;
           throw error;
         });
       }
       case 'play':
+        pendingAutoplayRunId = null;
+        scheduledAutoplayRunId = null;
         return engine.play({ commandId: nextCommandId('play'), runId });
       case 'pause':
         pendingAutoplayRunId = null;
+        scheduledAutoplayRunId = null;
         return engine.pause({ commandId: nextCommandId('pause'), runId });
       case 'seek':
         return engine.seek({
@@ -148,6 +175,7 @@ export function createLocalSpeakerController({
         });
       case 'stop':
         pendingAutoplayRunId = null;
+        scheduledAutoplayRunId = null;
         activeSong = null;
         return engine.stop({ commandId: nextCommandId('stop'), runId });
       case 'prefetch':
@@ -168,6 +196,7 @@ export function createLocalSpeakerController({
       return Object.freeze({
         ...engine.snapshot(),
         pendingAutoplayRunId,
+        scheduledAutoplayRunId,
         activeSong,
         disposed,
       });
@@ -176,6 +205,7 @@ export function createLocalSpeakerController({
       if (disposed) return;
       disposed = true;
       pendingAutoplayRunId = null;
+      scheduledAutoplayRunId = null;
       activeSong = null;
       engine.dispose();
     },

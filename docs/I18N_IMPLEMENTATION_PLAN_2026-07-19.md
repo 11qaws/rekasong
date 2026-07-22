@@ -10,7 +10,9 @@
 - `src/copy/outputMessages.js`에 신규 출력·OBS 상태, 동작, gate, 검증 scope의 semantic key와 한국어 fallback을 구축했다.
 - output view와 coordinator는 번역된 문장 대신 안정적인 code/key와 구조화 detail을 반환한다.
 - 자동 테스트가 key 형식, 한국어 fallback 존재, placeholder parity를 검사한다.
-- 기존 Dashboard·Widget 전체 문구와 정식 locale 선택기는 아직 이관하지 않았다. 빈 영어 catalog를 사용자에게 노출하지 않는다.
+- Dashboard의 현재 사용자 흐름, 출력/OBS 설정, 검색·노래책·스테이징·대기열·재생 오류·AI 진행·오류 경계 문구를 semantic key로 이관했다.
+- 정식 locale 선택기는 한국어/영어만 노출하며 새로고침 없이 `<html lang>`과 화면 문구를 함께 바꾼다.
+- Display Widget은 대시보드 catalog를 끌어오지 않는 작은 전용 catalog를 사용하고, 복사하는 URL에 locale을 고정한다.
 - 이번 경량화 변경은 사용자 노출 문구를 새로 만들지 않았다. `DisplayWidget` 분리는 기존 JSX copy를 의미 변경 없이 이동했고, prefetch·resolver·성능 budget은 locale-neutral code와 개발자용 진단만 사용한다.
 
 2026-07-22 진행 갱신:
@@ -18,7 +20,8 @@
 - Speaker/OBS 경계, 출력 전환 경고, 독립 탭 안내, YouTube 탭/검색, 노래책 선택 affordance에 새로 추가하거나 의미를 바꾼 문구는 모두 semantic key로 이관하고 `ko`/`en`을 함께 작성했다.
 - `SearchPanel` 회귀 테스트가 해당 화면의 `t('…')` 키에 한국어·영어 catalog가 모두 존재하는지 검사한다.
 - 기본 문서 언어는 실제 UI와 동일한 `<html lang="ko">`로 유지한다.
-- 아직 남은 범위는 기존 Dashboard/Search/Staging/Widget의 하드코딩 문구 전체 이관, React locale store와 무새로고침 선택기, pseudo-locale/긴 문자열 검증이다. 검수되지 않은 불완전 영어 UI를 사용자에게 먼저 노출하지 않는 원칙은 유지한다.
+- 현재 사용자 흐름의 하드코딩 문구 이관과 무새로고침 선택기는 완료했다. AI 진행 상태도 한국어 문장 정규식이 아니라 locale-neutral 단계와 message key를 저장한다.
+- 남은 범위는 pseudo-locale, 모바일의 긴 영어 문구 시각 검증, 앞으로 추가되는 서버 이벤트의 semantic status code 확대다. 곡명·가수명·태그·사용자 입력·외부 고유명사는 번역하지 않는다.
 
 ## 1. 결정
 
@@ -316,7 +319,7 @@ pseudo-locale는 번역 품질이 아니라 구현 누락과 layout을 검사한
 - [x] catalog key/placeholder/fallback test가 있다.
 - [x] Gemini 자동 변환 파일을 복사하지 않았다.
 - [x] `lang="ko"`와 modal 접근성이 함께 검증됐다.
-- [ ] 전체 앱 hardcoded text의 현재 baseline과 migration backlog가 기록됐다.
+- [x] 실제 Dashboard 사용자 화면 8개의 hardcoded text baseline과 source guard가 기록됐다. 사용하지 않는 legacy 화면은 별도 유지보수 backlog로 남긴다.
 
 ## 16. 현재 작업과의 관계
 
@@ -326,3 +329,14 @@ pseudo-locale는 번역 품질이 아니라 구현 누락과 layout을 검사한
 - 실제 OBS G3/G3-S/G4 결과는 locale별 UI 문구와 별개로 raw 수치·code를 저장한다.
 - 번역 UI 실패가 audio safety state를 바꾸지 않게 상태 machine과 copy layer를 분리한다.
 - 번역되지 않은 key가 있어도 안전 상태를 낙관적으로 바꾸지 않고 한국어 fallback과 진단을 사용한다.
+
+## 17. 2026-07-22 적용 상태
+
+- 설정 대화상자에 한국어/English 선택기를 정식으로 추가했다. 선택은 `rekasong.locale`에 저장되고 `document.documentElement.lang`과 함께 갱신된다.
+- Dashboard 전용 번역은 `src/copy/appMessages.js`, OBS/출력 안전 문구는 `src/copy/outputMessages.js`로 분리했다. Dashboard catalog가 output catalog를 fallback으로 사용하므로 기존 key 호환성을 유지한다.
+- 두 catalog를 합친 전체 key 집합은 한국어/영어가 1:1 parity를 가져야 하며 자동 테스트가 이를 강제한다.
+- YouTube 소스, 노래책, 곡 검토, 대기열, 현재 재생, 출력 설정의 정적 UI 문구를 semantic key로 연결했다. 사용자 노래책 제목과 YouTube iframe 자체 문구는 번역 대상 데이터/외부 UI로 구분한다.
+- YouTube 재생목록과 Setlink 기본 출처명은 API에서 locale-neutral 메타데이터로 저장하고, 화면에서는 현재 locale의 semantic key로 다시 표시한다. 사용자가 지정한 Setlink 이름만 원문 그대로 유지한다.
+- Dashboard locale pack은 OBS Protocol v2 정적 closure에 포함되지 않는다. 최신 후보의 OBS gzip은 115,958 bytes로 예산 133,120 bytes 안이며, 번역 추가 전과 실질적으로 동일하다.
+- AI title 진행 상태와 오래된 Dashboard toast는 locale-neutral code로 이관했고, Widget/Display 전용 소형 locale pack을 분리했다.
+- `tests/i18nSourceGuard.test.mjs`가 실제 Dashboard 사용자 화면의 하드코딩 한국어, 정적 title/aria/placeholder, toast/confirm 증가를 배포 전 `npm test`에서 막는다.

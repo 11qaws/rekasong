@@ -935,23 +935,82 @@ test('async outcome_unknown callback locks pending work without retry or fallbac
     () => coordinator.stop(),
     ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
   );
+  connection.lose();
+  coordinator.connect();
+  connection.negotiate(controlWelcome({ connectionId: 'control-connection-b' }));
+  connection.frame(readyOutputSnapshot());
+  assert.equal(
+    coordinator.snapshot().unknownLock.code,
+    ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
+  );
   assert.equal(connection.commands.length, 1);
 });
 
-test('connection loss creates a sticky unknown lock and reconnect does not resume commands', () => {
+test('a bare connection loss unlocks after authoritative reconnect without replaying commands', () => {
   const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
   connection.lose();
   assert.equal(coordinator.snapshot().unknownLock.code, ON_AIR_CONTROL_COORDINATOR_CODES.CONNECTION_LOST);
 
   coordinator.connect();
   connection.negotiate(controlWelcome({ connectionId: 'control-connection-b' }));
-  connection.frame(readyOutputSnapshot());
   assert.equal(coordinator.snapshot().unknown, true);
-  assertCoordinatorError(
-    () => coordinator.load({ song: { id: 'song-a', type: 'local' } }),
-    ON_AIR_CONTROL_COORDINATOR_CODES.OUTCOME_UNKNOWN,
-  );
+  connection.frame(readyOutputSnapshot());
+  assert.equal(coordinator.snapshot().unknown, false);
+  assert.equal(coordinator.snapshot().unknownLock, null);
   assert.equal(connection.commands.length, 0);
+
+  coordinator.load({ song: { id: 'song-a', type: 'local' } });
+  assert.equal(connection.commands.length, 1, 'only the new explicit user command is sent');
+});
+
+test('authoritative reconnect preserves an owned live run and resumes only explicit control', () => {
+  const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
+  const load = coordinator.load({ song: { id: 'song-a', type: 'local' } });
+  connection.result({
+    status: 'acknowledged',
+    entry: { commandId: load.command.commandId, command: load.command, state: 'acknowledged' },
+  });
+  const liveSnapshot = readyOutputSnapshot({
+    lease: {
+      epoch: 4,
+      leaseTarget: 'obs-player',
+      clientKind: 'obs-browser-source',
+      status: 'audible',
+      switchId: 'active-switch',
+    },
+    activeFamily: { entryId: load.command.entryId, runId: load.command.runId },
+    desiredTransport: {
+      status: 'playing',
+      entryId: load.command.entryId,
+      runId: load.command.runId,
+      position: 9,
+    },
+    confirmedPlayback: {
+      status: 'playing',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      entryId: load.command.entryId,
+      runId: load.command.runId,
+      position: 9,
+      paused: false,
+    },
+  });
+  connection.frame(liveSnapshot);
+  assert.equal(coordinator.snapshot().activeRun.observed, true);
+
+  connection.lose();
+  coordinator.connect();
+  connection.negotiate(controlWelcome({ connectionId: 'control-connection-b' }));
+  connection.frame(liveSnapshot);
+
+  assert.equal(coordinator.snapshot().unknown, false);
+  assert.equal(coordinator.snapshot().unknownLock, null);
+  assert.equal(coordinator.snapshot().activeRun.runId, load.command.runId);
+  assert.equal(connection.commands.length, 1, 'reconnect itself never replays LOAD or PLAY');
+
+  coordinator.pause();
+  assert.equal(connection.commands.length, 2);
+  assert.equal(connection.commands.at(-1).type, 'pause');
 });
 
 test('malformed player snapshot locks unknown and cannot be repaired by a later valid snapshot', () => {

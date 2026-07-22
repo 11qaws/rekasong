@@ -17,6 +17,9 @@ export function derivePlaybackOutputNextAction({
   if (statusKey === 'onair.output.header.active.obs') return 'onair.output.nextAction.obs.active';
   if (statusKey === 'onair.output.header.connecting.speaker') return 'onair.output.nextAction.speaker.connecting';
   if (statusKey === 'onair.output.header.connecting.obs') return 'onair.output.nextAction.obs.connecting';
+  if (statusKey === 'onair.output.header.blocked.obs.sourceInactive') {
+    return 'onair.output.nextAction.obs.sourceInactive';
+  }
   if (statusKey === 'onair.output.header.control.otherTab') return 'onair.output.nextAction.control';
   if (statusKey === 'onair.output.header.active.switching') return 'onair.output.nextAction.switching';
   if (statusKey === 'onair.output.header.blocked.speaker.none'
@@ -46,6 +49,7 @@ export function derivePlaybackOutputStatus({
   isRouteStable = false,
   targetMode = null,
   targetCandidateState = null,
+  targetSourceInactive = false,
   reasonCode = null,
 } = {}) {
   const mode = VALID_OUTPUT_MODES.has(confirmedOutputMode) ? confirmedOutputMode : null;
@@ -84,6 +88,13 @@ export function derivePlaybackOutputStatus({
     return { key: 'onair.output.header.active.switching', tone: 'pending', mode: null };
   }
   if (switchState === 'blocked') {
+    if (normalizedTargetMode === 'obs' && targetSourceInactive === true) {
+      return {
+        key: 'onair.output.header.blocked.obs.sourceInactive',
+        tone: 'attention',
+        mode: null,
+      };
+    }
     if (normalizedTargetMode === 'speaker'
       && reasonCode === 'output_control_target_identity_mismatch') {
       return {

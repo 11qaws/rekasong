@@ -9,6 +9,7 @@ import {
 } from '../hooks/useOnAirOutputControl';
 import { createQueueEntry, newId, toLegacySong, toQueueEntry } from '../lib/queueEntry';
 import { collectBlobSrcs, isBlobReferenced, isLocalBlobSong, revokeBlobSrcs } from '../lib/blobLifecycle';
+import { createBoundedCommandQueue } from '../lib/boundedCommandQueue';
 import { apiUrl } from '../lib/api';
 import {
   isConfirmedDiscardSnapshot,
@@ -22,9 +23,38 @@ import {
 } from '../lib/outputControlAuthority';
 import { deriveObsAudioCheckView } from '../lib/obsAudioCheckView';
 import {
-  getOutputMessage as t,
+  loadOutputVolumeProfiles,
+  outputVolumeForMode,
+  saveOutputVolumeProfiles,
+  updateOutputVolumeProfile,
+} from '../lib/outputVolumeProfiles';
+import {
+  DEFAULT_SPEAKER_OUTPUT_DEVICE,
+  applySpeakerOutputDevice,
+  loadSpeakerOutputDevice,
+  requestSpeakerOutputDevice,
+  saveSpeakerOutputDevice,
+  supportsSpeakerOutputDeviceSelection,
+} from '../lib/speakerOutputDevice';
+import { createSpeakerMediaSessionController } from '../lib/speakerMediaSession';
+import {
+  OBS_REMOTE_CONTROL_FEEDBACK_DELAY_MS,
+  createObsRemoteControlFeedback,
+  obsRemoteControlFeedbackMatchesRun,
+  reconcileObsRemoteControlFeedback,
+} from '../lib/obsRemoteControlFeedback';
+import {
+  OBS_MIXER_VERIFICATION_OUTCOMES,
+  createObsMixerVerification,
+  deriveObsMixerVerificationView,
+  loadObsMixerVerification,
+  saveObsMixerVerification,
+} from '../lib/obsMixerVerification';
+import {
   outputSwitchFailureMessageKey,
 } from '../copy/outputMessages';
+import { getAppMessage as t } from '../copy/appMessages';
+import { useAppLocale } from '../hooks/useAppLocale';
 import {
   YOUTUBE_ID_PATTERN,
   fetchPrepareStatus,
@@ -43,6 +73,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import './Dashboard.css';
 
 const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;
+const LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000;
 
 const DashboardLocalSpeaker = lazy(() => import('../components/DashboardLocalSpeaker'));
 
@@ -102,6 +133,7 @@ const onAirStatusToPhase = (status) => {
 };
 
 export default function Dashboard() {
+  const { locale, setLocale } = useAppLocale();
   useEffect(() => {
     document.body.classList.add('dashboard-page');
     return () => document.body.classList.remove('dashboard-page');
@@ -116,10 +148,24 @@ export default function Dashboard() {
   // a returning listener wait for a broadcast route.
   const [outputModePreference, setOutputModePreference] = useState('speaker');
   const [localSpeakerState, setLocalSpeakerState] = useState('initializing');
+  const [obsMixerVerificationRecord, setObsMixerVerificationRecord] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      return loadObsMixerVerification(window.localStorage);
+    } catch {
+      return null;
+    }
+  });
   const outputIntentSequenceRef = useRef(0);
   const claimedOutputIntentRef = useRef(null);
   const localSpeakerRef = useRef(null);
-  const pendingLocalSpeakerCommandsRef = useRef([]);
+  const localSpeakerCommandQueueRef = useRef(null);
+  if (!localSpeakerCommandQueueRef.current) {
+    localSpeakerCommandQueueRef.current = createBoundedCommandQueue({
+      timeoutMs: LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS,
+      timeoutError: () => new Error(t('playback.localSpeaker.notReady')),
+    });
+  }
   const beginPlaybackRunRef = useRef(null);
   const currentEntry = state?.currentEntry || null;
   const active = state?.active || null;
@@ -141,6 +187,16 @@ export default function Dashboard() {
   const onAirDisplayToken = onAirSession?.displayToken;
   const createFreshOnAirSession = onAir.createFreshSession;
   const ensureOnAirSession = onAir.ensureSession;
+  const retryLocalSpeakerSession = useCallback(() => {
+    if (!useOnAirPlayer) return Promise.resolve(null);
+    if (onAirSession) return Promise.resolve(onAirSession);
+    setLocalSpeakerState('initializing');
+    return Promise.resolve(ensureOnAirSession()).catch((error) => {
+      setLocalSpeakerState('failed');
+      localSpeakerCommandQueueRef.current.rejectAll(error);
+      throw error;
+    });
+  }, [ensureOnAirSession, onAirSession, useOnAirPlayer]);
   const outputControl = useOnAirOutputControl({
     session: onAirSession,
     baseUrl: onAir.baseUrl,
@@ -241,9 +297,10 @@ export default function Dashboard() {
     && ['ready', 'audible'].includes(activeOutputLease?.status)
     && activeOutputPlayer?.clientKind === 'obs-browser-source'
   );
-  const outputRouteStable = speakerPlayerMode
-    ? (!useOnAirPlayer || !['failed', 'invalid_configuration'].includes(localSpeakerState))
-    : establishedObsRouteConnected;
+  // Speaker is the selected local output even when an HTTP media-session
+  // bootstrap or lazy chunk fails. Those are retryable per-play media errors,
+  // never evidence that the user's Speaker route needs verification.
+  const outputRouteStable = speakerPlayerMode ? true : establishedObsRouteConnected;
   const outputSwitchUiState = speakerPlayerMode
     ? 'idle'
     : outputControlConflict
@@ -285,7 +342,27 @@ export default function Dashboard() {
     outputSwitchState: outputControl.outputSwitchState,
     playbackTransitionState,
   });
+  const obsMixerPlayerInstanceId = activeOutputLease?.clientKind === 'obs-browser-source'
+    ? activeOutputLease.leaseTarget
+    : null;
+  const obsMixerVerification = deriveObsMixerVerificationView({
+    record: obsMixerVerificationRecord,
+    room: onAirSession?.room ?? null,
+    playerInstanceId: obsMixerPlayerInstanceId,
+    obsAudioCheck,
+  });
   const obsPlayerCandidate = outputControl.outputView?.candidates?.obs ?? null;
+  const connectedObsPlayers = outputControl.snapshot?.playerSnapshot?.players?.filter((player) => (
+    player?.clientKind === 'obs-browser-source'
+  )) ?? [];
+  // A connected Browser Source that explicitly reports inactive/hidden is a
+  // concrete OBS setup state, not an unknown route that needs destructive
+  // reset. Initial unobserved runtime remains valid; only callback-proven false
+  // reaches this branch.
+  const obsSourceInactive = connectedObsPlayers.length === 1 && Boolean(
+    connectedObsPlayers[0]?.runtime?.sourceActive === false
+    || connectedObsPlayers[0]?.runtime?.sourceVisible === false
+  );
   const canEndBroadcastSession = !useOnAirPlayer || Boolean(
     outputControllerReady
     && !currentEntry
@@ -374,13 +451,54 @@ export default function Dashboard() {
 
   // Audio Controls
   const [isPlaying, setIsPlaying] = useState(false);
-  const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem('rekasong_volume');
-    const parsed = parseInt(saved, 10);
-    return !isNaN(parsed) ? parsed : 100;
+  const [volumeProfiles, setVolumeProfiles] = useState(() => (
+    loadOutputVolumeProfiles(typeof window === 'undefined' ? null : window.localStorage)
+  ));
+  const volumeProfilesRef = useRef(volumeProfiles);
+  volumeProfilesRef.current = volumeProfiles;
+  // A running PlaybackRun owns the volume target. With no run, the user's
+  // selected output decides which durable profile the control previews.
+  const volumeOutputMode = active?.outputMode === 'obs'
+    ? 'obs'
+    : active?.outputMode === 'speaker'
+      ? 'speaker'
+      : selectedOutputMode === 'obs' ? 'obs' : 'speaker';
+  const volume = outputVolumeForMode(volumeProfiles, volumeOutputMode);
+  const speakerVolume = outputVolumeForMode(volumeProfiles, 'speaker');
+  const speakerOutputDeviceSupported = useMemo(() => (
+    supportsSpeakerOutputDeviceSelection({
+      mediaDevices: typeof navigator === 'undefined' ? null : navigator.mediaDevices,
+      mediaElementPrototype: typeof HTMLMediaElement === 'undefined'
+        ? null
+        : HTMLMediaElement.prototype,
+    })
+  ), []);
+  const [speakerOutputDevice, setSpeakerOutputDevice] = useState(() => {
+    const preference = loadSpeakerOutputDevice(
+      typeof window === 'undefined' ? null : window.localStorage,
+    );
+    return {
+      supported: supportsSpeakerOutputDeviceSelection({
+        mediaDevices: typeof navigator === 'undefined' ? null : navigator.mediaDevices,
+        mediaElementPrototype: typeof HTMLMediaElement === 'undefined'
+          ? null
+          : HTMLMediaElement.prototype,
+      }),
+      phase: preference.deviceId ? 'selected' : 'default',
+      ...preference,
+    };
   });
+  const speakerOutputDeviceRef = useRef(speakerOutputDevice);
+  speakerOutputDeviceRef.current = speakerOutputDevice;
+  const speakerMediaSessionController = useMemo(() => (
+    createSpeakerMediaSessionController({
+      mediaSession: typeof navigator === 'undefined' ? null : navigator.mediaSession,
+      MediaMetadataClass: typeof MediaMetadata === 'undefined' ? null : MediaMetadata,
+    })
+  ), []);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [obsRemoteControlFeedback, setObsRemoteControlFeedback] = useState(null);
   // Stage 6c 불변식: 방송 출력은 광고가 나올 수 있는 어떤 경로(YouTube iframe
   // 등)도 절대 사용하지 않는다. YouTube 곡은 준비 파이프라인이 `ready`로 확정한
   // R2 오디오로만 재생한다 — On-Air 위젯(OnAirPlayer)이 담당하고, 세션 없는
@@ -407,18 +525,73 @@ export default function Dashboard() {
   const activeRef = useRef(active);
   activeRef.current = active;
 
+  const trackObsRemoteControlRequest = (action, dispatchResult) => {
+    if (activeRef.current?.outputMode !== 'obs') return;
+    const feedback = createObsRemoteControlFeedback({ action, dispatchResult });
+    if (feedback) setObsRemoteControlFeedback(feedback);
+  };
+
+  const confirmedObsPlayback = outputControl.snapshot?.confirmedPlayback
+    ?? outputControl.snapshot?.playerSnapshot?.confirmedPlayback
+    ?? null;
+
+  useEffect(() => {
+    setObsRemoteControlFeedback((previous) => {
+      if (!previous) return previous;
+      return obsRemoteControlFeedbackMatchesRun(previous, activeRef.current)
+        ? previous
+        : null;
+    });
+  }, [active?.entryId, active?.outputMode, active?.runId]);
+
+  useEffect(() => {
+    setObsRemoteControlFeedback((previous) => (
+      reconcileObsRemoteControlFeedback(previous, confirmedObsPlayback)
+    ));
+  }, [confirmedObsPlayback]);
+
+  useEffect(() => {
+    if (obsRemoteControlFeedback?.phase !== 'waiting') return undefined;
+    const remaining = Math.max(
+      0,
+      obsRemoteControlFeedback.requestedAt
+        + OBS_REMOTE_CONTROL_FEEDBACK_DELAY_MS
+        - Date.now(),
+    );
+    const timer = window.setTimeout(() => {
+      setObsRemoteControlFeedback((previous) => (
+        reconcileObsRemoteControlFeedback(previous, confirmedObsPlayback, Date.now())
+      ));
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [
+    confirmedObsPlayback,
+    obsRemoteControlFeedback?.commandId,
+    obsRemoteControlFeedback?.phase,
+    obsRemoteControlFeedback?.requestedAt,
+  ]);
+
   const playbackModeForRun = () => activeRef.current?.outputMode === 'obs'
     ? 'obs'
     : 'speaker';
 
+  const queueLocalSpeakerCommand = (command) => (
+    localSpeakerCommandQueueRef.current.enqueue(command)
+  );
+
   const dispatchPlaybackCommand = (command, outputMode = playbackModeForRun()) => {
     if (outputMode === 'obs') return sendOnAirCommand(command);
     const localSpeaker = localSpeakerRef.current;
-    if (!localSpeaker || localSpeakerState === 'initializing') {
-      return new Promise((resolve, reject) => {
-        pendingLocalSpeakerCommandsRef.current.push({ command, resolve, reject });
-      });
+    if (!localSpeaker) {
+      if (useOnAirPlayer && !onAirSession) {
+        const pending = queueLocalSpeakerCommand(command);
+        retryLocalSpeakerSession().catch(() => {});
+        return pending;
+      }
+      if (localSpeakerState === 'initializing') return queueLocalSpeakerCommand(command);
+      throw new Error(t('playback.localSpeaker.notReady'));
     }
+    if (localSpeakerState === 'initializing') return queueLocalSpeakerCommand(command);
     if (localSpeakerState !== 'ready') {
       throw new Error(t('playback.localSpeaker.notReady'));
     }
@@ -427,24 +600,20 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (localSpeakerState === 'ready' && localSpeakerRef.current) {
-      const pending = pendingLocalSpeakerCommandsRef.current.splice(0);
-      let tail = Promise.resolve();
-      for (const item of pending) {
-        tail = tail
-          .then(() => localSpeakerRef.current?.sendCommand(item.command))
-          .then(item.resolve, item.reject);
-      }
+      localSpeakerCommandQueueRef.current.drain(
+        (command) => localSpeakerRef.current?.sendCommand(command),
+      );
       return undefined;
     }
     if (!['failed', 'invalid_configuration'].includes(localSpeakerState)) return undefined;
     const error = new Error(t('playback.localSpeaker.notReady'));
-    for (const item of pendingLocalSpeakerCommandsRef.current.splice(0)) item.reject(error);
+    localSpeakerCommandQueueRef.current.rejectAll(error);
     return undefined;
   }, [localSpeakerState]);
 
   useEffect(() => () => {
     const error = new Error(t('playback.localSpeaker.notReady'));
-    for (const item of pendingLocalSpeakerCommandsRef.current.splice(0)) item.reject(error);
+    localSpeakerCommandQueueRef.current.rejectAll(error);
   }, []);
 
   const isCurrentRun = (marker) => Boolean(
@@ -453,20 +622,48 @@ export default function Dashboard() {
     activeRef.current.runId === marker.runId
   );
 
-  // Sync volume to players
+  // Sync the local profile only to direct-mode media. DashboardLocalSpeaker
+  // receives the same value through its LOAD/VOLUME command boundary.
   useEffect(() => {
     if (!useOnAirPlayer) {
-      if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
-      if (videoRef.current) videoRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+      if (audioRef.current) audioRef.current.volume = Math.max(0, Math.min(1, speakerVolume / 100));
+      if (videoRef.current) videoRef.current.volume = Math.max(0, Math.min(1, speakerVolume / 100));
     }
-    localStorage.setItem('rekasong_volume', volume);
-  }, [volume, useOnAirPlayer]);
+    saveOutputVolumeProfiles(typeof window === 'undefined' ? null : window.localStorage, volumeProfiles);
+  }, [speakerVolume, useOnAirPlayer, volumeProfiles]);
 
-  // key={runId} 리마운트로 새 요소가 만들어질 때 볼륨을 즉시 적용한다.
-  const bindMediaElement = (ref) => (element) => {
+  const handleSpeakerSinkRestoreFailure = useCallback(() => {
+    saveSpeakerOutputDevice(
+      typeof window === 'undefined' ? null : window.localStorage,
+      DEFAULT_SPEAKER_OUTPUT_DEVICE,
+    );
+    setSpeakerOutputDevice({
+      supported: speakerOutputDeviceSupported,
+      phase: 'failed',
+      ...DEFAULT_SPEAKER_OUTPUT_DEVICE,
+    });
+  }, [speakerOutputDeviceSupported]);
+
+  // key={runId} 리마운트로 새 요소가 만들어질 때 볼륨과 선택한 Speaker sink를
+  // 즉시 적용한다. sink 실패는 playback lifecycle과 무관하며 기본 출력으로
+  // 계속 재생한다.
+  const bindSpeakerMediaElement = useCallback((ref, element) => {
     ref.current = element;
-    if (element) element.volume = Math.max(0, Math.min(1, volume / 100));
-  };
+    if (!element) return;
+    element.volume = Math.max(0, Math.min(1, speakerVolume / 100));
+    const deviceId = speakerOutputDeviceRef.current.deviceId;
+    if (deviceId && typeof element.setSinkId === 'function') {
+      applySpeakerOutputDevice(element, deviceId).catch(handleSpeakerSinkRestoreFailure);
+    }
+  }, [handleSpeakerSinkRestoreFailure, speakerVolume]);
+  const bindAudioElement = useCallback(
+    (element) => bindSpeakerMediaElement(audioRef, element),
+    [bindSpeakerMediaElement],
+  );
+  const bindVideoElement = useCallback(
+    (element) => bindSpeakerMediaElement(videoRef, element),
+    [bindSpeakerMediaElement],
+  );
 
   const activeRunId = active?.runId || null;
   // run 세대 전환: 지연/오류 1회 보고 가드를 초기화한다(D-11의 참조 단절은
@@ -524,12 +721,14 @@ export default function Dashboard() {
     if (['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase)) return;
     if (useOnAirPlayer) {
       try {
-        Promise.resolve(dispatchPlaybackCommand({
+        const dispatchResult = dispatchPlaybackCommand({
           type: 'seek',
           sessionId: currentEntry?.entryId,
           runId: activeRef.current?.runId,
           position: time
-        })).catch((error) => showToast(error.message, 'error'));
+        });
+        trackObsRemoteControlRequest('seek', dispatchResult);
+        Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
         setCurrentTime(time);
       } catch (error) {
         showToast(error.message, 'error');
@@ -873,11 +1072,20 @@ export default function Dashboard() {
 
   const {
     aiStatusMessage,
+    aiStatusPhase,
     cancelAiExtraction,
     isAiLoading,
     runAiExtractionStream,
     setAiStatus
-  } = useAiTitleExtraction(setStagedItem);
+  } = useAiTitleExtraction(setStagedItem, t);
+
+  // Store a semantic status key so changing language re-renders the current
+  // AI state instead of leaving a stale sentence from the previous locale.
+  useEffect(() => {
+    if (stagedItem?.skipAiTitleExtraction) {
+      setAiStatus('dashboard.stage.songbookTitle', {}, 3);
+    }
+  }, [setAiStatus, stagedItem?.skipAiTitleExtraction, stagedItem?.stagingId]);
 
   // Toast notifications
   const [toasts, setToasts] = useState([]);
@@ -891,9 +1099,115 @@ export default function Dashboard() {
     setTimeout(() => dismissToast(id), action ? 5000 : 3000);
   }, [dismissToast]);
 
-  // A fresh dashboard is also a speaker player, so it needs a session even
-  // before the user opens OBS setup or stages a song. Rotate one proven-stale
-  // credential set automatically; the queue and history live outside it.
+  const applySpeakerSinkToCurrentMedia = useCallback(async (deviceId) => {
+    const target = useOnAirPlayer
+      ? localSpeakerRef.current
+      : audioRef.current || videoRef.current;
+    if (!target) return Object.freeze({ status: 'pending', deviceId });
+    return applySpeakerOutputDevice(target, deviceId);
+  }, [useOnAirPlayer]);
+
+  const handleChooseSpeakerOutputDevice = useCallback(async () => {
+    if (!speakerOutputDeviceSupported
+      || typeof navigator === 'undefined'
+      || !navigator.mediaDevices) return;
+    const previous = speakerOutputDeviceRef.current;
+    setSpeakerOutputDevice({ ...previous, phase: 'choosing' });
+    try {
+      const selectedDevice = await requestSpeakerOutputDevice(navigator.mediaDevices);
+      await applySpeakerSinkToCurrentMedia(selectedDevice.deviceId);
+      const persisted = saveSpeakerOutputDevice(window.localStorage, selectedDevice);
+      setSpeakerOutputDevice({
+        supported: true,
+        phase: 'selected',
+        ...selectedDevice,
+      });
+      showToast(t('settings.speakerDevice.selected'), 'success');
+      if (!persisted) showToast(t('settings.speakerDevice.saveFailed'), 'info');
+    } catch {
+      setSpeakerOutputDevice({ ...previous, phase: 'failed' });
+      showToast(t('settings.speakerDevice.failed'), 'info');
+    }
+  }, [applySpeakerSinkToCurrentMedia, showToast, speakerOutputDeviceSupported]);
+
+  const handleResetSpeakerOutputDevice = useCallback(async () => {
+    if (!speakerOutputDeviceSupported) return;
+    const previous = speakerOutputDeviceRef.current;
+    setSpeakerOutputDevice({ ...previous, phase: 'choosing' });
+    try {
+      await applySpeakerSinkToCurrentMedia('');
+      const persisted = saveSpeakerOutputDevice(
+        typeof window === 'undefined' ? null : window.localStorage,
+        DEFAULT_SPEAKER_OUTPUT_DEVICE,
+      );
+      setSpeakerOutputDevice({
+        supported: true,
+        phase: 'default',
+        ...DEFAULT_SPEAKER_OUTPUT_DEVICE,
+      });
+      showToast(t('settings.speakerDevice.resetDone'), 'success');
+      if (!persisted) showToast(t('settings.speakerDevice.saveFailed'), 'info');
+    } catch {
+      setSpeakerOutputDevice({ ...previous, phase: 'failed' });
+      showToast(t('settings.speakerDevice.failed'), 'info');
+    }
+  }, [applySpeakerSinkToCurrentMedia, showToast, speakerOutputDeviceSupported]);
+
+  const recordObsMixerVerification = useCallback((outcome) => {
+    if (!obsMixerVerification.canConfirm
+      || !onAirSession?.room
+      || !obsMixerPlayerInstanceId
+      || !obsAudioCheck?.checkId) {
+      showToast(t('obs.audioCheck.mixerVerification.unavailable'), 'info');
+      return;
+    }
+    let record;
+    try {
+      record = createObsMixerVerification({
+        outcome,
+        room: onAirSession.room,
+        playerInstanceId: obsMixerPlayerInstanceId,
+        checkId: obsAudioCheck.checkId,
+      });
+    } catch {
+      showToast(t('obs.audioCheck.mixerVerification.saveFailed'), 'error');
+      return;
+    }
+    setObsMixerVerificationRecord(record);
+    let persisted = false;
+    try {
+      persisted = saveObsMixerVerification(window.localStorage, record);
+    } catch {
+      persisted = false;
+    }
+    if (!persisted) {
+      showToast(t('obs.audioCheck.mixerVerification.saveFailed'), 'info');
+      return;
+    }
+    showToast(t(outcome === OBS_MIXER_VERIFICATION_OUTCOMES.PASSED
+      ? 'obs.audioCheck.mixerVerification.savedPassed'
+      : 'obs.audioCheck.mixerVerification.savedFailed'),
+    outcome === OBS_MIXER_VERIFICATION_OUTCOMES.PASSED ? 'success' : 'info');
+  }, [
+    obsAudioCheck?.checkId,
+    obsMixerPlayerInstanceId,
+    obsMixerVerification.canConfirm,
+    onAirSession?.room,
+    showToast,
+  ]);
+
+  const handleConfirmObsMixerSignal = useCallback(() => {
+    recordObsMixerVerification(OBS_MIXER_VERIFICATION_OUTCOMES.PASSED);
+  }, [recordObsMixerVerification]);
+
+  const handleReportMissingObsMixerSignal = useCallback(() => {
+    recordObsMixerVerification(OBS_MIXER_VERIFICATION_OUTCOMES.FAILED);
+  }, [recordObsMixerVerification]);
+
+  // The local speaker downloads prepared media through a media session, but
+  // that HTTP credential is not an output route. Bootstrap it quietly once;
+  // a failure never changes the selected Speaker route, and the next explicit
+  // play command retries instead of waiting forever.
   const sessionBootstrapAttemptedRef = useRef(false);
   useEffect(() => {
     if (!useOnAirPlayer) return;
@@ -904,8 +1218,9 @@ export default function Dashboard() {
     if (recoverableInvalidSession || recoverableEndedSession) {
       // Session rotation replaces media credentials and therefore remounts the
       // local resolver. Never let that maintenance stop an already-buffered
-      // speaker track; recover as soon as its run leaves the player instead.
-      if (activeRef.current?.outputMode === 'speaker') return;
+      // speaker track; starting/failed attempts are safe to retire and requeue.
+      if (activeRef.current?.outputMode === 'speaker'
+        && ['playing', 'paused', 'buffering'].includes(activeRef.current?.phase)) return;
       // One automatic rotation per page lifetime prevents the replacement
       // session from being rotated again during the invalid→connecting render gap.
       if (!onAirSessionRecoveryGate.claim()) return;
@@ -921,17 +1236,13 @@ export default function Dashboard() {
     if (!onAirSession && onAirSessionState === 'connecting'
       && !sessionBootstrapAttemptedRef.current) {
       sessionBootstrapAttemptedRef.current = true;
-      ensureOnAirSession()
-        .catch((error) => showToast(
-          error?.message || t('onair.connection.bootstrap.failed'),
-          'error'
-        ));
+      retryLocalSpeakerSession().catch(() => {});
     }
   }, [
-    ensureOnAirSession,
     onAirSession,
     onAirSessionState,
     recoverOnAirConnection,
+    retryLocalSpeakerSession,
     showToast,
     active?.outputMode,
     useOnAirPlayer,
@@ -1066,7 +1377,9 @@ export default function Dashboard() {
     if (syncLoadNotice?.droppedLocalSongs > 0) {
       localDropNoticeShownRef.current = true;
       showToast(
-        `내 파일 곡 ${syncLoadNotice.droppedLocalSongs}곡은 새로고침 뒤에는 다시 재생할 수 없어 목록에서 정리했습니다. 필요하면 파일을 다시 추가해 주세요.`,
+        t('dashboard.localFile.droppedAfterRefresh', {
+          count: syncLoadNotice.droppedLocalSongs,
+        }),
         'info'
       );
     }
@@ -1125,7 +1438,7 @@ export default function Dashboard() {
         e.preventDefault();
         // D-25: 전이가 실제로 시작됐을 때만 성공 토스트를 보여 준다.
         if (handleSkipRef.current?.()) {
-          showToast('현재 곡을 스킵합니다.', 'info');
+          showToast(t('dashboard.toast.skipCurrent'), 'info');
         }
       }
     };
@@ -1150,11 +1463,11 @@ export default function Dashboard() {
       mrVerified: Boolean(video.mrVerified)
     });
     showToast(
-      replacedStagedItem ? '선택한 곡으로 바꾸었습니다. 2단계에서 정보를 확인하세요.' : '2단계에서 곡 정보와 재생 대상을 확인하세요.',
+      t(replacedStagedItem ? 'dashboard.stage.replaced' : 'dashboard.stage.selected'),
       'info'
     );
     if (video.skipAiTitleExtraction) {
-      setAiStatus('노래책에 등록된 곡명을 그대로 사용합니다.');
+      setAiStatus('dashboard.stage.songbookTitle', {}, 3);
     } else if (video.id) {
       runAiExtractionStream(apiUrl(`/api/extract-title?id=${video.id}`), {}, stagingId);
     }
@@ -1196,7 +1509,7 @@ export default function Dashboard() {
       assetProgress: useOnAirPlayer ? 0 : null,
       assetId: null
     });
-    showToast('로컬 파일을 불러왔습니다. 2단계에서 정보를 확인하세요.', 'info');
+    showToast(t('dashboard.localFile.loaded'), 'info');
 
     if (useOnAirPlayer) {
       onAir.uploadAsset(file, (assetProgress) => {
@@ -1209,7 +1522,7 @@ export default function Dashboard() {
         setStagedItem((previous) => previous?.stagingId === stagingId
           ? { ...previous, assetStatus: 'error', assetError: error.message }
           : previous);
-        showToast(error.message || '방송용 로컬 파일을 준비하지 못했습니다.', 'error');
+        showToast(error.message || t('dashboard.localFile.prepareFailed'), 'error');
       });
     }
 
@@ -1230,7 +1543,7 @@ export default function Dashboard() {
         }
 
         if (songbookContext) {
-          setAiStatus('노래책에 등록된 곡명을 그대로 사용합니다.');
+          setAiStatus('dashboard.stage.songbookTitle', {}, 3);
           return;
         }
         runAiExtractionStream(apiUrl('/api/extract-local'), {
@@ -1242,7 +1555,7 @@ export default function Dashboard() {
       onError: (error) => {
         console.log('No ID3 tags found:', error.type);
         if (songbookContext) {
-          setAiStatus('노래책에 등록된 곡명을 그대로 사용합니다.');
+          setAiStatus('dashboard.stage.songbookTitle', {}, 3);
           return;
         }
         runAiExtractionStream(apiUrl('/api/extract-local'), {
@@ -1276,7 +1589,7 @@ export default function Dashboard() {
       }
       return null;
     });
-    showToast('선택한 곡을 취소했습니다.', 'info');
+    showToast(t('dashboard.stage.cleared'), 'info');
   };
 
   // §2-4 outputSafety, Stage 6c 확정(계약 §5): 곡별 증거 기반 판정.
@@ -1325,7 +1638,7 @@ export default function Dashboard() {
         runId,
         song: toLegacySong(entry),
         position: initialPosition,
-        volume
+        volume: outputVolumeForMode(volumeProfilesRef.current, runOutputMode)
       };
       const dispatchLoad = () => {
         // A local cached source can become ready in the same task. Wait until
@@ -1426,7 +1739,7 @@ export default function Dashboard() {
       try {
         nextActive = beginPlaybackRun(promoted);
       } catch (error) {
-        showToast(error.message || '다음 곡을 재생하지 못했습니다.', 'error');
+        showToast(error.message || t('dashboard.playback.nextFailed'), 'error');
         promoted = null;
       }
     }
@@ -1465,7 +1778,7 @@ export default function Dashboard() {
     // 예전의 control 연결 게이트는 대시보드 자신의 서버 연결만 봐서 위젯 없이도
     // 통과시키는 거짓 게이트였다.
     if (useOnAirPlayer && stagedItem.type === 'local' && !stagedItem.assetId) {
-      showToast(stagedItem.assetError || '방송용 로컬 파일을 준비 중입니다.', 'info');
+      showToast(stagedItem.assetError || t('dashboard.localFile.preparing'), 'info');
       return;
     }
     // Stage 6c 게이팅(계약 §5): `ready`가 아닌 YouTube 곡은 방송 출력에 올리지
@@ -1541,7 +1854,7 @@ export default function Dashboard() {
       try {
         nextActive = beginPlaybackRun(entry);
       } catch (error) {
-        showToast(error.message || '재생을 시작하지 못했습니다.', 'error');
+        showToast(error.message || t('dashboard.playback.startFailed'), 'error');
         return;
       }
     }
@@ -1565,12 +1878,12 @@ export default function Dashboard() {
 
     showToast(
       willPlayImmediately
-        ? '새 곡의 재생을 시작합니다.'
+        ? t('dashboard.queue.playing')
         : deferredByPrepare
           ? (stagedPrepare.kind === 'failed'
-            ? '준비에 실패한 곡을 대기열에 담았습니다. 대기열에서 다시 시도할 수 있습니다.'
-            : '곡을 준비하는 중이라 대기열에 담았습니다. 준비가 끝나면 대기열에서 바로 재생을 누르세요.')
-          : insertAtTop ? '대기열 최상단에 곡이 예약되었습니다.' : '대기열 끝에 곡이 예약되었습니다.',
+            ? t('dashboard.queue.prepareFailed')
+            : t('dashboard.queue.preparing'))
+          : t(insertAtTop ? 'dashboard.queue.addedTop' : 'dashboard.queue.addedEnd'),
       willPlayImmediately ? 'success' : 'info'
     );
 
@@ -1615,7 +1928,7 @@ export default function Dashboard() {
         stoppingRunId: activeRef.current?.runId
       });
     } catch (error) {
-      showToast(error.message || '다음 곡으로 넘기지 못했습니다.', 'error');
+      showToast(error.message || t('dashboard.playback.skipFailed'), 'error');
       return false;
     }
 
@@ -1720,7 +2033,7 @@ export default function Dashboard() {
     if (act && act.entryId === snapshot.currentEntry.entryId) {
       if (act.phase === 'finishing' || act.phase === 'discarding') return false; // 중복 스킵 방지
       if (act.phase === 'failed') {
-        showToast('재생에 실패한 곡입니다. 재시도하거나 버리기를 선택해 주세요.', 'info');
+        showToast(t('dashboard.playback.failedActionRequired'), 'info');
         return false;
       }
     }
@@ -1850,14 +2163,14 @@ export default function Dashboard() {
     try {
       nextActive = beginPlaybackRun(current);
     } catch (error) {
-      showToast(error.message || '다시 재생을 시작하지 못했습니다.', 'error');
+      showToast(error.message || t('dashboard.playback.retryFailed'), 'error');
       return;
     }
     setSharedState((previous) => {
       if (previous.currentEntry?.entryId !== current.entryId) return previous;
       return { ...previous, active: nextActive };
     });
-    showToast('같은 곡을 새 시도로 다시 재생합니다.', 'info');
+    showToast(t('dashboard.playback.retryStarted'), 'info');
   };
 
   // 대기열 곡 바로 재생(§4-6). 현재 곡이 실제 재생 중이면 '선택 곡을 다음 전환
@@ -1875,7 +2188,7 @@ export default function Dashboard() {
       act.entryId === snapshot.currentEntry.entryId && act.phase === 'failed'
     );
     if (snapshot.currentEntry && !currentIsFailed && tryBeginFinishing(entryId)) {
-      showToast('현재 곡을 끝낸 뒤 선택한 곡을 재생합니다.', 'info');
+      showToast(t('dashboard.queue.playAfterCurrent'), 'info');
       return;
     }
 
@@ -1883,12 +2196,12 @@ export default function Dashboard() {
     try {
       nextActive = beginPlaybackRun(selectedEntry);
     } catch (error) {
-      showToast(error.message || '선택한 대기열 곡을 재생하지 못했습니다.', 'error');
+      showToast(error.message || t('dashboard.queue.playSelectedFailed'), 'error');
       return;
     }
 
     if (currentIsFailed && snapshot.currentEntry) {
-      showToast('실패한 곡은 이력에 남기지 않고 버린 뒤 선택한 곡을 재생합니다.', 'info');
+      showToast(t('dashboard.queue.replaceFailedCurrent'), 'info');
     }
     setSharedState((previous) => {
       const q = previous.queue || [];
@@ -1917,7 +2230,7 @@ export default function Dashboard() {
     if (!entry) return;
     const replay = createQueueEntry(entry.song);
     setSharedState((previous) => ({ ...previous, queue: [...(previous.queue || []), replay] }));
-    showToast('현재 곡을 대기열 끝에 다시 예약했습니다.', 'success');
+    showToast(t('dashboard.queue.requeuedCurrent'), 'success');
   };
 
   const handleTogglePlayback = () => {
@@ -1928,11 +2241,14 @@ export default function Dashboard() {
     if (activeRef.current?.phase === 'starting' || isPhaseLocked()) return;
     if (useOnAirPlayer) {
       try {
-        Promise.resolve(dispatchPlaybackCommand({
-          type: isPlaying ? 'pause' : 'play',
+        const action = isPlaying ? 'pause' : 'play';
+        const dispatchResult = dispatchPlaybackCommand({
+          type: action,
           sessionId: entry.entryId,
           runId: activeRef.current?.runId
-        })).catch((error) => showToast(error.message, 'error'));
+        });
+        trackObsRemoteControlRequest(action, dispatchResult);
+        Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1955,20 +2271,59 @@ export default function Dashboard() {
 
   const handleVolumeChange = (nextVolume) => {
     const clamped = Math.max(0, Math.min(100, Number(nextVolume) || 0));
-    setVolume(clamped);
+    const targetMode = activeRef.current?.outputMode === 'obs'
+      ? 'obs'
+      : activeRef.current?.outputMode === 'speaker'
+        ? 'speaker'
+        : outputModePreference === 'obs' ? 'obs' : 'speaker';
+    setVolumeProfiles((previous) => updateOutputVolumeProfile(previous, targetMode, clamped));
     if (useOnAirPlayer && currentEntry) {
       try {
-        Promise.resolve(dispatchPlaybackCommand({
+        const dispatchResult = dispatchPlaybackCommand({
           type: 'volume',
           sessionId: currentEntry.entryId,
           runId: activeRef.current?.runId,
           volume: clamped
-        })).catch((error) => showToast(error.message, 'error'));
+        });
+        trackObsRemoteControlRequest('volume', dispatchResult);
+        Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
       } catch (error) {
         showToast(error.message, 'error');
       }
     }
   };
+
+  // OS lock-screen, notification, and headset controls are a Speaker-only
+  // alternate input surface. The active run (not the selected preference) is
+  // authoritative so an OBS run can never receive a Media Session command.
+  useEffect(() => {
+    const activeRun = activeRef.current;
+    speakerMediaSessionController.update({
+      active: Boolean(currentSong && activeRun?.outputMode === 'speaker'),
+      song: currentSong,
+      isPlaying,
+      currentTime,
+      mediaDuration: duration,
+      callbacks: {
+        onPlay: () => {
+          if (activeRef.current?.phase === 'failed') {
+            handleRetryCurrent();
+            return;
+          }
+          if (!isPlaying) handleTogglePlayback();
+        },
+        onPause: () => {
+          if (isPlaying) handleTogglePlayback();
+        },
+        onNext: () => handleSkipRef.current?.(),
+        onSeek: (position) => handleSeek(position),
+      },
+    });
+  });
+
+  useEffect(() => () => {
+    speakerMediaSessionController.dispose();
+  }, [speakerMediaSessionController]);
 
   const handleEndBroadcastSession = () => {
     if (!useOnAirPlayer) {
@@ -2001,7 +2356,7 @@ export default function Dashboard() {
     // 안내가 소음이다 — 전이 상태 표시가 우선한다.
     if (!isCurrentRun(marker) || isPhaseLocked() || reportedDelayRef.current === marker.runId) return;
     reportedDelayRef.current = marker.runId;
-    showToast(source + ' 재생이 지연되고 있습니다. 잠시 기다리거나 스킵으로 다음 곡을 재생하세요.', 'info');
+    showToast(t('dashboard.playback.delayed', { source }), 'info');
   };
 
   // 재생 오류 → failed 확정(§4-5). 자동 스킵하지 않는다 — 실패 곡을 몰래
@@ -2009,10 +2364,12 @@ export default function Dashboard() {
   const handleMediaFailure = (marker, source, detail = '') => {
     if (!isCurrentRun(marker) || reportedMediaIssueRef.current === marker.runId) return;
     reportedMediaIssueRef.current = marker.runId;
-    const failureDetail = source + ' 재생 실패' + (detail ? ': ' + detail : '');
+    const failureDetail = detail
+      ? t('dashboard.playback.failureDetail', { source, detail })
+      : t('dashboard.playback.failure', { source });
     setIsPlaying(false);
     commitActivePhase(marker, 'failed', { failureDetail });
-    showToast(failureDetail + ' — 다시 재생하거나 현재 곡을 버릴 수 있습니다.', 'error');
+    showToast(t('dashboard.playback.failureAction', { detail: failureDetail }), 'error');
   };
   handleMediaFailureRef.current = handleMediaFailure;
 
@@ -2029,10 +2386,15 @@ export default function Dashboard() {
     }
     if (evidence.type === 'ended') handleConfirmedEnded(marker, 'natural');
     if (evidence.type === 'error') {
+      const actionMessageKey = evidence.code === 'play_rejected'
+        ? 'playback.localSpeaker.autoplayBlocked'
+        : evidence.code === 'media_postcondition_failed'
+          ? 'playback.localSpeaker.startFailed'
+          : 'playback.localSpeaker.loadFailed';
       handleMediaFailure(
         marker,
         t('playback.localSpeaker.source'),
-        evidence.code || t('playback.localSpeaker.loadFailed'),
+        t(actionMessageKey),
       );
     }
   };
@@ -2096,8 +2458,8 @@ export default function Dashboard() {
       }, 6000);
     }
 
-    showToast('“' + removedEntry.song.title + '”을 대기열에서 제거했습니다.', 'info', {
-      label: '되돌리기',
+    showToast(t('dashboard.queue.removed', { title: removedEntry.song.title }), 'info', {
+      label: t('dashboard.queue.undo'),
       onClick: () => {
         setSharedState(prev => {
           const currentQueue = prev.queue || [];
@@ -2159,7 +2521,9 @@ export default function Dashboard() {
       if (!marker) return;
       if (event.type === 'playing') handleConfirmedPlaying(marker);
       if (event.type === 'paused') handleConfirmedPaused(marker);
-      if (event.type === 'buffering') handlePlaybackDelay(marker, 'On-Air 위젯');
+      if (event.type === 'buffering') {
+        handlePlaybackDelay(marker, t('dashboard.playback.source.onAirPlayer'));
+      }
       if (isConfirmedDiscardStop({
         protocolVersion: payload.protocolVersion,
         event,
@@ -2169,7 +2533,11 @@ export default function Dashboard() {
       if (event.type === 'ended') handleConfirmedEnded(marker, 'natural');
       if (event.type === 'error') {
         setIsPlaying(false);
-        handleMediaFailure(marker, 'On-Air 위젯', event.message || '재생 오류');
+        handleMediaFailure(
+          marker,
+          t('dashboard.playback.source.onAirPlayer'),
+          t('dashboard.playback.error.generic'),
+        );
       }
     }
     if (payload.type === 'session_ended') {
@@ -2243,7 +2611,11 @@ export default function Dashboard() {
             isPlaying={isPlaying}
             onTogglePlay={handleTogglePlayback}
             volume={volume}
+            volumeOutputMode={volumeOutputMode}
             onVolumeChange={handleVolumeChange}
+            speakerOutputDevice={speakerOutputDevice}
+            onChooseSpeakerOutputDevice={handleChooseSpeakerOutputDevice}
+            onResetSpeakerOutputDevice={handleResetSpeakerOutputDevice}
             currentTime={currentTime}
             duration={duration}
             onSeek={handleSeek}
@@ -2253,6 +2625,7 @@ export default function Dashboard() {
             onAirDisplayUrl={onAir.displayUrl}
             onAirStatus={onAirSessionState}
             onAirPlayerCandidate={obsPlayerCandidate}
+            obsSourceInactive={obsSourceInactive}
             onAirDisplayConnected={onAir.displayConnected}
             onPrepareOnAir={onAir.preparePlayer}
             onPrepareOnAirDisplay={onAir.prepareDisplay}
@@ -2274,14 +2647,20 @@ export default function Dashboard() {
             outputSwitchState={outputSwitchUiState}
             outputSwitchReasonCode={outputControl.outputSwitchState?.reasonCode ?? null}
             obsAudioCheck={obsAudioCheck}
+            obsMixerVerification={obsMixerVerification}
+            obsRemoteControlFeedback={obsRemoteControlFeedback}
             allowOutputSelectionWhileConnecting={speakerPlayerMode || outputBootstrapSelectionAvailable}
             onSelectOutputMode={handleSelectOutputMode}
             onStartObsAudioCheck={outputControl.startTest}
             onStopObsAudioCheck={outputControl.stopTest}
+            onConfirmObsMixerSignal={handleConfirmObsMixerSignal}
+            onReportMissingObsMixerSignal={handleReportMissingObsMixerSignal}
             onEmergencyStopOutput={outputControl.emergencyStop}
             onResetOutputControl={outputControl.resetOutputControl}
             onTakeOverOutputControl={outputControl.takeOverControl}
             onRetryOutputControl={retryOutputControlNow}
+            locale={locale}
+            onLocaleChange={setLocale}
           />
         </ErrorBoundary>
         </div>
@@ -2317,6 +2696,7 @@ export default function Dashboard() {
                 hasCurrentSong: Boolean(currentEntry),
                 isAiLoading,
                 aiStatusMessage,
+                aiStatusPhase,
                 onRetryAiExtraction: handleRetryAiExtraction,
                 prepareState: stagedPrepareState,
                 onRetryPrepare: handleRetryPrepare,
@@ -2361,7 +2741,9 @@ export default function Dashboard() {
               apiBaseUrl={onAir.baseUrl}
               room={onAirSession.room}
               token={onAirSession.playerToken}
+              sinkId={speakerOutputDevice.deviceId}
               onEvidence={handleLocalSpeakerEvidence}
+              onSinkError={handleSpeakerSinkRestoreFailure}
               onStateChange={setLocalSpeakerState}
             />
           </Suspense>
@@ -2369,36 +2751,44 @@ export default function Dashboard() {
         {liveSong?.type === 'local' && liveSong.mediaType === 'video' && (
           <video
             key={runMarker.runId}
-            ref={bindMediaElement(videoRef)}
+            ref={bindVideoElement}
             src={liveSong.src}
             autoPlay
             playsInline
             onPlaying={() => handleConfirmedPlaying(runMarker)}
             onPause={() => handleConfirmedPaused(runMarker)}
             onEnded={() => handleConfirmedEnded(runMarker, 'natural')}
-            onWaiting={() => handlePlaybackDelay(runMarker, '로컬 영상')}
-            onError={() => handleMediaFailure(runMarker, '로컬 영상', 'MP4 재생 오류')}
+            onWaiting={() => handlePlaybackDelay(runMarker, t('dashboard.playback.source.localVideo'))}
+            onError={() => handleMediaFailure(
+              runMarker,
+              t('dashboard.playback.source.localVideo'),
+              t('dashboard.playback.error.mp4'),
+            )}
           />
         )}
         {liveSong?.type === 'local' && liveSong.mediaType !== 'video' && (
           <audio
             key={runMarker.runId}
-            ref={bindMediaElement(audioRef)}
+            ref={bindAudioElement}
             src={liveSong.src}
             autoPlay
             onPlaying={() => handleConfirmedPlaying(runMarker)}
             onPause={() => handleConfirmedPaused(runMarker)}
             onEnded={() => handleConfirmedEnded(runMarker, 'natural')}
-            onWaiting={() => handlePlaybackDelay(runMarker, '로컬 음원')}
+            onWaiting={() => handlePlaybackDelay(runMarker, t('dashboard.playback.source.localAudio'))}
             onError={() => {
               const errorCode = audioRef.current?.error?.code;
               const details = {
-                1: '가져오기가 중단됨',
-                2: '파일을 읽을 수 없음',
-                3: '음원 형식이 손상되었거나 지원되지 않음',
-                4: '브라우저가 이 형식을 지원하지 않음'
+                1: t('dashboard.playback.error.aborted'),
+                2: t('dashboard.playback.error.network'),
+                3: t('dashboard.playback.error.decode'),
+                4: t('dashboard.playback.error.unsupported'),
               };
-              handleMediaFailure(runMarker, '로컬 음원', details[errorCode] || '읽기 오류');
+              handleMediaFailure(
+                runMarker,
+                t('dashboard.playback.source.localAudio'),
+                details[errorCode] || t('dashboard.playback.error.read'),
+              );
             }}
           />
         )}

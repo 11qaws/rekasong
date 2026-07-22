@@ -487,6 +487,15 @@ export class OnAirV2Connection {
   }
 
   /**
+   * Publish fresh player runtime telemetry without waiting for the periodic
+   * diagnostic heartbeat. OBS source callbacks use this for prompt UI state;
+   * the frame remains storage-free and has no playback or lease authority.
+   */
+  sendHeartbeatNow() {
+    return this.#emitHeartbeat();
+  }
+
+  /**
    * Tombstone exact caller-owned event IDs without requiring or mutating a
    * socket. This is intentionally available while disconnected so a
    * terminalized local operation cannot leak stale events into reconnect.
@@ -1052,7 +1061,7 @@ export class OnAirV2Connection {
   }
 
   #emitHeartbeat() {
-    if (this.#role !== 'player' || this.#state !== ON_AIR_V2_CONNECTION_STATES.READY) return;
+    if (this.#role !== 'player' || this.#state !== ON_AIR_V2_CONNECTION_STATES.READY) return false;
     let extension = {};
     try {
       if (typeof this.#callbacks.heartbeatPayload === 'function') {
@@ -1068,7 +1077,7 @@ export class OnAirV2Connection {
         ON_AIR_V2_CONNECTION_CODES.HEARTBEAT_GENERATION_FAILED,
         safeErrorDetail(error),
       );
-      return;
+      return false;
     }
 
     const frame = {
@@ -1083,13 +1092,14 @@ export class OnAirV2Connection {
     const validation = validateOnAirMessage(frame);
     if (!validation.ok) {
       this.#diagnose(ON_AIR_V2_CONNECTION_CODES.INVALID_OUTBOUND_FRAME, validationDetail(validation));
-      return;
+      return false;
     }
     if (!this.#sendWire(frame)) {
       this.#disconnectCurrent('heartbeat_send_failed');
-      return;
+      return false;
     }
     this.#heartbeatLastSentSequence = frame.sequence;
+    return true;
   }
 
   #requireRoleAndReady(role, operation) {

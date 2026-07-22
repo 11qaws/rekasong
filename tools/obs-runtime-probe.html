@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OBS runtime probe</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, Consolas, monospace; }
+    body { margin: 0; padding: 24px; background: #101418; color: #e9f4ed; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 18px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <pre id="report">{"phase":"loading"}</pre>
+  <script>
+    (() => {
+      const report = document.querySelector('#report');
+      const obsstudio = window.obsstudio;
+      const state = {
+        phase: 'ready',
+        obsstudioType: typeof obsstudio,
+        detected: obsstudio !== null && obsstudio !== undefined,
+        pluginVersion: String(obsstudio?.pluginVersion ?? ''),
+        getControlLevelType: typeof obsstudio?.getControlLevel,
+        getStatusType: typeof obsstudio?.getStatus,
+        sourceActive: 'unobserved',
+        sourceVisible: 'unobserved',
+        eventCount: 0,
+      };
+
+      const render = () => {
+        report.textContent = JSON.stringify(state, null, 2);
+      };
+      const readDetail = (event, field) => {
+        if (typeof event?.detail === 'boolean') return event.detail;
+        if (event?.detail && typeof event.detail[field] === 'boolean') return event.detail[field];
+        if (event?.detail && typeof event.detail.value === 'boolean') return event.detail.value;
+        return 'invalid';
+      };
+      const observe = (field, value) => {
+        state[field] = value;
+        state.eventCount += 1;
+        render();
+      };
+
+      window.addEventListener('obsSourceActiveChanged', (event) => {
+        observe('sourceActive', readDetail(event, 'active'));
+      });
+      window.addEventListener('obsSourceVisibleChanged', (event) => {
+        observe('sourceVisible', readDetail(event, 'visible'));
+      });
+      if (obsstudio) {
+        obsstudio.onActiveChange = (value) => observe('legacySourceActive', value);
+        obsstudio.onVisibilityChange = (value) => observe('legacySourceVisible', value);
+        try {
+          obsstudio.getControlLevel?.((value) => {
+            state.controlLevel = value;
+            render();
+          });
+          obsstudio.getStatus?.((value) => {
+            state.outputStatus = value;
+            render();
+          });
+        } catch (error) {
+          state.bindingError = String(error?.message ?? error);
+        }
+      }
+      render();
+    })();
+  </script>
+</body>
+</html>

@@ -49,8 +49,10 @@ function safeNotify(callback, payload) {
 
 /**
  * Track only facts exposed by the OBS Browser Source JavaScript binding.
- * Missing or malformed active/visible evidence is always reported as false.
- * This is not proof of mixer routing, recording tracks, or final stream audio.
+ * OBS exposes active/visible changes, but no getter for their initial value.
+ * Keep that initial state unobserved instead of inventing an inactive source.
+ * An explicit false callback still blocks a new route. None of these signals
+ * prove mixer routing, recording tracks, or final stream audio.
  */
 export function createObsRuntimeAttestation({
   windowObject = globalThis.window,
@@ -59,8 +61,8 @@ export function createObsRuntimeAttestation({
   const obsstudio = isRecord(windowObject?.obsstudio) ? windowObject.obsstudio : null;
   const detected = Boolean(obsstudio);
   const state = {
-    sourceActive: false,
-    sourceVisible: false,
+    sourceActive: null,
+    sourceVisible: null,
     streaming: false,
     recording: false,
     obsPluginVersion: detected ? boundedString(obsstudio.pluginVersion) : null,
@@ -190,11 +192,11 @@ export function createObsRuntimeAttestation({
     }),
     runtime() {
       const runtime = {
-        sourceActive: state.sourceActive === true,
-        sourceVisible: state.sourceVisible === true,
         streaming: state.streaming === true,
         recording: state.recording === true,
       };
+      if (typeof state.sourceActive === 'boolean') runtime.sourceActive = state.sourceActive;
+      if (typeof state.sourceVisible === 'boolean') runtime.sourceVisible = state.sourceVisible;
       if (state.obsPluginVersion) runtime.obsPluginVersion = state.obsPluginVersion;
       if (state.obsControlLevel) runtime.obsControlLevel = state.obsControlLevel;
       return immutableSnapshot(runtime);

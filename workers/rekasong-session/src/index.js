@@ -1051,7 +1051,11 @@ export class SessionRoom {
       if (mode === 'obs') {
         if (this.playerHeartbeatHealth(attachment, now).heartbeatStale) return false;
         return attachment.clientKind === 'obs-browser-source'
-          && attachment.runtime?.sourceActive === true
+          // obs-browser only publishes active/visible *changes*. A source that
+          // loads while already active has no initial value to report. Accept
+          // that unobserved state, but keep an explicit inactive callback as a
+          // strict gate for a new route.
+          && attachment.runtime?.sourceActive !== false
           && (attachment.capabilities?.obsRuntime === true || attachment.capabilities?.obsStudioBinding === true);
       }
       return false;
@@ -1229,6 +1233,7 @@ export class SessionRoom {
         || attachment?.capabilities?.obsStudioBinding === true;
       if (protocol.leaseStatus !== 'unknown'
         || protocol.leaseClientKind !== 'obs-browser-source'
+        || attachment?.clientKind !== 'obs-browser-source'
         || protocol.leaseTarget !== attachment?.playerInstanceId
         || !recoverableReason || !obsCapable) return false;
 
@@ -2083,11 +2088,21 @@ export class SessionRoom {
           this.adoptPersistedSession(session, emergencyReconnect.candidate);
           protocol = this.ensureProtocolV2(session);
         }
+        const reconnected = await this.restoreObsOutputAfterReconnect(session, finalAttachment, {
+          mutationLockHeld: true,
+        });
+        if (reconnected) protocol = this.ensureProtocolV2(session);
       } catch (error) {
         socket.serializeAttachment(currentPrior);
         throw error;
       }
-      socket.serializeAttachment({ ...finalAttachment, negotiationState: 'negotiated' });
+      socket.serializeAttachment({
+        ...finalAttachment,
+        negotiationState: 'negotiated',
+        state: protocol.leaseStatus === 'emergency_stopping'
+          ? 'emergency_stopping'
+          : protocol.leaseTarget === playerInstanceId ? protocol.leaseStatus : 'standby',
+      });
       this.replaceSocketWithLatestInstance(
         socket,
         'playerInstanceId',
@@ -3057,14 +3072,19 @@ export class SessionRoom {
       );
       if (!sequence.ok) return this.sendProtocolError(socket, sequence.code, sequence.detail);
       let nextAttachment = sequence.attachment;
+      let runtimeChanged = false;
       if (message.runtime && typeof message.runtime === 'object' && !Array.isArray(message.runtime)) {
+        const runtimePatch = boundedRecord(message.runtime, [
+          'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'recording'
+        ]);
+        runtimeChanged = Object.entries(runtimePatch).some(
+          ([field, value]) => nextAttachment.runtime?.[field] !== value
+        );
         nextAttachment = {
           ...nextAttachment,
           runtime: {
             ...(nextAttachment.runtime || {}),
-            ...boundedRecord(message.runtime, [
-              'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'recording'
-            ])
+            ...runtimePatch
           }
         };
       }
@@ -3089,6 +3109,7 @@ export class SessionRoom {
         : false;
       socket.serializeAttachment(nextAttachment);
       if (transitioned) this.publishActiveOutputUnknown(session);
+      else if (runtimeChanged || reconnected) this.broadcastProtocolV2Snapshot(session);
 
       for (const controlSocket of this.ctx.getWebSockets()) {
         const controlAttachment = controlSocket.deserializeAttachment() || {};
@@ -3312,6 +3333,19 @@ export class SessionRoom {
       if (typeof message.seeking === 'boolean') confirmed.seeking = message.seeking;
       if (Number.isFinite(message.rmsDbfs)) confirmed.rmsDbfs = message.rmsDbfs;
       if (Number.isFinite(message.peakDbfs)) confirmed.peakDbfs = message.peakDbfs;
+      // Preserve the exact player-applied command identity in the authoritative
+      // snapshot. The Dashboard can then distinguish its own latest request
+      // from stale or foreign evidence without any extra message or storage
+      // write. Older players remain valid because these fields are derived only
+      // when their existing event already carries them.
+      if (['command_applied', 'command_failed'].includes(eventType)
+        && protocolId(message.commandId)) {
+        confirmed.commandId = message.commandId;
+        confirmed.commandType = appliedSeek
+          ? 'SEEK'
+          : appliedVolume ? 'VOLUME'
+            : appliedStop ? 'STOP' : null;
+      }
       if (appliedSeek) confirmed.position = message.postcondition.position;
       if (appliedVolume) confirmed.volume = message.postcondition.volume;
       if (['ready', 'playing', 'paused', 'buffering', 'ended', 'error'].includes(eventType)) {

@@ -42,7 +42,7 @@ test('dashboard speaker fails closed for abort, DOM detach, playback, or an atta
   }
 });
 
-test('OBS and generic routes retain the existing detected and active source attestation gates', () => {
+test('OBS and generic routes require the binding and reject explicit inactive evidence', () => {
   for (const clientKind of [
     PLAYER_CLIENT_KINDS.OBS_BROWSER_SOURCE,
     PLAYER_CLIENT_KINDS.GENERIC_BROWSER,
@@ -64,6 +64,12 @@ test('OBS and generic routes retain the existing detected and active source atte
       ...safeStandby(),
       obsAttestation: { detected: true, sourceActive: false },
     }).ready, false);
+
+    assert.equal(evaluateOnAirPlayerOutputPath({
+      clientKind,
+      ...safeStandby(),
+      obsAttestation: { detected: true },
+    }).ready, true);
   }
 });
 
@@ -80,6 +86,17 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
 
   assert.match(player, /clientKind: requestedClientKind = null/);
   assert.match(player, /identity = null/);
+  assert.match(player, /generatedIdentityRef\.current = createPlayerPageIdentity\(\)/);
+  assert.match(player, /identity: typeof identityLifecycleKey === 'string'/);
+  assert.match(
+    player,
+    /\[apiBaseUrl, identityLifecycleKey, requestedClientKind, room, token\]/,
+    'equivalent identity objects must not dispose an established OBS media graph',
+  );
+  assert.doesNotMatch(
+    player,
+    /\[apiBaseUrl, identity, requestedClientKind, room, token\]/,
+  );
   assert.match(player, /requestedClientKind \|\| \(runtime\.capabilities\.obsRuntime/);
   assert.match(player, /runtime = isDashboardSpeaker\s*\? null\s*: createObsRuntimeAttestation/);
   assert.match(
@@ -88,7 +105,10 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
     'OBS runtime source events must synchronously reach the local playback safety adapter',
   );
   assert.match(player, /runtimeProbe: \(\) => runtime\?\.runtime\(\) \|\| \{\}/);
-  assert.match(player, /clientKind,\s+identity,\s+capabilities:/);
+  assert.match(
+    player,
+    /clientKind,\s+identity: typeof identityLifecycleKey === 'string'[\s\S]*?capabilities:/,
+  );
   assert.match(player, /safeNotify\(callbacksRef\.current\.onStateChange, change\)/);
   assert.match(player, /safeNotify\(callbacksRef\.current\.onSnapshot, snapshot\)/);
 
@@ -121,13 +141,28 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   );
   assert.match(
     source,
-    /pendingLocalSpeakerCommandsRef\.current\.push\(\{ command, resolve, reject \}\)[\s\S]*?localSpeakerState === 'ready'[\s\S]*?pendingLocalSpeakerCommandsRef\.current\.splice\(0\)/,
+    /createBoundedCommandQueue\([\s\S]*?LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS[\s\S]*?localSpeakerCommandQueueRef\.current\.enqueue\(command\)[\s\S]*?localSpeakerState === 'ready'[\s\S]*?localSpeakerCommandQueueRef\.current\.drain/,
     'a first Speaker click must wait for the local element instead of surfacing a route lock',
+  );
+  assert.match(
+    source,
+    /LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000[\s\S]*?timeoutError: \(\) => new Error\(t\('playback\.localSpeaker\.notReady'\)\)/,
+    'a missing local player must reject its queued command instead of waiting forever',
+  );
+  assert.match(
+    source,
+    /if \(useOnAirPlayer && !onAirSession\) \{[\s\S]*?queueLocalSpeakerCommand\(command\)[\s\S]*?retryLocalSpeakerSession\(\)/,
+    'a later Speaker play must retry a failed media-session bootstrap automatically',
   );
   assert.doesNotMatch(source, /DashboardSpeakerPlayerV2|shouldHostDashboardSpeaker|rekasong-output-owner/);
   assert.doesNotMatch(source, /const selectLocalSpeakerMode = outputControl\.selectLocalSpeakerMode;/);
   assert.match(source, /const selectedOutputMode = outputModePreference;/);
   assert.match(source, /const speakerPlayerMode = selectedOutputMode === 'speaker';/);
+  assert.match(
+    source,
+    /const outputRouteStable = speakerPlayerMode \? true : establishedObsRouteConnected;/,
+    'media bootstrap failures must not relabel the local Speaker selection as an unverified route',
+  );
   assert.match(
     source,
     /const establishedObsRouteConnected = Boolean\([\s\S]*?\['ready', 'audible'\]\.includes\(activeOutputLease\?\.status\)[\s\S]*?activeOutputPlayer\?\.clientKind === 'obs-browser-source'/,
@@ -168,8 +203,8 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   );
   assert.match(
     source,
-    /if \(activeRef\.current\?\.outputMode === 'speaker'\) return;[\s\S]*?onAirSessionRecoveryGate\.claim\(\)/,
-    'session credential rotation must wait until an already-buffered local track leaves the player',
+    /activeRef\.current\?\.outputMode === 'speaker'[\s\S]*?\['playing', 'paused', 'buffering'\]\.includes\(activeRef\.current\?\.phase\)[\s\S]*?onAirSessionRecoveryGate\.claim\(\)/,
+    'session credential rotation must preserve buffered playback but recover starting or failed attempts',
   );
   assert.match(source, /const releasedOwnerRetryRef = useRef\(null\);/);
   assert.match(

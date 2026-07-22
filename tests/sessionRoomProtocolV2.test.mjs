@@ -1725,6 +1725,16 @@ test('SEEK and VOLUME applied proofs commit exact physical values without changi
     payload: { position: 42.5 },
   });
   assert.equal(harness.session.protocolV2.desiredTransport.position, 42.5);
+  const commandIdBeforeReceipt = harness.session.protocolV2.confirmedPlayback.commandId;
+  await harness.send(player, {
+    ...base,
+    event: 'command_received',
+    eventId: 'physical-seek-received',
+    sequence: 0,
+    monotonicTimeMs: 1.5,
+    commandId: 'physical-seek-command',
+  });
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandId, commandIdBeforeReceipt);
 
   const seekProof = {
     ...base,
@@ -1765,6 +1775,8 @@ test('SEEK and VOLUME applied proofs commit exact physical values without changi
 
   await harness.send(player, structuredClone(seekProof));
   assert.equal(harness.session.protocolV2.confirmedPlayback.position, 41.75);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandId, 'physical-seek-command');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandType, 'SEEK');
   assert.equal(harness.session.transport.position, 41.75);
   assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'playing');
   assert.equal(harness.session.transport.status, 'playing');
@@ -1812,12 +1824,48 @@ test('SEEK and VOLUME applied proofs commit exact physical values without changi
   )).length, 3);
   await harness.send(player, volumeProof);
   assert.equal(harness.session.protocolV2.confirmedPlayback.volume, 12.25);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandId, 'physical-volume-command');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandType, 'VOLUME');
   assert.equal(harness.session.transport.volume, 12.25);
   assert.equal(harness.session.protocolV2.confirmedPlayback.position, 41.75);
   assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'playing');
   assert.equal(harness.session.transport.status, 'playing');
   assert.equal(harness.session.protocolV2.leaseStatus, 'audible');
   assert.equal(harness.storage.values.get('session').transport.volume, 12.25);
+
+  await harness.send(control, {
+    type: 'pause',
+    commandId: 'physical-pause-command',
+    entryId: 'applied-values-entry',
+    runId: 'applied-values-run',
+    leaseEpoch,
+    targetPlayerInstanceId: 'player-a',
+    controlEpoch: harness.session.protocolV2.controlEpoch,
+    payload: {},
+  });
+  await harness.send(player, {
+    ...base,
+    event: 'command_applied',
+    eventId: 'physical-pause-applied',
+    sequence: 3,
+    monotonicTimeMs: 4,
+    commandId: 'physical-pause-command',
+    postcondition: { status: 'paused' },
+  });
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandId, 'physical-pause-command');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandType, null);
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'playing');
+  await harness.send(player, {
+    ...base,
+    event: 'paused',
+    eventId: 'physical-pause-state',
+    sequence: 4,
+    monotonicTimeMs: 5,
+    mediaTime: 43,
+    paused: true,
+  });
+  assert.equal(harness.session.protocolV2.confirmedPlayback.commandId, 'physical-pause-command');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'paused');
 });
 
 test('deactivation failure commits atomically, keeps the lease, blocks activation, and permits explicit retry', async () => {
@@ -5080,6 +5128,36 @@ test('speaker candidate remains eligible while its live socket heartbeat is thro
   }
 });
 
+test('multiple legacy speaker candidates coexist without an exact-one activation gate', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const speakerA = harness.socket('player');
+  const speakerB = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, speakerA, {
+    playerInstanceId: 'speaker-a',
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+  });
+  await registerPlayer(harness, speakerB, {
+    playerInstanceId: 'speaker-b',
+    clientKind: 'dashboard-speaker',
+    capabilities: { analyser: true },
+  });
+
+  assert.deepEqual(
+    harness.room.protocolV2Snapshot(harness.session).eligibleCandidates.speaker,
+    ['speaker-a', 'speaker-b'],
+  );
+
+  const leaseEpoch = await activateOutput(harness, control, 'speaker-b', 'speaker');
+  assert.equal(leaseEpoch, 1);
+  assert.equal(harness.session.protocolV2.leaseTarget, 'speaker-b');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'activating');
+  assert.equal(messagesOfType(speakerA, 'activate_output').length, 0);
+  assert.equal(messagesOfType(speakerB, 'activate_output').length, 1);
+});
+
 test('heartbeat age never owns a destructive alarm while route transitions retain their deadline', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
@@ -6171,7 +6249,7 @@ test('speaker reconnect stays unknown until the same route is explicitly deactiv
   assert.equal(harness.session.transport.status, 'idle');
 });
 
-test('OBS eligibility requires sourceActive true while speaker eligibility keeps its prior missing-runtime behavior', async () => {
+test('OBS eligibility accepts unobserved initial activity but rejects explicit inactive evidence', async () => {
   const harness = createHarness();
   const control = harness.socket('control');
   const missing = harness.socket('player');
@@ -6192,9 +6270,11 @@ test('OBS eligibility requires sourceActive true while speaker eligibility keeps
   });
 
   const obsSnapshot = harness.room.protocolV2Snapshot(harness.session);
-  assert.deepEqual(obsSnapshot.eligibleCandidates.obs, ['obs-runtime-true']);
+  assert.deepEqual(obsSnapshot.eligibleCandidates.obs, ['obs-runtime-missing', 'obs-runtime-true']);
+  missing.close();
+  const singleObsSnapshot = harness.room.protocolV2Snapshot(harness.session);
+  assert.deepEqual(singleObsSnapshot.eligibleCandidates.obs, ['obs-runtime-true']);
   await activateOutput(harness, control, 'obs-runtime-true');
-  assert.equal(messagesOfType(missing, 'activate_output').length, 0);
   assert.equal(messagesOfType(inactive, 'activate_output').length, 0);
   assert.equal(messagesOfType(active, 'activate_output').length, 1);
 
@@ -6245,6 +6325,7 @@ test('scene-inactive telemetry preserves an established route while still exclud
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
 
   const putsBeforeActive = harness.storage.puts.length;
+  const snapshotsBeforeActive = messagesOfType(control, 'player_snapshot').length;
   await harness.send(active, {
     type: 'player_heartbeat',
     playerInstanceId: 'player-a',
@@ -6257,6 +6338,16 @@ test('scene-inactive telemetry preserves an established route while still exclud
   assert.equal(harness.storage.puts.length, putsBeforeActive);
   assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
   assert.notEqual(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_source_inactive');
+  assert.equal(messagesOfType(control, 'player_snapshot').length, snapshotsBeforeActive + 1);
+  const sceneSnapshot = messagesOfType(control, 'player_snapshot').at(-1);
+  assert.equal(sceneSnapshot.lease.status, 'ready');
+  assert.equal(sceneSnapshot.lease.leaseTarget, 'player-a');
+  assert.deepEqual(sceneSnapshot.eligibleCandidates.obs, []);
+  assert.equal(
+    sceneSnapshot.players.find((player) => player.playerInstanceId === 'player-a')
+      .runtime.sourceActive,
+    false,
+  );
 
   await harness.send(control, {
     type: 'load',
@@ -6471,6 +6562,108 @@ test('active socket close latches unknown only after its durable write succeeds'
   assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
   assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_disconnected');
   assert.ok(messagesOfType(control, 'player_snapshot').length > snapshotsBefore);
+});
+
+test('same OBS player hello immediately restores its route and accepts surviving playback proof', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+  await loadRun(harness, control, leaseEpoch, {
+    entryId: 'reconnect-entry',
+    runId: 'reconnect-run',
+    commandId: 'reconnect-load',
+  });
+  await harness.send(player, {
+    type: 'playback_event',
+    event: 'playing',
+    eventId: 'reconnect-playing-before-gap',
+    sequence: 0,
+    playerInstanceId: 'player-a',
+    connectionId: player.deserializeAttachment().connectionId,
+    leaseEpoch,
+    entryId: 'reconnect-entry',
+    runId: 'reconnect-run',
+    monotonicTimeMs: 1,
+    mediaTime: 4,
+    paused: false,
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'audible');
+
+  player.close();
+  await harness.room.webSocketClose(player);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'target_disconnected');
+  assert.deepEqual(harness.session.protocolV2.activeFamily, {
+    entryId: 'reconnect-entry',
+    runId: 'reconnect-run',
+  });
+
+  const replacement = harness.socket('player');
+  const welcome = await registerPlayer(harness, replacement, {
+    playerInstanceId: 'player-a',
+    runtime: { sourceActive: false, sourceVisible: false },
+  });
+  assert.equal(welcome.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_reconnected');
+  assert.equal(harness.session.transport.status, 'ready');
+  assert.equal(replacement.deserializeAttachment().state, 'ready');
+
+  await harness.send(replacement, {
+    type: 'playback_event',
+    event: 'playing',
+    eventId: 'reconnect-playing-after-gap',
+    sequence: 1,
+    playerInstanceId: 'player-a',
+    connectionId: replacement.deserializeAttachment().connectionId,
+    leaseEpoch,
+    entryId: 'reconnect-entry',
+    runId: 'reconnect-run',
+    monotonicTimeMs: 2,
+    mediaTime: 4.25,
+    paused: false,
+  });
+  assert.equal(harness.session.protocolV2.leaseStatus, 'audible');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.status, 'playing');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.position, 4.25);
+  assert.deepEqual(harness.session.protocolV2.activeFamily, {
+    entryId: 'reconnect-entry',
+    runId: 'reconnect-run',
+  });
+});
+
+test('OBS hello recovery publishes no false success when its durable restore fails', async () => {
+  const harness = createHarness();
+  const control = harness.socket('control');
+  const player = harness.socket('player');
+  await registerControl(harness, control);
+  await registerPlayer(harness, player);
+  const leaseEpoch = await activateOutput(harness, control);
+  await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+
+  player.close();
+  await harness.room.webSocketClose(player);
+  const unknownSession = structuredClone(harness.session);
+  const replacement = harness.socket('player');
+  harness.storage.failNextPut = new Error('hello_reconnect_restore_failure');
+
+  await assert.rejects(
+    registerPlayer(harness, replacement, { playerInstanceId: 'player-a' }),
+    /hello_reconnect_restore_failure/,
+  );
+  assert.deepEqual(harness.session, unknownSession);
+  assert.equal(harness.session.protocolV2.leaseStatus, 'unknown');
+  assert.equal(messagesOfType(replacement, 'player_welcome').length, 0);
+  assert.equal(replacement.deserializeAttachment().negotiationState, 'unnegotiated');
+
+  const welcome = await registerPlayer(harness, replacement, { playerInstanceId: 'player-a' });
+  assert.equal(welcome.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.leaseStatus, 'ready');
+  assert.equal(harness.session.protocolV2.confirmedPlayback.reasonCode, 'output_reconnected');
 });
 
 test('player-origin protocol families reject a server-owned targetConnectionId before event guards', async () => {

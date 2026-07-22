@@ -399,6 +399,8 @@ export class PlaybackEngine {
       mediaPaused: Boolean(this.audio.paused),
       position: finiteOrNull(this.audio.currentTime),
       duration: finiteOrNull(this.audio.duration),
+      readyState: Number.isSafeInteger(this.audio.readyState) ? this.audio.readyState : null,
+      seeking: Boolean(this.audio.seeking),
       volume: finiteOrNull(this.audio.volume),
       pendingPlay: Boolean(this.pendingPlay && !this.pendingPlay.cancelled),
       wantsPlayback: this.wantsPlayback,

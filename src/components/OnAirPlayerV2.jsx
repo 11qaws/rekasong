@@ -11,6 +11,7 @@ import {
 import { evaluateOnAirPlayerOutputPath } from '../lib/onAirPlayerOutputPath';
 import { PLAYER_CLIENT_KINDS, SERVER_MESSAGE_TYPES } from '../lib/onAirProtocol';
 import { createOnAirSourceResolver } from '../lib/onAirSourceResolver';
+import { createPlayerPageIdentity } from '../lib/onAirClientState';
 import {
   ON_AIR_V2_CONNECTION_STATES,
   ON_AIR_V2_OBS_HEARTBEAT_INTERVAL_MS,
@@ -54,6 +55,21 @@ export default function OnAirPlayerV2({
 }) {
   const audioRef = useRef(null);
   const callbacksRef = useRef({ onSnapshot, onStateChange });
+  const generatedIdentityRef = useRef(null);
+  if (generatedIdentityRef.current === null) {
+    generatedIdentityRef.current = createPlayerPageIdentity();
+  }
+  const hasExplicitIdentity = identity !== null && identity !== undefined;
+  const explicitPlayerInstanceId = typeof identity?.playerInstanceId === 'string'
+    ? identity.playerInstanceId
+    : null;
+  const identityLifecycleKey = hasExplicitIdentity
+    ? (explicitPlayerInstanceId || identity)
+    : generatedIdentityRef.current.playerInstanceId;
+  // Depend on the protocol identity value, not the caller's object reference.
+  // A parent re-render that recreates { playerInstanceId } must not dispose an
+  // established OBS media graph. The generated identity also survives React
+  // StrictMode's synthetic effect cleanup/setup for this page instance.
   callbacksRef.current = { onSnapshot, onStateChange };
   const [localState, setLocalState] = useState('initializing');
 
@@ -138,7 +154,9 @@ export default function OnAirPlayerV2({
           webSocketFactory: (url) => new WebSocket(url),
           buildId: BUILD_ID,
           clientKind,
-          identity,
+          identity: typeof identityLifecycleKey === 'string'
+            ? { playerInstanceId: identityLifecycleKey }
+            : identityLifecycleKey,
           capabilities: {
             audioWorklet: typeof AudioWorkletNode === 'function',
             analyser: typeof AudioContext === 'function',
@@ -200,7 +218,7 @@ export default function OnAirPlayerV2({
       prefetchCache?.dispose();
       runtime?.dispose();
     };
-  }, [apiBaseUrl, identity, requestedClientKind, room, token]);
+  }, [apiBaseUrl, identityLifecycleKey, requestedClientKind, room, token]);
 
   return (
     <div data-on-air-player-v2-state={localState} aria-hidden="true">

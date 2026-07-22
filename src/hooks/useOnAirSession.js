@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getAppMessage } from '../copy/appMessages.js';
 
 export const ON_AIR_SESSION_STORAGE_KEY = 'rekasong-on-air-session-v1';
 export const ON_AIR_SESSION_CREATION_LOCK = 'rekasong-on-air-session-create-v1';
@@ -539,7 +540,7 @@ export function createLegacyControlSocketManager({
     if (!isCurrentLease(activeLease) || activeLease.observeOnly) throw createDisabledError();
     const socket = currentSocket?.lease === activeLease ? currentSocket.socket : null;
     if (!socket || socket.readyState !== 1) {
-      const error = new Error('OBS On-Air 위젯이 연결되어 있지 않습니다.');
+      const error = new Error(getAppMessage('onair.session.error.playerMissing'));
       error.code = 'ON_AIR_LEGACY_CONTROL_NOT_CONNECTED';
       throw error;
     }
@@ -620,12 +621,12 @@ export function useOnAirSession(onEvent, options) {
         if (sessionRef.current) return sessionRef.current;
       }
 
-      if (!SESSION_BASE_URL) throw new Error('On-Air 출력 서버가 아직 연결되지 않았습니다.');
+      if (!SESSION_BASE_URL) throw new Error(getAppMessage('onair.session.error.serverUnavailable'));
       const response = await fetch(`${SESSION_BASE_URL}/v1/sessions`, { method: 'POST' });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '방송 세션을 만들지 못했습니다.');
+      if (!response.ok) throw new Error(getAppMessage('onair.session.error.createFailed'));
       const createdSession = storedSessionRecord(data, { forceCurrentOrigin: true });
-      if (!createdSession) throw new Error('방송 세션 응답이 올바르지 않습니다.');
+      if (!createdSession) throw new Error(getAppMessage('onair.session.error.invalidResponse'));
 
       // If Web Locks are unavailable, another tab can create the canonical
       // session while this request is in flight. Adopt it rather than replace it
@@ -717,12 +718,12 @@ export function useOnAirSession(onEvent, options) {
       request.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
       };
-      request.onerror = () => reject(new Error('로컬 파일 업로드 연결이 끊겼습니다.'));
+      request.onerror = () => reject(new Error(getAppMessage('onair.session.error.uploadDisconnected')));
       request.onload = () => {
         let data;
         try { data = JSON.parse(request.responseText || '{}'); } catch { data = {}; }
         if (request.status < 200 || request.status >= 300) {
-          reject(new Error(data.error || '로컬 파일 업로드에 실패했습니다.'));
+          reject(new Error(getAppMessage('onair.session.error.uploadFailed')));
           return;
         }
         resolve(data);
@@ -779,7 +780,9 @@ export function useOnAirSession(onEvent, options) {
         headers: { Authorization: `Bearer ${activeSession.controlToken}` }
       });
       const data = await response.json();
-      if (!response.ok || !data.displayToken) throw new Error(data.error || '화면 정보 위젯 토큰을 만들지 못했습니다.');
+      if (!response.ok || !data.displayToken) {
+        throw new Error(getAppMessage('onair.session.error.displayTokenFailed'));
+      }
 
       const latest = readStoredOnAirSession();
       if (latest && !isSameOnAirSessionIdentity(latest, activeSession)) return adoptSession(latest);

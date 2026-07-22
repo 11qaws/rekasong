@@ -1866,6 +1866,7 @@ export class OnAirControlCoordinator {
       this.#snapshotTrusted = true;
       this.#reconcileAuthoritativeState();
       this.#finalizeEmergencyAbortedTestIfProven();
+      this.#clearConnectionLossLockIfReconciled();
       this.#publish();
       return;
     }
@@ -1965,6 +1966,29 @@ export class OnAirControlCoordinator {
         });
       }
     }
+  }
+
+  #clearConnectionLossLockIfReconciled() {
+    if (this.#unknownLock?.code !== ON_AIR_CONTROL_COORDINATOR_CODES.CONNECTION_LOST
+      || this.#connectionState !== ON_AIR_V2_CONNECTION_STATES.READY
+      || !this.#welcome || !this.#playerSnapshot || !this.#snapshotTrusted
+      || this.#pendingCommands.size > 0 || this.#pendingSwitch || this.#pendingTest
+      || this.#testStopIntent || this.#emergencyTestIntent || this.#pendingTakeover) return false;
+
+    const activeFamily = this.#playerSnapshot.activeFamily;
+    if (Boolean(this.#activeRun) !== Boolean(activeFamily)) return false;
+    if (this.#activeRun && (activeFamily.entryId !== this.#activeRun.entryId
+      || activeFamily.runId !== this.#activeRun.runId
+      || this.#playerSnapshot.lease?.leaseTarget !== this.#activeRun.targetPlayerInstanceId
+      || this.#playerSnapshot.lease?.epoch !== this.#activeRun.leaseEpoch)) return false;
+    if (this.#playerSnapshot.activeCheckId !== null) return false;
+
+    // A bare socket gap is recoverable once a fresh welcome and complete,
+    // non-regressing snapshot agree. Command outcome ambiguity, identity
+    // mismatches, and active verification work remain sticky and require an
+    // explicit recovery action. Clearing this lock never replays a command.
+    this.#unknownLock = null;
+    return true;
   }
 
   #isStrongStoppedObservation(run) {

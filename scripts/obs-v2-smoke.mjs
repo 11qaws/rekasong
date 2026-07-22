@@ -13,6 +13,7 @@ import {
   createHarnessDiagnosticSanitizer,
   omittedHttpBodyErrorMessage,
 } from './obs-v2-harness-safety.mjs';
+import { renderObsV2ContinuityFixture } from './obs-v2-continuity-fixture.mjs';
 
 const WORKER = process.env.REKASONG_WORKER || 'http://127.0.0.1:8787';
 const APP = process.env.REKASONG_APP || 'http://127.0.0.1:5100';
@@ -26,6 +27,20 @@ const EXPECTED_PLAYER_BUILD_ID = process.env.REKASONG_EXPECTED_PLAYER_BUILD_ID
 const MAX_FIXTURE_WALL_DRIFT_MS = 500;
 const MAX_MEDIA_SAMPLE_GAP_MS = 250;
 const MIN_TIMING_SAMPLES = 50;
+const RUN_CONTINUITY_SMOKE = process.argv.includes('--continuity');
+const CONTINUITY_DURATION_MS = positiveIntegerEnvironment(
+  'REKASONG_CONTINUITY_DURATION_MS',
+  30_000,
+);
+const CONTINUITY_GAP_OBSERVATION_MS = positiveIntegerEnvironment(
+  'REKASONG_CONTINUITY_GAP_MS',
+  2_000,
+);
+const CONTINUITY_RECONNECT_TIMEOUT_MS = 20_000;
+const CONTINUITY_WALL_DRIFT_LIMIT_MS = positiveIntegerEnvironment(
+  'REKASONG_CONTINUITY_DRIFT_LIMIT_MS',
+  1_000,
+);
 
 let browser = null;
 let coordinator = null;
@@ -35,9 +50,20 @@ let page = null;
 const pageErrors = [];
 const commandResults = new Map();
 const testEvents = [];
+const routeObservations = [];
 const diagnostics = createHarnessDiagnosticSanitizer();
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function positiveIntegerEnvironment(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer; received ${raw}`);
+  }
+  return parsed;
+}
 
 function pass(label, detail = '') {
   console.log(diagnostics.text(`PASS ${label}${detail ? ` - ${detail}` : ''}`));
@@ -127,6 +153,23 @@ async function waitForCleanup(predicate, timeoutMs) {
   return false;
 }
 
+async function waitForObservation(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pageErrors.length > 0) throw new Error(`player page error: ${pageErrors.join(' | ')}`);
+    const result = await predicate();
+    if (result) return result;
+    await sleep(50);
+  }
+  const snapshot = coordinator?.snapshot?.();
+  throw new Error(`${label} timed out after ${timeoutMs}ms: ${compactJson({
+    unknownLock: snapshot?.unknownLock,
+    players: snapshot?.playerSnapshot?.players,
+    lease: snapshot?.playerSnapshot?.lease,
+    confirmedPlayback: snapshot?.playerSnapshot?.confirmedPlayback,
+  })}`);
+}
+
 function websocketUrl(room, token) {
   const url = new URL(`/v1/sessions/${encodeURIComponent(room)}/ws`, WORKER);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -170,8 +213,51 @@ async function createSession() {
   return payload;
 }
 
+async function uploadContinuityFixture(fixture) {
+  const response = await fetch(
+    `${WORKER.replace(/\/$/, '')}/v1/sessions/${encodeURIComponent(session.room)}/assets`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.controlToken}`,
+        'Content-Type': fixture.mimeType,
+        'X-Rekasong-Size': String(fixture.byteLength),
+        'X-Rekasong-Type': fixture.mimeType,
+        'X-Rekasong-Name': encodeURIComponent(fixture.filename),
+      },
+      body: fixture.bytes,
+    },
+  );
+  const body = await response.json().catch(() => null);
+  invariant(
+    response.ok && typeof body?.assetId === 'string',
+    'normal continuity fixture uploaded as a session asset',
+    `HTTP ${response.status} bytes=${fixture.byteLength}`,
+  );
+  return body.assetId;
+}
+
 async function installObsBinding(targetPage) {
   await targetPage.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    const trackedSockets = [];
+    class RekasongSmokeWebSocket extends NativeWebSocket {
+      constructor(...args) {
+        super(...args);
+        trackedSockets.push(this);
+      }
+    }
+    window.WebSocket = RekasongSmokeWebSocket;
+    window.__rekasongObsSmokeSocketControl = {
+      closeLatest() {
+        const socket = [...trackedSockets].reverse().find((candidate) => (
+          candidate.readyState === NativeWebSocket.OPEN
+        ));
+        if (!socket) return { closed: false, tracked: trackedSockets.length };
+        socket.close(4000, 'continuity_smoke_disconnect');
+        return { closed: true, tracked: trackedSockets.length };
+      },
+    };
     let activeListener = null;
     let visibleListener = null;
     const diagnostic = {
@@ -357,6 +443,187 @@ async function timingSnapshot() {
   });
 }
 
+async function runNormalPlaybackContinuitySmoke(playerInstanceId) {
+  invariant(
+    CONTINUITY_DURATION_MS >= CONTINUITY_GAP_OBSERVATION_MS + 5_000,
+    'continuity fixture leaves enough media after the forced transport gap',
+    `duration=${CONTINUITY_DURATION_MS}ms gap=${CONTINUITY_GAP_OBSERVATION_MS}ms`,
+  );
+  const fixture = renderObsV2ContinuityFixture({ durationMs: CONTINUITY_DURATION_MS });
+  const assetId = await uploadContinuityFixture(fixture);
+  pass(
+    'normal continuity fixture is fully buffered before playback',
+    `duration=${fixture.durationMs}ms bytes=${fixture.byteLength}`,
+  );
+
+  const entryId = 'obs-continuity-entry';
+  const runId = 'obs-continuity-run';
+  const load = coordinator.load({
+    entryId,
+    runId,
+    song: {
+      type: 'local',
+      assetId,
+      title: 'OBS continuity smoke',
+      artist: 'Rekasong',
+    },
+    position: 0,
+    volume: 25,
+  });
+  const loaded = await waitFor(async () => {
+    const media = await mediaSnapshot();
+    const protocol = coordinator.snapshot().playerSnapshot;
+    return media.sameElement
+      && media.paused === true
+      && media.currentSrc.startsWith('blob:')
+      && Math.abs(media.duration - (CONTINUITY_DURATION_MS / 1_000)) <= 0.15
+      && protocol?.activeFamily?.entryId === entryId
+      && protocol.activeFamily.runId === runId
+      && protocol.confirmedPlayback?.status === 'ready'
+      && protocol.confirmedPlayback.entryId === entryId
+      && protocol.confirmedPlayback.runId === runId
+      && protocol.confirmedPlayback.playerInstanceId === playerInstanceId
+      && protocol.confirmedPlayback.leaseEpoch === protocol.lease?.epoch
+      ? media
+      : null;
+  }, PLAYER_READY_TIMEOUT_MS, 'normal continuity media READY', {
+    commandId: load.command.commandId,
+  });
+  const normalEventOffset = loaded.events.length;
+
+  const play = coordinator.play();
+  const playing = await waitFor(async () => {
+    const media = await mediaSnapshot();
+    return media.sameElement
+      && media.paused === false
+      && media.currentSrc === loaded.currentSrc
+      && media.currentTime >= 0.35
+      ? media
+      : null;
+  }, PLAYER_READY_TIMEOUT_MS, 'normal continuity media PLAYING', {
+    commandId: play.command.commandId,
+  });
+  const continuitySource = playing.currentSrc;
+  const beforeDisconnectTime = playing.currentTime;
+  const continuityWallStartedAt = performance.now();
+  const observationOffset = routeObservations.length;
+  const closeResult = await page.evaluate(() => (
+    window.__rekasongObsSmokeSocketControl?.closeLatest?.()
+  ));
+  invariant(
+    closeResult?.closed === true,
+    'the current OBS player WebSocket is explicitly closed without unloading the page',
+    compactJson(closeResult),
+  );
+  const disconnectEvidence = await waitForObservation(() => (
+    routeObservations.slice(observationOffset).find((observation) => (
+      observation.leaseStatus === 'unknown'
+        && observation.leaseTarget === playerInstanceId
+        && observation.confirmedReason === 'target_disconnected'
+        && !observation.playerIds.includes(playerInstanceId)
+    )) || null
+  ), PLAYER_READY_TIMEOUT_MS, 'player WebSocket disconnect is authoritative');
+
+  await sleep(CONTINUITY_GAP_OBSERVATION_MS);
+  const duringGap = await mediaSnapshot();
+  const continuityWallElapsedMs = performance.now() - continuityWallStartedAt;
+  const continuityMediaAdvanceMs = (duringGap.currentTime - beforeDisconnectTime) * 1_000;
+  const minimumAdvance = Math.max(0.5, (CONTINUITY_GAP_OBSERVATION_MS / 1_000) * 0.6);
+  invariant(
+    duringGap.sameElement
+      && duringGap.paused === false
+      && duringGap.currentSrc === continuitySource
+      && duringGap.currentTime >= beforeDisconnectTime + minimumAdvance,
+    'normal media graph advances through the WebSocket disconnect and reconnect window',
+    compactJson({ beforeDisconnectTime, duringGap, minimumAdvance, disconnectEvidence }),
+  );
+  invariant(
+    Math.abs(continuityMediaAdvanceMs - continuityWallElapsedMs)
+      <= CONTINUITY_WALL_DRIFT_LIMIT_MS,
+    'normal media clock stays aligned with wall time across reconnect',
+    `media=${continuityMediaAdvanceMs.toFixed(1)}ms wall=${continuityWallElapsedMs.toFixed(1)}ms `
+      + `drift=${Math.abs(continuityMediaAdvanceMs - continuityWallElapsedMs).toFixed(1)}ms `
+      + `limit=${CONTINUITY_WALL_DRIFT_LIMIT_MS}ms`,
+  );
+
+  const restored = await waitForObservation(() => {
+    const snapshot = coordinator.snapshot();
+    const protocol = snapshot.playerSnapshot;
+    const playerRecord = protocol?.players?.find((candidate) => (
+      candidate.playerInstanceId === playerInstanceId
+    ));
+    return snapshot.ready === true
+      && snapshot.unknownLock === null
+      && ['ready', 'audible'].includes(protocol?.lease?.status)
+      && protocol.lease.leaseTarget === playerInstanceId
+      && playerRecord?.clientKind === 'obs-browser-source'
+      && protocol.confirmedPlayback?.status === 'playing'
+      && protocol.confirmedPlayback.playerInstanceId === playerInstanceId
+      && protocol.confirmedPlayback.entryId === entryId
+      && protocol.confirmedPlayback.runId === runId
+      ? snapshot
+      : null;
+  }, CONTINUITY_RECONNECT_TIMEOUT_MS, 'same OBS player restores its established route');
+  assertHealthy();
+
+  const afterReconnect = await waitForObservation(async () => {
+    const media = await mediaSnapshot();
+    return media.sameElement
+      && media.paused === false
+      && media.currentSrc === continuitySource
+      && media.currentTime >= beforeDisconnectTime
+        + (CONTINUITY_GAP_OBSERVATION_MS / 1_000) + 0.25
+      ? media
+      : null;
+  }, CONTINUITY_RECONNECT_TIMEOUT_MS, 'same media timeline advances after reconnect');
+  const continuityEvents = afterReconnect.events.slice(normalEventOffset);
+  invariant(
+    continuityEvents.filter((event) => event.type === 'play').length === 1
+      && continuityEvents.filter((event) => event.type === 'playing').length === 1
+      && !continuityEvents.some((event) => [
+        'pause', 'ended', 'emptied', 'waiting', 'stalled', 'error',
+      ].includes(event.type)),
+    'reconnect sends no duplicate PLAY and causes no media interruption',
+    compactJson(continuityEvents),
+  );
+  invariant(
+    restored.playerSnapshot.lease.leaseTarget === playerInstanceId
+      && restored.playerSnapshot.activeFamily?.entryId === entryId
+      && restored.playerSnapshot.activeFamily?.runId === runId,
+    'reconnect preserves the same lease target and normal run family',
+    compactJson({
+      lease: restored.playerSnapshot.lease,
+      activeFamily: restored.playerSnapshot.activeFamily,
+      confirmedPlayback: restored.playerSnapshot.confirmedPlayback,
+    }),
+  );
+  pass('normal OBS playback survives a real WebSocket disconnect and same-page reconnect');
+
+  const stop = coordinator.stop();
+  const stopped = await waitFor(async () => {
+    const snapshot = coordinator.snapshot();
+    const media = await mediaSnapshot();
+    return snapshot.playerSnapshot?.confirmedPlayback?.status === 'stopped'
+      && snapshot.playerSnapshot?.activeFamily === null
+      && media.sameElement
+      && media.paused === true
+      && media.srcAttribute === null
+      && media.sourceChildren === 0
+      && media.srcObjectDetached === true
+      && media.autoplay === false
+      ? { snapshot, media }
+      : null;
+  }, CLEANUP_TIMEOUT_MS, 'normal continuity media strong stop', {
+    commandId: stop.command.commandId,
+  });
+  invariant(
+    stopped.snapshot.playerSnapshot.lease.status === 'ready'
+      && stopped.snapshot.playerSnapshot.lease.leaseTarget === playerInstanceId,
+    'explicit normal stop keeps the trusted OBS route ready for the next song',
+    compactJson(stopped.snapshot.playerSnapshot.lease),
+  );
+}
+
 async function verifyEndedStatus() {
   const response = await fetch(
     `${WORKER.replace(/\/$/, '')}/v1/sessions/${encodeURIComponent(session.room)}/status`,
@@ -420,6 +687,19 @@ async function run() {
       capabilities: {},
     },
     callbacks: {
+      onSnapshot(snapshot) {
+        routeObservations.push({
+          unknownLockCode: snapshot?.unknownLock?.code ?? null,
+          leaseStatus: snapshot?.playerSnapshot?.lease?.status ?? null,
+          leaseTarget: snapshot?.playerSnapshot?.lease?.leaseTarget ?? null,
+          confirmedStatus: snapshot?.playerSnapshot?.confirmedPlayback?.status ?? null,
+          confirmedReason: snapshot?.playerSnapshot?.confirmedPlayback?.reasonCode ?? null,
+          playerIds: (snapshot?.playerSnapshot?.players || []).map(
+            (playerRecord) => playerRecord.playerInstanceId,
+          ),
+        });
+        if (routeObservations.length > 128) routeObservations.shift();
+      },
       onCommandResult(result) {
         const commandId = result?.entry?.commandId;
         if (typeof commandId === 'string') commandResults.set(commandId, result);
@@ -603,6 +883,10 @@ async function run() {
       && stoppedMedia.events.some((event) => event.type === 'emptied'),
     'physical stop emitted pause and source-detach evidence',
   );
+
+  if (RUN_CONTINUITY_SMOKE) {
+    await runNormalPlaybackContinuitySmoke(candidateSnapshot.player.playerInstanceId);
+  }
 
   const deactivation = coordinator.deactivateOutput();
   await waitFor(

@@ -135,11 +135,13 @@ export async function onRequest(context) {
       updatedAt: song.updatedAt || null,
     })).filter((song) => song.title);
 
+    const sourceName = String(settings.name || publicData.name || '').trim();
     return new Response(JSON.stringify({
       source: {
         id: publicId,
         url: `https://setlink.jp/public/${publicId}`,
-        name: String(settings.name || publicData.name || 'Setlink 공개 목록'),
+        name: sourceName || 'Setlink',
+        defaultName: !sourceName,
         description: String(settings.description || ''),
         updatedAt: settings.updatedAt || publicData.updatedAt || null,
       },

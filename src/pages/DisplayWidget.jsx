@@ -1,7 +1,23 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useWidgetSync } from '../hooks/useRemoteSync';
+import {
+  getWidgetMessage,
+  normalizeWidgetLocale,
+  WIDGET_LOCALE_STORAGE_KEY,
+} from '../copy/widgetMessages.js';
 import './Widget.css';
+
+function initialDisplayLocale(explicitLocale) {
+  if (explicitLocale) return normalizeWidgetLocale(explicitLocale);
+  try {
+    return normalizeWidgetLocale(
+      window.localStorage.getItem(WIDGET_LOCALE_STORAGE_KEY) || window.navigator.language,
+    );
+  } catch {
+    return normalizeWidgetLocale(window.navigator.language);
+  }
+}
 
 export default function DisplayWidget({
   room,
@@ -13,6 +29,22 @@ export default function DisplayWidget({
   apiBaseUrl,
 }) {
   const [state, setState] = useState({ currentSong: null, queue: [], history: [] });
+  const hashParams = new URLSearchParams(window.location.hash.includes('?')
+    ? window.location.hash.slice(window.location.hash.indexOf('?') + 1)
+    : '');
+  const explicitLocale = hashParams.get('lang') || new URLSearchParams(window.location.search).get('lang');
+  const [locale, setLocale] = useState(() => initialDisplayLocale(explicitLocale));
+  const t = (key) => getWidgetMessage(key, locale);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    if (explicitLocale) return undefined;
+    const syncLocale = (event) => {
+      if (event.key === WIDGET_LOCALE_STORAGE_KEY) setLocale(normalizeWidgetLocale(event.newValue));
+    };
+    window.addEventListener('storage', syncLocale);
+    return () => window.removeEventListener('storage', syncLocale);
+  }, [explicitLocale, locale]);
 
   useWidgetSync(room, publicKeyB64, (payload) => {
     setState(payload.state);
@@ -58,12 +90,12 @@ export default function DisplayWidget({
   // 배지를 아예 보이지 않는다 — 상태를 추측해 보이지 않는다(SONG_LIFECYCLE §5-1).
   const phase = currentSong?.phase;
   const playbackStatusText =
-    phase === 'failed' ? '재생 실패'
-      : phase === 'finishing' ? '스킵 중…'
-      : phase === 'discarding' ? '취소 중…'
-      : phase === 'starting' ? '재생 시작 중…'
-      : phase === 'buffering' ? '버퍼링…'
-      : (phase === 'paused' || (isPlaying === false && phase !== 'playing')) ? '일시정지'
+    phase === 'failed' ? t('widget.playback.failed')
+      : phase === 'finishing' ? t('widget.playback.skipping')
+      : phase === 'discarding' ? t('widget.playback.discarding')
+      : phase === 'starting' ? t('widget.playback.starting')
+      : phase === 'buffering' ? t('widget.playback.buffering')
+      : (phase === 'paused' || (isPlaying === false && phase !== 'playing')) ? t('widget.playback.paused')
       : '';
 
   return (
@@ -106,7 +138,7 @@ export default function DisplayWidget({
                 <div className="vinyl-record">
                   <img
                     src={currentSong.type === 'youtube' ? `https://img.youtube.com/vi/${currentSong.src}/mqdefault.jpg` : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=200&auto=format&fit=crop'}
-                    alt="Album Art"
+                    alt={t('widget.albumArt')}
                     className="album-art-img"
                     onError={(e) => { e.target.onerror = null; e.target.src = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=200&auto=format&fit=crop'; }}
                   />

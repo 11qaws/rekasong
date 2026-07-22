@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,8 @@
     "test": "node --test \"tests/*.test.mjs\"",
     "test:obs:staging": "node scripts/obs-staging-smoke.mjs",
     "test:obs:v2": "node scripts/obs-v2-smoke.mjs",
+    "test:obs:v2:continuity": "node scripts/obs-v2-smoke.mjs --continuity",
+    "test:obs:v2:continuity:soak": "node scripts/obs-v2-continuity-soak.mjs",
     "test:obs:v2:safety": "node scripts/obs-v2-safety-smoke.mjs",
     "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs"
   },

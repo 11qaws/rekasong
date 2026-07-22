@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowUpCircle, Check, GripVertical, ListMusic, Loader2, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createManualEntry, createQueueEntry, isPlayableSongDef } from '../lib/queueEntry';
-import { getOutputMessage as t } from '../copy/outputMessages';
+import { getAppMessage as t } from '../copy/appMessages';
 import { songPrepareState } from '../lib/preparePipeline';
+import {
+  HISTORY_WINDOW_BATCH_SIZE,
+  createHistoryWindow,
+  expandHistoryWindowLimit,
+} from '../lib/historyWindow';
 
 // Stage 6c(계약 §5): 대기열 행의 준비 상태 표시 정의. 실패가 방송 전에 눈에
 // 띄는 것이 이 표시의 존재 이유다 — ready는 조용히, 실패만 강조한다.
@@ -64,6 +69,19 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
   const [dragOverHistoryEntryId, setDragOverHistoryEntryId] = useState(null);
   const [manualTitle, setManualTitle] = useState('');
   const [manualArtist, setManualArtist] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRenderLimit, setHistoryRenderLimit] = useState(HISTORY_WINDOW_BATCH_SIZE);
+  const historyWindow = useMemo(
+    () => createHistoryWindow(history, historyRenderLimit),
+    [history, historyRenderLimit]
+  );
+  const nextHistoryBatchCount = Math.min(HISTORY_WINDOW_BATCH_SIZE, historyWindow.hiddenCount);
+
+  const handleHistoryToggle = (event) => {
+    const open = event.currentTarget.open;
+    setHistoryOpen(open);
+    if (!open) setHistoryRenderLimit(HISTORY_WINDOW_BATCH_SIZE);
+  };
 
   // D-21: 드래그 시작 시의 인덱스가 아니라 entryId로 항목을 식별하고, 드롭
   // 시점의 최신 대기열에서 위치를 다시 계산한다. 드래그 중 자동 다음 곡으로
@@ -193,33 +211,46 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
           </AnimatePresence>
         )}
       </div>
-      <details className="history-accordion">
+      <details className="history-accordion" onToggle={handleHistoryToggle}>
         <summary>{t('queue.history.summary', { count: history.length })}</summary>
-        {/* 표시 전용 항목 직접 추가 — 잘못 올라간 setlist를 손으로 고치는 입력줄.
-            기존 클래스(glass-input/queue-play-action)만 재사용, 레이아웃만 인라인. */}
-        <form className="history-manual-form" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.6rem' }} onSubmit={addManualHistoryItem}>
-          <input
-            className="glass-input"
-            style={{ flex: '1 1 auto', minWidth: 0, padding: '0.45rem 0.6rem', fontSize: '0.84rem' }}
-            value={manualTitle}
-            onChange={(event) => setManualTitle(event.target.value)}
-            placeholder={t('queue.history.manual.title.placeholder')}
-            aria-label={t('queue.history.manual.title.label')}
-          />
-          <input
-            className="glass-input"
-            style={{ flex: '0 1 32%', minWidth: 0, padding: '0.45rem 0.6rem', fontSize: '0.84rem' }}
-            value={manualArtist}
-            onChange={(event) => setManualArtist(event.target.value)}
-            placeholder={t('queue.history.manual.artist.placeholder')}
-            aria-label={t('queue.history.manual.artist.label')}
-          />
-          <button type="submit" className="queue-play-action" disabled={!manualTitle.trim()} title={t('queue.history.manual.add.title')}>
-            <Plus size={14} /> {t('queue.history.manual.add.label')}
-          </button>
-        </form>
-        <div className="history-list">
-          {history.length === 0 ? <div className="queue-empty">{t('queue.history.empty')}</div> : history.map((entry) => {
+        {historyOpen ? (
+          <>
+            {/* 표시 전용 항목 직접 추가 — 잘못 올라간 setlist를 손으로 고치는 입력줄.
+                기존 클래스(glass-input/queue-play-action)만 재사용, 레이아웃만 인라인. */}
+            <form className="history-manual-form" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.6rem' }} onSubmit={addManualHistoryItem}>
+              <input
+                className="glass-input"
+                style={{ flex: '1 1 auto', minWidth: 0, padding: '0.45rem 0.6rem', fontSize: '0.84rem' }}
+                value={manualTitle}
+                onChange={(event) => setManualTitle(event.target.value)}
+                placeholder={t('queue.history.manual.title.placeholder')}
+                aria-label={t('queue.history.manual.title.label')}
+              />
+              <input
+                className="glass-input"
+                style={{ flex: '0 1 32%', minWidth: 0, padding: '0.45rem 0.6rem', fontSize: '0.84rem' }}
+                value={manualArtist}
+                onChange={(event) => setManualArtist(event.target.value)}
+                placeholder={t('queue.history.manual.artist.placeholder')}
+                aria-label={t('queue.history.manual.artist.label')}
+              />
+              <button type="submit" className="queue-play-action" disabled={!manualTitle.trim()} title={t('queue.history.manual.add.title')}>
+                <Plus size={14} /> {t('queue.history.manual.add.label')}
+              </button>
+            </form>
+            {historyWindow.hiddenCount > 0 ? (
+              <div className="history-window-actions">
+                <button
+                  type="button"
+                  className="queue-play-action"
+                  onClick={() => setHistoryRenderLimit((current) => expandHistoryWindowLimit(current, history.length))}
+                >
+                  {t('queue.history.showPrevious', { count: nextHistoryBatchCount })}
+                </button>
+              </div>
+            ) : null}
+            <div className="history-list">
+          {history.length === 0 ? <div className="queue-empty">{t('queue.history.empty')}</div> : historyWindow.entries.map((entry) => {
             const manual = entry.song?.manual === true;
             const replayable = isPlayableSongDef(entry.song);
             const isDragOver = dragOverHistoryEntryId === entry.entryId;
@@ -262,7 +293,20 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
               </div>
             );
           })}
-        </div>
+            </div>
+            {historyWindow.visibleCount > HISTORY_WINDOW_BATCH_SIZE ? (
+              <div className="history-window-actions is-bottom">
+                <button
+                  type="button"
+                  className="queue-play-action"
+                  onClick={() => setHistoryRenderLimit(HISTORY_WINDOW_BATCH_SIZE)}
+                >
+                  {t('queue.history.showLatest', { count: HISTORY_WINDOW_BATCH_SIZE })}
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
       </details>
     </section>
   );

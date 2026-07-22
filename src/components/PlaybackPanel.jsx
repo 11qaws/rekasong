@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
-import { getOutputMessage as t } from '../copy/outputMessages';
+import { Check, Copy, Headphones, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
+import { getAppMessage as t } from '../copy/appMessages';
 import {
   derivePlaybackOutputNextAction,
   derivePlaybackOutputStatus,
@@ -47,7 +47,11 @@ export default function PlaybackPanel({
   onDiscardCurrent,
   onRetryCurrent,
   volume,
+  volumeOutputMode = 'speaker',
   onVolumeChange,
+  speakerOutputDevice = null,
+  onChooseSpeakerOutputDevice,
+  onResetSpeakerOutputDevice,
   currentTime,
   duration,
   onSeek,
@@ -57,6 +61,7 @@ export default function PlaybackPanel({
   onAirDisplayUrl,
   onAirStatus,
   onAirPlayerCandidate,
+  obsSourceInactive = false,
   onAirDisplayConnected,
   onEndBroadcastSession,
   canEndBroadcastSession = false,
@@ -80,12 +85,18 @@ export default function PlaybackPanel({
   outputSwitchReasonCode = null,
   allowOutputSelectionWhileConnecting = false,
   obsAudioCheck = null,
+  obsMixerVerification = null,
+  obsRemoteControlFeedback = null,
   onSelectOutputMode,
   onStartObsAudioCheck,
   onStopObsAudioCheck,
+  onConfirmObsMixerSignal,
+  onReportMissingObsMixerSignal,
   onEmergencyStopOutput,
   onTakeOverOutputControl,
   onRetryOutputControl,
+  locale = 'ko',
+  onLocaleChange,
 }) {
   const [previousVolume, setPreviousVolume] = useState(100);
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
@@ -109,6 +120,7 @@ export default function PlaybackPanel({
     if (volumeDraft !== null) { onVolumeChange(volumeDraft); setVolumeDraft(null); }
   };
   const [isObsSetupOpen, setIsObsSetupOpen] = useState(false);
+  const [isObsConfigurationVisible, setIsObsConfigurationVisible] = useState(outputMode === 'obs');
   const [isPreparingPlayer, setIsPreparingPlayer] = useState(false);
   const [preparedPlayerUrl, setPreparedPlayerUrl] = useState('');
   const [isPreparingDisplay, setIsPreparingDisplay] = useState(false);
@@ -143,6 +155,9 @@ export default function PlaybackPanel({
   const isDirectMode = onAirStatus === 'unconfigured';
   const isOnAirInvalid = onAirStatus === 'invalid' || onAirStatus === 'ended';
   const selectedOutputMode = outputMode === 'speaker' || outputMode === 'obs' ? outputMode : null;
+  useEffect(() => {
+    setIsObsConfigurationVisible(selectedOutputMode === 'obs');
+  }, [selectedOutputMode]);
   // An expired/missing broadcast session is an OBS setup problem, not a
   // Speaker playback failure. Keep the compact header and local transport
   // calm while the settings dialog offers a fresh OBS connection.
@@ -188,7 +203,7 @@ export default function PlaybackPanel({
         ? 'onair.output.selector.locked.switching'
         : 'onair.output.selector.locked.unavailable';
   const directWidgetUrl = room && publicKeyB64
-    ? `${window.location.origin}${window.location.pathname}#/widget?room=${encodeURIComponent(room)}&key=${encodeURIComponent(publicKeyB64)}`
+    ? `${window.location.origin}${window.location.pathname}#/widget?room=${encodeURIComponent(room)}&key=${encodeURIComponent(publicKeyB64)}&lang=${encodeURIComponent(locale)}`
     : '';
 
   // 생애주기 전이 중/실패 상태(§2-1) — 일반 재생 조작을 잠그고 상태를 드러낸다.
@@ -218,6 +233,44 @@ export default function PlaybackPanel({
     : mode === 'obs'
       ? t('onair.output.selector.mode.obs')
       : t('onair.output.selector.mode.unknown');
+  const formatTime = (seconds) => {
+    if (!seconds || Number.isNaN(seconds)) return '0:00';
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.floor(seconds % 60);
+    return `${minutes}:${String(remainder).padStart(2, '0')}`;
+  };
+  const obsRemoteActionLabel = obsRemoteControlFeedback?.action
+    ? t(`obs.remoteFeedback.action.${obsRemoteControlFeedback.action}`)
+    : null;
+  const obsRemoteFeedbackPhase = ['waiting', 'confirmed', 'delayed', 'failed']
+    .includes(obsRemoteControlFeedback?.phase)
+    ? obsRemoteControlFeedback.phase
+    : 'idle';
+  const obsRemoteFeedbackDetail = (() => {
+    if (obsRemoteFeedbackPhase === 'idle') return t('obs.remoteFeedback.idle');
+    if (obsRemoteFeedbackPhase === 'waiting') {
+      return t('obs.remoteFeedback.waiting', { action: obsRemoteActionLabel });
+    }
+    if (obsRemoteFeedbackPhase === 'delayed') {
+      return t('obs.remoteFeedback.delayed', { action: obsRemoteActionLabel });
+    }
+    if (obsRemoteFeedbackPhase === 'failed') {
+      return t('obs.remoteFeedback.failed', { action: obsRemoteActionLabel });
+    }
+    if (obsRemoteControlFeedback.action === 'seek') {
+      return t('obs.remoteFeedback.confirmed.seek', {
+        requested: formatTime(obsRemoteControlFeedback.requestedValue),
+        confirmed: formatTime(obsRemoteControlFeedback.confirmedValue),
+      });
+    }
+    if (obsRemoteControlFeedback.action === 'volume') {
+      return t('obs.remoteFeedback.confirmed.volume', {
+        requested: Math.round(obsRemoteControlFeedback.requestedValue),
+        confirmed: Math.round(obsRemoteControlFeedback.confirmedValue),
+      });
+    }
+    return t('obs.remoteFeedback.confirmed.transport', { action: obsRemoteActionLabel });
+  })();
   const transitionTargetMode = normalizedOutputSwitchState === 'connecting'
     ? pendingSelectionMode
     : normalizedOutputSwitchState === 'switching'
@@ -235,6 +288,7 @@ export default function PlaybackPanel({
     isRouteStable: outputRouteStable,
     targetMode: failedSelectionMode ?? transitionTargetMode,
     targetCandidateState,
+    targetSourceInactive: failedSelectionMode === 'obs' && obsSourceInactive,
     reasonCode: outputSwitchReasonCode,
   });
   const outputNextActionKey = derivePlaybackOutputNextAction({
@@ -247,6 +301,9 @@ export default function PlaybackPanel({
     || outputRouteStateUnknown
     || normalizedOutputSwitchState === 'blocked'
     || outputControlRecoveryRequired;
+  const outputNeedsDestructiveReset = outputNeedsAttention && !(
+    failedSelectionMode === 'obs' && obsSourceInactive
+  );
   const obsAudioCheckStage = obsAudioCheck?.stage ?? 'unknown';
   const obsAudioCheckMarkerSeconds = ((obsAudioCheck?.markerTimeMs ?? 0) / 1_000).toFixed(1);
   const obsAudioCheckDurationSeconds = ((obsAudioCheck?.durationMs ?? 0) / 1_000).toFixed(0);
@@ -255,8 +312,17 @@ export default function PlaybackPanel({
     || obsAudioCheck?.pendingOperation === 'stop'
     || (obsAudioCheck?.active && obsAudioCheck?.pendingOperation !== 'start'),
   );
+  const obsMixerVerificationStatus = obsMixerVerification?.status ?? 'unknown';
+  const obsMixerCheckedAtLabel = Number.isFinite(obsMixerVerification?.checkedAt)
+    ? new Intl.DateTimeFormat(locale, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(obsMixerVerification.checkedAt))
+    : null;
 
   const selectOutputMode = (mode) => {
+    if (mode === 'obs') setIsObsConfigurationVisible(true);
+    if (mode === 'speaker') setIsObsConfigurationVisible(false);
     if (mode === 'obs' && outputSelectionLocked) {
       showToast?.(
         t(outputSelectionLockMessageKey),
@@ -454,13 +520,6 @@ export default function PlaybackPanel({
     };
   }, [isObsSetupOpen]);
 
-  const formatTime = (seconds) => {
-    if (!seconds || Number.isNaN(seconds)) return '0:00';
-    const minutes = Math.floor(seconds / 60);
-    const remainder = Math.floor(seconds % 60);
-    return `${minutes}:${String(remainder).padStart(2, '0')}`;
-  };
-
   const copyUrl = async (url, successMessage) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -513,7 +572,7 @@ export default function PlaybackPanel({
   const copyDisplayUrl = async () => {
     if (isOnAirInvalid) return;
     const url = await prepareDisplay();
-    if (url) copyUrl(url, t('obs.setup.display.urlCopied'));
+    if (url) copyUrl(withHashParam(url, 'lang', locale), t('obs.setup.display.urlCopied'));
   };
 
   const recoverOnAir = async () => {
@@ -691,7 +750,7 @@ export default function PlaybackPanel({
             <button type="button" onClick={toggleMute} className="btn-icon" disabled={transportControlsLocked} title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
               {isMuted ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
             </button>
-            <input aria-label={t('playback.control.volume')} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" disabled={transportControlsLocked} />
+            <input aria-label={t('playback.control.volumeForOutput', { mode: outputModeLabel(volumeOutputMode) })} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" disabled={transportControlsLocked} />
             {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
             <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={transportControlsLocked} title={isFinishing ? t('playback.control.skipFinishing') : isFailed ? t('playback.control.skipFailed') : t('playback.control.skip')}><SkipForward size={17} /></button>
             {isFailed && (
@@ -747,15 +806,33 @@ export default function PlaybackPanel({
           >
             <header>
               <div>
-                <span className="obs-setup-eyebrow">{t('obs.setup.eyebrow')}</span>
+                <span className="obs-setup-eyebrow">
+                  {t(isObsConfigurationVisible ? 'obs.setup.eyebrow' : 'settings.output.eyebrow')}
+                </span>
                 <h2 id="obs-setup-title" ref={obsDialogTitleRef} tabIndex={-1}>{t('obs.setup.title')}</h2>
               </div>
               <button type="button" className="btn-icon" onClick={() => setIsObsSetupOpen(false)} aria-label={t('obs.setup.closeLabel')}><X size={18} /></button>
             </header>
 
             <p id="obs-setup-description" className="obs-setup-intro">
-              {t('obs.setup.intro')}
+              {t(isObsConfigurationVisible ? 'obs.setup.intro' : 'settings.output.intro.speaker')}
             </p>
+
+            <section className="app-language-setting" aria-labelledby="app-language-title">
+              <div>
+                <h3 id="app-language-title">{t('settings.language.title')}</h3>
+                <p>{t('settings.language.description')}</p>
+              </div>
+              <select
+                value={locale}
+                onChange={(event) => onLocaleChange?.(event.target.value)}
+                aria-label={t('settings.language.label')}
+                disabled={typeof onLocaleChange !== 'function'}
+              >
+                <option value="ko">{t('settings.language.ko')}</option>
+                <option value="en">{t('settings.language.en')}</option>
+              </select>
+            </section>
 
             <section className="output-route-details" aria-labelledby="output-route-details-title">
               <div
@@ -827,10 +904,12 @@ export default function PlaybackPanel({
                 )}
                 {normalizedOutputSwitchState === 'blocked' && (
                   <strong>{t(
-                    failedSelectionMode
+                    failedSelectionMode === 'obs' && obsSourceInactive
+                      ? 'onair.output.selector.status.sourceInactive'
+                      : failedSelectionMode
                       ? 'onair.output.selector.status.blockedTarget'
                       : 'onair.output.selector.status.blocked',
-                    failedSelectionMode
+                    failedSelectionMode && !(failedSelectionMode === 'obs' && obsSourceInactive)
                       ? { mode: outputModeLabel(failedSelectionMode) }
                       : {},
                   )}</strong>
@@ -849,6 +928,81 @@ export default function PlaybackPanel({
               )}
             </section>
 
+            {!isObsConfigurationVisible && speakerOutputDevice?.supported && (
+              <section className="speaker-device-setting" aria-labelledby="speaker-device-setting-title">
+                <div className="speaker-device-setting-copy">
+                  <span className="speaker-device-setting-icon" aria-hidden="true">
+                    <Headphones size={17} />
+                  </span>
+                  <div>
+                    <h3 id="speaker-device-setting-title">{t('settings.speakerDevice.title')}</h3>
+                    <p>{t('settings.speakerDevice.description')}</p>
+                  </div>
+                </div>
+                <p className="speaker-device-current" role="status" aria-live="polite">
+                  {speakerOutputDevice.deviceId
+                    ? t('settings.speakerDevice.currentSelected', {
+                      label: speakerOutputDevice.label || t('settings.speakerDevice.unknownLabel'),
+                    })
+                    : t('settings.speakerDevice.currentDefault')}
+                </p>
+                {speakerOutputDevice.phase === 'failed' && (
+                  <p className="speaker-device-failure" role="alert">
+                    {t('settings.speakerDevice.failed')}
+                  </p>
+                )}
+                <div className="speaker-device-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={onChooseSpeakerOutputDevice}
+                    disabled={speakerOutputDevice.phase === 'choosing'
+                      || typeof onChooseSpeakerOutputDevice !== 'function'}
+                  >
+                    {speakerOutputDevice.phase === 'choosing'
+                      ? t('settings.speakerDevice.choosing')
+                      : t('settings.speakerDevice.choose')}
+                  </button>
+                  {speakerOutputDevice.deviceId && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={onResetSpeakerOutputDevice}
+                      disabled={speakerOutputDevice.phase === 'choosing'
+                        || typeof onResetSpeakerOutputDevice !== 'function'}
+                    >
+                      {t('settings.speakerDevice.reset')}
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {isObsConfigurationVisible && (
+              <>
+            {confirmedOutputMode === 'obs' && (
+              <section
+                className={`obs-remote-feedback is-${obsRemoteFeedbackPhase}`}
+                aria-labelledby="obs-remote-feedback-title"
+              >
+                <div className="obs-remote-feedback-heading">
+                  <div>
+                    <h3 id="obs-remote-feedback-title">{t('obs.remoteFeedback.title')}</h3>
+                    <p>{t('obs.remoteFeedback.description')}</p>
+                  </div>
+                  <span className="obs-remote-feedback-badge" aria-hidden="true">
+                    {obsRemoteFeedbackPhase === 'confirmed'
+                      ? <Check size={13} />
+                      : <span className="obs-status-dot" />}
+                    {t(`obs.remoteFeedback.phase.${obsRemoteFeedbackPhase}`)}
+                  </span>
+                </div>
+                <p className="obs-remote-feedback-detail" role="status" aria-live="polite" aria-atomic="true">
+                  {obsRemoteFeedbackDetail}
+                </p>
+                <p className="obs-remote-feedback-scope">{t('obs.remoteFeedback.scope')}</p>
+              </section>
+            )}
             <section className={`obs-audio-check is-${obsAudioCheckStage}`} aria-labelledby="obs-audio-check-title">
               <header>
                 <div>
@@ -936,6 +1090,62 @@ export default function PlaybackPanel({
                   </button>
                 )}
               </div>
+
+              {obsMixerVerification?.shouldShow && (
+                <section
+                  className={`obs-mixer-verification is-${obsMixerVerificationStatus}`}
+                  aria-labelledby="obs-mixer-verification-title"
+                >
+                  <header>
+                    <h4 id="obs-mixer-verification-title">
+                      {t('obs.audioCheck.mixerVerification.title')}
+                    </h4>
+                    <span role="status" aria-live="polite">
+                      {t(obsMixerVerification.messageKey)}
+                    </span>
+                  </header>
+                  {obsMixerCheckedAtLabel && (
+                    <p className="obs-mixer-verification-time">
+                      {t('obs.audioCheck.mixerVerification.checkedAt', {
+                        time: obsMixerCheckedAtLabel,
+                      })}
+                    </p>
+                  )}
+                  {obsMixerVerification.canConfirm && (
+                    <div className="obs-mixer-verification-actions">
+                      <button
+                        type="button"
+                        className="btn-secondary is-confirm"
+                        onClick={onConfirmObsMixerSignal}
+                        disabled={typeof onConfirmObsMixerSignal !== 'function'}
+                      >
+                        <Check size={14} aria-hidden="true" />
+                        {t('obs.audioCheck.mixerVerification.action.seen')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary is-missing"
+                        onClick={onReportMissingObsMixerSignal}
+                        disabled={typeof onReportMissingObsMixerSignal !== 'function'}
+                      >
+                        <X size={14} aria-hidden="true" />
+                        {t('obs.audioCheck.mixerVerification.action.missing')}
+                      </button>
+                    </div>
+                  )}
+                  {obsMixerVerificationStatus === 'failed' && (
+                    <ol className="obs-mixer-verification-help">
+                      <li>{t('obs.audioCheck.mixerVerification.help.controlAudio')}</li>
+                      <li>{t('obs.audioCheck.mixerVerification.help.unmute')}</li>
+                      <li>{t('obs.audioCheck.mixerVerification.help.singleSource')}</li>
+                      <li>{t('obs.audioCheck.mixerVerification.help.retry')}</li>
+                    </ol>
+                  )}
+                  <p className="obs-mixer-verification-scope">
+                    {t('obs.audioCheck.mixerVerification.userScope')}
+                  </p>
+                </section>
+              )}
             </section>
 
             {!isDirectMode && !isOnAirInvalid && (
@@ -1011,7 +1221,7 @@ export default function PlaybackPanel({
               </div>
             )}
 
-            {outputNeedsAttention && !isOnAirInvalid && !outputControlUnavailable && (
+            {outputNeedsDestructiveReset && !isOnAirInvalid && !outputControlUnavailable && (
               <div className="obs-control-transfer" role="status">
                 <div>
                   <strong>{t('obs.setup.recovery.resetTitle')}</strong>
@@ -1162,10 +1372,18 @@ export default function PlaybackPanel({
                 >{t('obs.setup.session.endButton')}</button>
               </div>
             )}
+              </>
+            )}
           </section>
         </div>
       )}
       </section>
     </>
   );
+}
+
+function withHashParam(url, key, value) {
+  if (!url) return '';
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
 }

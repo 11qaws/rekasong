@@ -26,7 +26,7 @@ function createWindow(obsstudio) {
   };
 }
 
-test('a generic browser never claims OBS runtime or an active source', () => {
+test('a generic browser never claims OBS runtime or invents source state', () => {
   const runtime = createObsRuntimeAttestation({ windowObject: createWindow(undefined) });
 
   assert.deepEqual(runtime.capabilities, {
@@ -34,8 +34,6 @@ test('a generic browser never claims OBS runtime or an active source', () => {
     obsStudioBinding: false,
   });
   assert.deepEqual(runtime.runtime(), {
-    sourceActive: false,
-    sourceVisible: false,
     streaming: false,
     recording: false,
   });
@@ -62,8 +60,6 @@ test('OBS callbacks and events update only the browser runtime attestation layer
   });
 
   assert.deepEqual(runtime.runtime(), {
-    sourceActive: false,
-    sourceVisible: false,
     streaming: true,
     recording: false,
     obsPluginVersion: '2.17.0',
@@ -128,6 +124,6 @@ test('dispose removes listeners and restores legacy callbacks without late mutat
   assert.equal(windowObject.listenerCount('obsSourceActiveChanged'), 0);
   assert.equal(obsstudio.onActiveChange, previousActive);
   assert.equal(obsstudio.onVisibilityChange, previousVisible);
-  assert.equal(runtime.runtime().sourceActive, false);
+  assert.equal(Object.hasOwn(runtime.runtime(), 'sourceActive'), false);
   assert.equal(runtime.runtime().streaming, false);
 });

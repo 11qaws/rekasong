@@ -610,6 +610,15 @@ async function run() {
     'new duplicate remains physically silent in detached standby',
     compactJson(duplicateStandbyMedia),
   );
+
+  const disabledState = await primaryPage.evaluate(() => (
+    window.__rekasongObsSafetySetSourceState({ active: false, visible: false })
+  ));
+  invariant(
+    disabledState?.active === false && disabledState?.visible === false,
+    'active OBS source was explicitly disabled',
+  );
+
   const continuedPrimary = await waitFor(async () => {
     const media = await mediaSafetySnapshot(primaryPage);
     return media.sameElement
@@ -633,17 +642,9 @@ async function run() {
     'duplicate arrival causes no primary replay or media fault',
     compactJson(continuedPrimary.events),
   );
-  pass('duplicate is visible to control while exactly one media graph is playing');
+  pass('duplicate and scene telemetry preserve exactly one established media graph');
 
-  const disabledState = await primaryPage.evaluate(() => (
-    window.__rekasongObsSafetySetSourceState({ active: false, visible: false })
-  ));
-  invariant(
-    disabledState?.active === false && disabledState?.visible === false,
-    'active OBS source was explicitly disabled',
-  );
-
-  const unsafeRouteState = await waitFor(() => {
+  const sceneInactiveRouteState = await waitFor(() => {
     const snapshot = coordinator.snapshot();
     const protocol = snapshot.playerSnapshot;
     const leasedPlayer = protocol?.players?.find(
@@ -652,69 +653,68 @@ async function run() {
     return protocol?.eligibleCandidates?.obs?.length === 1
       && protocol.eligibleCandidates.obs[0] === liveDuplicateState.duplicateCandidateId
       && leasedPlayer?.runtime?.sourceActive === false
-      && protocol?.lease?.status === 'unknown'
+      && leasedPlayer?.runtime?.sourceVisible === false
+      && protocol?.lease?.status === 'ready'
       && protocol.lease.leaseTarget === soleCandidateState.candidateId
       && protocol.lease.epoch === leaseBeforeLiveDuplicate.epoch
       && protocol.confirmedPlayback?.status === 'unknown'
-      && protocol.confirmedPlayback?.reasonCode === 'target_source_inactive'
-      && snapshot.routeUnknown === true
+      && protocol.confirmedPlayback?.reasonCode === 'output_ready_no_playback'
+      && snapshot.routeUnknown === false
       && snapshot.pendingSwitch === null
       ? { snapshot, protocol, leasedPlayer }
       : null;
-  }, ROUTE_TIMEOUT_MS, 'disabled active source exact target_source_inactive fence');
+  }, ROUTE_TIMEOUT_MS, 'scene-inactive telemetry preserves the established route');
   invariant(
-    unsafeRouteState.protocol.confirmedPlayback?.audible !== true,
+    sceneInactiveRouteState.protocol.confirmedPlayback?.audible !== true,
     'disabled source is never represented as confirmed audible',
-    compactJson(unsafeRouteState.protocol.confirmedPlayback),
+    compactJson(sceneInactiveRouteState.protocol.confirmedPlayback),
   );
   pass(
-    'disabled active source fences route as unknown without duplicate takeover',
+    'scene-inactive telemetry excludes new activation without replacing the established route',
     compactJson({
-      lease: unsafeRouteState.protocol.lease,
-      confirmedPlayback: unsafeRouteState.protocol.confirmedPlayback,
+      lease: sceneInactiveRouteState.protocol.lease,
+      confirmedPlayback: sceneInactiveRouteState.protocol.confirmedPlayback,
     }),
   );
 
-  const sourceLossStoppedMedia = await waitFor(async () => {
-    const media = await mediaSafetySnapshot(primaryPage);
-    const networkDetached = media.networkState === 0 || media.networkState === 3;
-    return media.sameElement
-      && media.paused === true
-      && media.srcAttribute === null
-      && media.srcObjectDetached === true
-      && media.sourceChildren === 0
-      && (media.currentSrc === '' || networkDetached)
-      && media.autoplay === false
-      ? media
-      : null;
-  }, CLEANUP_TIMEOUT_MS, 'source loss physically stops and detaches before emergency');
   invariant(
-    sourceLossStoppedMedia.isConnected
-      && sourceLossStoppedMedia.events.some((event) => event.type === 'playing')
-      && sourceLossStoppedMedia.events.some((event) => event.type === 'emptied'),
-    'source loss preserves the same media element with prior PLAYING and detach evidence',
-    compactJson(sourceLossStoppedMedia),
+    continuedPrimary.sameElement
+      && continuedPrimary.isConnected
+      && continuedPrimary.paused === false
+      && continuedPrimary.currentSrc.startsWith('blob:')
+      && continuedPrimary.srcObjectDetached === true
+      && continuedPrimary.sourceChildren === 0
+      && continuedPrimary.autoplay === false
+      && continuedPrimary.events.filter((event) => event.type === 'playing').length === 1
+      && continuedPrimary.events.filter((event) => event.type === 'emptied').length === 1
+      && !continuedPrimary.events.some(
+        (event) => ['waiting', 'stalled', 'error'].includes(event.type),
+      ),
+    'scene telemetry cannot replay, stall, or detach the established media element',
+    compactJson(continuedPrimary),
   );
-  pass('source loss immediately silences and detaches the playing media graph without a server ACK');
+  pass('source-inactive telemetry is reported without stopping the established media graph');
 
   await sleep(350);
-  const stillUnknown = coordinator.snapshot();
+  const stillEstablished = coordinator.snapshot();
   invariant(
-    stillUnknown.routeUnknown === true
-      && stillUnknown.playerSnapshot?.lease?.status === 'unknown'
-      && stillUnknown.playerSnapshot?.lease?.leaseTarget === soleCandidateState.candidateId
-      && stillUnknown.playerSnapshot?.confirmedPlayback?.reasonCode === 'target_source_inactive',
-    'source-inactive fence cannot silently self-recover or take over duplicate',
-    compactJson(stillUnknown.playerSnapshot),
+    stillEstablished.routeUnknown === false
+      && stillEstablished.playerSnapshot?.lease?.status === 'ready'
+      && stillEstablished.playerSnapshot?.lease?.leaseTarget === soleCandidateState.candidateId
+      && stillEstablished.playerSnapshot?.players?.find(
+        (player) => player.playerInstanceId === soleCandidateState.candidateId,
+      )?.runtime?.sourceActive === false,
+    'scene telemetry cannot disconnect the established route or take over the duplicate',
+    compactJson(stillEstablished.playerSnapshot),
   );
   const preEmergencyMedia = await mediaSafetySnapshot(primaryPage);
   invariant(
-    preEmergencyMedia.paused === true
-      && preEmergencyMedia.srcAttribute === null
+    preEmergencyMedia.paused === false
+      && preEmergencyMedia.currentSrc.startsWith('blob:')
       && preEmergencyMedia.sourceChildren === 0
       && preEmergencyMedia.srcObjectDetached === true
       && preEmergencyMedia.autoplay === false,
-    'runtime restoration delay cannot auto-resume or reattach before explicit emergency',
+    'runtime telemetry cannot stop or replay the graph before explicit emergency',
     compactJson(preEmergencyMedia),
   );
 
@@ -791,7 +791,7 @@ async function run() {
       && media.autoplay === false
       ? media
       : null;
-  }, CLEANUP_TIMEOUT_MS, 'emergency preserves the already detached former target');
+  }, CLEANUP_TIMEOUT_MS, 'emergency physically stops and detaches the former target');
   const duplicateStoppedMedia = await mediaSafetySnapshot(liveDuplicatePage);
   invariant(
     primaryStoppedMedia.isConnected

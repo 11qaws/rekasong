@@ -2,10 +2,11 @@ import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import SearchPanel from './SearchPanel';
 import StagingPanel from './StagingPanel';
+import { getAppMessage as t } from '../copy/appMessages';
 
 export default function SongComposer({ stagedItem, searchProps, stagingProps }) {
   return (
-    <section className="song-composer" aria-label="곡 추가">
+    <section className="song-composer" aria-label={t('composer.region.label')}>
       <div className="song-composer-viewport">
         <AnimatePresence initial={false} mode="wait">
           {stagedItem ? (

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readTitleEventStream } from '../lib/titleStream';
+import { getAppMessage } from '../copy/appMessages.js';
 
-export function useAiTitleExtraction(setStagedItem) {
+export function useAiTitleExtraction(setStagedItem, translate = getAppMessage) {
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiStatusMessage, setAiStatusMessage] = useState('');
+  const [aiStatus, setAiStatusState] = useState(null);
   const requestRef = useRef({ id: 0, controller: null });
+  const aiStatusMessage = aiStatus?.key
+    ? translate(aiStatus.key, aiStatus.values ?? {})
+    : '';
+  const aiStatusPhase = aiStatus?.phase ?? 1;
 
   const cancelAiExtraction = useCallback(() => {
     requestRef.current.controller?.abort();
@@ -12,8 +17,8 @@ export function useAiTitleExtraction(setStagedItem) {
     setIsAiLoading(false);
   }, []);
 
-  const setAiStatus = useCallback((message = '') => {
-    setAiStatusMessage(message);
+  const setAiStatus = useCallback((key = '', values = {}, phase = 1) => {
+    setAiStatusState(key ? { key, values, phase } : null);
   }, []);
 
   useEffect(() => () => requestRef.current.controller?.abort(), []);
@@ -25,7 +30,7 @@ export function useAiTitleExtraction(setStagedItem) {
     requestRef.current = { id: requestId, controller };
 
     setIsAiLoading(true);
-    setAiStatusMessage('AI 분석을 준비하고 있습니다…');
+    setAiStatusState({ key: 'ai.status.preparing', phase: 1 });
 
     try {
       await readTitleEventStream(url, options, {
@@ -41,29 +46,27 @@ export function useAiTitleExtraction(setStagedItem) {
                 ...(overwriteTitle ? { isTitleEdited: false } : {})
               };
             });
-            setAiStatusMessage(
-              data.mode === 'cache'
-                ? '저장된 곡명 적용 완료'
-                : data.mode === 'candidate'
-                ? (data.status || '곡명 후보를 확인 중입니다.')
+            setAiStatusState(data.mode === 'cache'
+              ? { key: 'ai.status.cacheComplete', phase: 3 }
+              : data.mode === 'candidate'
+                ? { key: 'ai.status.candidate', phase: 2 }
                 : data.mode === 'fallback'
-                ? '기본 제목 정리 완료 · AI 분석을 사용하려면 Gemini 키를 연결하세요.'
-                : data.mode === 'rules'
-                  ? '제목 규칙 정리 완료 · 필요하면 다시 분석하세요.'
-                  : 'AI 제목 정리 완료'
-            );
+                  ? { key: 'ai.status.fallbackComplete', phase: 3 }
+                  : data.mode === 'rules'
+                    ? { key: 'ai.status.rulesComplete', phase: 3 }
+                    : { key: 'ai.status.complete', phase: 3 });
           } else if (data.error || data.status === 'error') {
             console.error(data.error || data.status);
-            setAiStatusMessage('AI 분석에 실패했습니다. 직접 수정할 수 있어요.');
+            setAiStatusState({ key: 'ai.status.failed', phase: 3 });
           } else if (data.message || data.status) {
-            setAiStatusMessage(data.message || data.status);
+            setAiStatusState({ key: 'ai.status.processing', phase: 2 });
           }
         }
       });
     } catch (error) {
       if (requestRef.current.id === requestId && error.name !== 'AbortError') {
         console.error(error);
-        setAiStatusMessage('AI 분석에 실패했습니다. 직접 수정할 수 있어요.');
+        setAiStatusState({ key: 'ai.status.failed', phase: 3 });
       }
     } finally {
       if (requestRef.current.id === requestId) {
@@ -73,5 +76,12 @@ export function useAiTitleExtraction(setStagedItem) {
     }
   }, [setStagedItem]);
 
-  return { aiStatusMessage, cancelAiExtraction, isAiLoading, runAiExtractionStream, setAiStatus };
+  return {
+    aiStatusMessage,
+    aiStatusPhase,
+    cancelAiExtraction,
+    isAiLoading,
+    runAiExtractionStream,
+    setAiStatus,
+  };
 }

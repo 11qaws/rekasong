@@ -78,7 +78,12 @@ export async function onRequest(context) {
     if (!songs.length) throw new Error('플레이리스트에 가져올 수 있는 영상이 없습니다.');
 
     return new Response(JSON.stringify({
-      source: { id: playlistId, url: `https://www.youtube.com/playlist?list=${playlistId}`, name: `YouTube 플레이리스트 (${songs.length}개)` },
+      source: {
+        id: playlistId,
+        url: `https://www.youtube.com/playlist?list=${playlistId}`,
+        kind: 'youtube-playlist',
+        name: 'YouTube',
+      },
       songs,
     }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } });
   } catch (error) {

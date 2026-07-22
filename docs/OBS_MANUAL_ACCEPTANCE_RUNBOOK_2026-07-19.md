@@ -199,6 +199,22 @@ G3 합격은 OBS mixer 입력까지만 증명한다.
 - marker 누락·중복 0.
 - artifact analyzer가 구현되기 전에는 사람이 들었다는 사실만으로 자동 합격시키지 않는다.
 
+2026-07-22 실제 실행 기록:
+
+```text
+OBS: 30.2.0 / browser plugin 2.23.5
+scene/source: Stream_panel_Fullscreen 2 / Rekasong
+recording: C:\Users\Qumin\Videos\2026-07-22 09-57-46.mp4
+duration/size: 33.283s / 5,302,320 bytes
+container/tracks: MP4, H.264 video + AAC audio
+audio: 48kHz stereo, mean -35.7dB, peak -21.2dB
+fixture detection: 880Hz pulse 12/12, 440Hz tone 4/4
+marker missing/duplicate: 0 / 0
+active-region split over one AAC frame: 0
+live stream: not started
+result: G4 passed for this exact OBS/profile/track configuration
+```
+
 ## 10. G5 — 실제 test stream output
 
 1. 플랫폼의 test stream 또는 비공개 ingest를 사용한다.
@@ -235,10 +251,10 @@ G3 합격은 OBS mixer 입력까지만 증명한다.
 | 장애 | 기대 결과 |
 |---|---|
 | OBS player source 새로고침 | 새 player instance, 자동 takeover·resume 없음 |
-| player WebSocket 단절 | 로컬 emergency detach, Worker `unknown`, 새 activation 차단 |
-| heartbeat 500ms 지연 | warning만, 성공 증거 승격 없음 |
-| heartbeat 2초 stale | lease/output `unknown`, 새 재생 차단 |
-| `sourceActive=false` | `paused`라고 추정하지 않고 `unknown` |
+| player WebSocket 일시 단절 | 살아 있는 로컬 media graph 보존, Worker가 `paused` 성공을 추측하지 않음, 재연결 뒤 자동 LOAD/PLAY 없음 |
+| heartbeat 30초 지연 | warning만, established graph 해제·성공 증거 승격 없음 |
+| heartbeat 60초 stale | 새 activation 후보에서는 제외하되 established graph를 heartbeat만으로 파괴하지 않음 |
+| `sourceActive=false` | 새 activation 후보에서는 제외, established graph는 장면 telemetry만으로 pause·detach하지 않음 |
 | 같은 OBS URL source 2개 | candidate duplicate, activation 차단 |
 | 두 Dashboard | writable 1개, 다른 화면 read-only |
 | stale control epoch | command 거부, 자동 retry 없음 |

@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight } from 'lucide-react';
+import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
 import { readTitleEventStream } from '../lib/titleStream';
-import { getOutputMessage as t } from '../copy/outputMessages';
+import { getAppMessage as t } from '../copy/appMessages';
 
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
 
@@ -16,10 +16,18 @@ async function readYoutubeTitle(videoId, signal) {
 }
 
 export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedState, setSharedState }) {
-  const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', youtubePlaylistCatalogMeta = null, songbookMrCache = {}, activeIntegrationTab } = sharedState;
+  const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, activeIntegrationTab } = sharedState;
   
-  // Tabs: 'youtube', 'meloming', 'setlink'
-  const [activeTab, setActiveTab] = useState(activeIntegrationTab || 'youtube'); 
+  // YouTube search and imported playlists share one top-level source.  Keep the
+  // legacy persisted tab values so existing sessions reopen the same inner
+  // view without exposing two competing YouTube labels in the main nav.
+  const initialTab = ['youtube', 'youtube-playlist', 'setlink', 'meloming'].includes(activeIntegrationTab)
+    ? activeIntegrationTab
+    : 'youtube';
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const lastYoutubeTabRef = useRef(['youtube', 'youtube-playlist'].includes(initialTab)
+    ? initialTab
+    : 'youtube');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -42,6 +50,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   const [playlistTitleProgress, setPlaylistTitleProgress] = useState({ total: 0, completed: 0, active: false });
   const [playlistImportRun, setPlaylistImportRun] = useState(0);
   const [retryingPlaylistTitleIds, setRetryingPlaylistTitleIds] = useState(() => new Set());
+  const [openingSongbookKey, setOpeningSongbookKey] = useState(null);
 
   // Local search queries for songbooks
   const [meloSearch, setMeloSearch] = useState('');
@@ -178,9 +187,12 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   }, [playlistFingerprint, playlistImportRun]);
 
   const handleTabChange = (tab) => {
+    if (tab === 'youtube' || tab === 'youtube-playlist') lastYoutubeTabRef.current = tab;
     setActiveTab(tab);
     setSharedState(prev => ({ ...prev, activeIntegrationTab: tab }));
   };
+
+  const openYoutubeSource = () => handleTabChange(lastYoutubeTabRef.current);
 
   const runYoutubeSearch = async (searchQuery) => {
     if (!searchQuery.trim()) return;
@@ -191,8 +203,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const videoId = match[1];
       onSelectResult({
         id: videoId,
-        title: 'URL 직접 입력 영상 (분석 중...)',
-        channelTitle: '알 수 없음'
+        title: t('search.youtube.directTitle'),
+        channelTitle: t('search.youtube.unknownChannel')
       });
       return;
     }
@@ -217,11 +229,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const file = e.target.files[0];
     const isSupportedMedia = file.type.startsWith('audio/') || file.type === 'video/mp4';
     if (!isSupportedMedia) {
-      alert('오류: 오디오 파일 또는 MP4 영상만 지원됩니다.');
-        return;
-      }
+      window.alert(t('search.file.invalidType'));
+      return;
+    }
     if (file.size > 200 * 1024 * 1024) {
-      alert('오류: 200MB 이하의 오디오/MP4 파일만 업로드할 수 있습니다.');
+      window.alert(t('search.file.tooLarge'));
         return;
       }
       onLocalFileDrop(file, songbookContext);
@@ -329,7 +341,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
   };
 
   const selectSongbookSong = async (song, platform, youtubeId, cachedMr) => {
+    const selectionKey = songbookCacheKey(platform, song.id);
+    if (openingSongbookKey === selectionKey) return;
+    setOpeningSongbookKey(selectionKey);
     if (cachedMr?.mrId) {
+      setOpeningSongbookKey(null);
       stageSongbookMr(song, platform, cachedMr.mrId, true, cachedMr.title);
       return;
     }
@@ -348,6 +364,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             [songbookCacheKey(platform, song.id)]: cacheEntry
           }
         }));
+        setOpeningSongbookKey(null);
         stageSongbookMr(song, platform, cacheEntry.mrId, true, cacheEntry.title);
         return;
       }
@@ -356,9 +373,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     }
 
     if (youtubeId) {
+      setOpeningSongbookKey(null);
       stageSongbookMr(song, platform, youtubeId, platform === 'youtube-playlist' || Boolean(song.mrVerified));
       return;
     }
+    setOpeningSongbookKey(null);
     startSongbookMrSearch(song, platform);
   };
 
@@ -377,9 +396,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     try {
       const response = await fetch(apiUrl(`/api/setlink?url=${encodeURIComponent(sourceUrl)}`));
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Setlink 공개 목록을 가져오지 못했습니다.');
+      if (!response.ok) throw new Error(t('search.import.error.setlinkFetch'));
       if (!Array.isArray(data.songs) || data.songs.length === 0) {
-        throw new Error('공개 목록에 표시할 곡이 없습니다.');
+        throw new Error(t('search.import.error.setlinkEmpty'));
       }
       setSharedState((previous) => ({
         ...previous,
@@ -389,7 +408,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       }));
       setTempSetlinkUrl(sourceUrl);
     } catch (importError) {
-      setCatalogImportError(importError.message || 'Setlink 공개 목록을 가져오지 못했습니다.');
+      setCatalogImportError(importError.message || t('search.import.error.setlinkFetch'));
     } finally {
       setIsSetlinkLoading(false);
     }
@@ -403,8 +422,8 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     try {
       const response = await fetch(apiUrl(`/api/youtube-playlist?url=${encodeURIComponent(sourceUrl)}`));
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'YouTube 플레이리스트를 가져오지 못했습니다.');
-      if (!Array.isArray(data.songs) || data.songs.length === 0) throw new Error('플레이리스트에 가져올 영상이 없습니다.');
+      if (!response.ok) throw new Error(t('search.import.error.youtubeFetch'));
+      if (!Array.isArray(data.songs) || data.songs.length === 0) throw new Error(t('search.import.error.youtubeEmpty'));
       setSharedState((previous) => ({
         ...previous,
         youtubePlaylistSourceUrl: sourceUrl,
@@ -414,14 +433,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       setTempPlaylistUrl(sourceUrl);
       setPlaylistImportRun((run) => run + 1);
     } catch (importError) {
-      setPlaylistImportError(importError.message || 'YouTube 플레이리스트를 가져오지 못했습니다.');
+      setPlaylistImportError(importError.message || t('search.import.error.youtubeFetch'));
     } finally {
       setIsPlaylistLoading(false);
     }
   };
 
   const handleIntegrationDisconnect = (platform) => {
-    if(window.confirm('연동을 해제하시겠습니까?')) {
+    if(window.confirm(t('search.import.disconnectConfirm'))) {
       if (platform === 'meloming') {
         setSharedState(prev => ({ ...prev, melomingChannelId: '' }));
       } else {
@@ -502,14 +521,14 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         )}
       </div>
 
-      <div className="divider composer-import-divider">또는 로컬 파일</div>
+      <div className="divider composer-import-divider">{t('search.file.divider')}</div>
 
       <div
         className="composer-file-import"
         onClick={() => fileInputRef.current?.click()}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleFileDrop}
-        title="클릭하여 파일 선택"
+        title={t('search.file.selectTitle')}
         role="button"
         tabIndex={0}
         onKeyDown={(event) => {
@@ -520,9 +539,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         }}
       >
         <UploadCloud size={20} aria-hidden="true" />
-        <span className="composer-file-import-label">로컬 MR 파일 추가</span>
-        <span className="composer-file-import-help">오디오 또는 MP4 · 드래그하거나 선택</span>
-        <span className="composer-file-import-action" aria-hidden="true">파일 선택</span>
+        <span className="composer-file-import-label">{t('search.file.label')}</span>
+        <span className="composer-file-import-help">{t('search.file.help')}</span>
+        <span className="composer-file-import-action" aria-hidden="true">{t('search.file.action')}</span>
       </div>
     </>
   );
@@ -532,24 +551,32 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       const isMeloming = platform === 'meloming';
       const isPlaylist = platform === 'youtube-playlist';
       const inputValue = isMeloming ? idValue : isPlaylist ? tempPlaylistUrl : tempSetlinkUrl;
-      const inputPlaceholder = isMeloming ? 'https://meloming.com/channel/채널경로 또는 ID' : isPlaylist ? 'https://www.youtube.com/playlist?list=...' : 'https://setlink.jp/public/...';
+      const inputPlaceholder = isMeloming
+        ? t('search.import.placeholder.meloming')
+        : isPlaylist
+          ? t('search.import.placeholder.youtubePlaylist')
+          : t('search.import.placeholder.setlink');
       const submitImport = isMeloming ? () => handleIntegrationConnect('meloming', idValue) : isPlaylist ? () => handlePlaylistImport(tempPlaylistUrl) : () => handleSetlinkImport(tempSetlinkUrl);
       const sourceError = isPlaylist ? playlistImportError : catalogImportError;
       const isImporting = isPlaylist ? isPlaylistLoading : !isMeloming && isSetlinkLoading;
       const handleInputChange = isMeloming ? setIdValue : isPlaylist ? setTempPlaylistUrl : setTempSetlinkUrl;
-      const sourceName = isMeloming ? '멜로밍 노래책' : isPlaylist ? 'YouTube 플레이리스트' : 'Setlink 목록';
-      const sourceHelp = isMeloming
-        ? '멜로밍 채널 주소, 채널 경로(예: amoamoretto), 또는 숫자 ID를 입력하세요. 주소와 경로는 내부 ID로 자동 변환합니다.'
+      const sourceName = t(isMeloming
+        ? 'search.import.source.meloming'
         : isPlaylist
-          ? 'YouTube 플레이리스트 주소를 붙여 넣으면 영상 목록을 노래책으로 가져옵니다.'
-          : 'Setlink 공개 페이지의 주소를 붙여넣으세요.';
+          ? 'search.import.source.youtubePlaylist'
+          : 'search.import.source.setlink');
+      const sourceHelp = t(isMeloming
+        ? 'search.import.help.meloming'
+        : isPlaylist
+          ? 'search.import.help.youtubePlaylist'
+          : 'search.import.help.setlink');
       return (
         <section className="songbook-connect">
           {isMeloming ? <Music className="songbook-connect-icon" size={32} color="var(--eureka-emerald)" /> : <Link className="songbook-connect-icon" size={32} color="var(--eureka-azure)" />}
-          <h3 className="songbook-connect-title">{sourceName} 추가</h3>
+          <h3 className="songbook-connect-title">{t('search.import.addTitle', { source: sourceName })}</h3>
           <p className="songbook-connect-description">
-            목록을 한 번 가져와 카탈로그에 첨부합니다.<br/>
-            목록은 자동 갱신되지 않으며, 업데이트 시 새로고침할 수 있습니다.
+            {t('search.import.description.attach')}<br/>
+            {t('search.import.description.refresh')}
           </p>
           <form className="source-connect-form" onSubmit={(event) => { event.preventDefault(); submitImport(); }}>
             <input 
@@ -560,7 +587,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
               onChange={(event) => handleInputChange(event.target.value)}
             />
             <button type="submit" className="btn-primary" disabled={isImporting || !inputValue.trim()}>
-              {isImporting ? <><Loader2 className="spinner" size={16} /> 가져오는 중</> : '목록 가져오기'}
+              {isImporting ? <><Loader2 className="spinner" size={16} /> {t('search.import.loading')}</> : t('search.import.action')}
             </button>
             <div className="source-connect-help">
               {sourceHelp}
@@ -589,25 +616,35 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
     // 100개까지만 표시하여 성능 보장
     const displaySongs = filteredSongs.slice(0, 100);
+    const storedSetlinkName = String(setlinkCatalogMeta?.name || '').trim();
+    const setlinkUsesDefaultName = Boolean(setlinkCatalogMeta?.defaultName)
+      || !storedSetlinkName
+      || storedSetlinkName === 'Setlink 공개 목록'
+      || storedSetlinkName === 'Setlink public list';
+    const catalogName = platform === 'setlink'
+      ? (setlinkUsesDefaultName ? t('search.import.source.setlink') : storedSetlinkName)
+      : platform === 'youtube-playlist'
+        ? t('search.import.source.youtubePlaylist')
+        : (hookData.source?.name || t('search.import.source.meloming'));
 
     return (
-      <section className="songbook-list" aria-label="노래책 곡 목록">
+      <section className="songbook-list" aria-label={t('search.songbook.listLabel')}>
         <div className="songbook-toolbar">
           <div className="songbook-summary" data-source={platform}>
-            ✅ <strong>{platform === 'setlink' ? (setlinkCatalogMeta?.name || 'Setlink') : platform === 'youtube-playlist' ? (youtubePlaylistCatalogMeta?.name || 'YouTube 플레이리스트') : (hookData.source?.name || `멜로밍 ${isConnected}`)}</strong> 가져옴 ({songs.length}곡)
+            ✅ {t('search.songbook.summary', { name: catalogName, count: songs.length })}
             {platform === 'youtube-playlist' && playlistTitleProgress.total > 0 && (
               <span style={{marginLeft:'0.5rem', color: playlistTitleProgress.active ? 'var(--eureka-azure)' : 'var(--eureka-emerald)'}}>
-                · AI 곡명 정리 {playlistTitleProgress.completed}/{playlistTitleProgress.total}
+                · {t('search.songbook.aiProgress', { completed: playlistTitleProgress.completed, total: playlistTitleProgress.total })}
               </span>
             )}
           </div>
           <div className="songbook-toolbar-actions">
-            {platform === 'setlink' && setlinkSourceUrl && <button onClick={() => handleSetlinkImport(setlinkSourceUrl)} className="btn-icon" title="공개 목록 새로고침"><RefreshCw size={14} className={isSetlinkLoading ? 'spinner' : ''} /></button>}
-            {platform === 'youtube-playlist' && youtubePlaylistSourceUrl && <button onClick={() => handlePlaylistImport(youtubePlaylistSourceUrl)} className="btn-icon" title="플레이리스트 새로고침"><RefreshCw size={14} className={isPlaylistLoading ? 'spinner' : ''} /></button>}
-            {platform !== 'setlink' && platform !== 'youtube-playlist' && <button onClick={refresh} className="btn-icon" title="새로고침">
+            {platform === 'setlink' && setlinkSourceUrl && <button onClick={() => handleSetlinkImport(setlinkSourceUrl)} className="btn-icon" title={t('search.songbook.refresh.setlink')}><RefreshCw size={14} className={isSetlinkLoading ? 'spinner' : ''} /></button>}
+            {platform === 'youtube-playlist' && youtubePlaylistSourceUrl && <button onClick={() => handlePlaylistImport(youtubePlaylistSourceUrl)} className="btn-icon" title={t('search.songbook.refresh.youtube')}><RefreshCw size={14} className={isPlaylistLoading ? 'spinner' : ''} /></button>}
+            {platform !== 'setlink' && platform !== 'youtube-playlist' && <button onClick={refresh} className="btn-icon" title={t('search.songbook.refresh.general')}>
               <RefreshCw size={14} className={isLoading ? 'spinner' : ''} />
             </button>}
-            <button onClick={() => handleIntegrationDisconnect(platform)} className="btn-icon btn-icon-danger" style={{fontSize:'0.75rem'}}>해제</button>
+            <button onClick={() => handleIntegrationDisconnect(platform)} className="btn-icon btn-icon-danger" style={{fontSize:'0.75rem'}}>{t('search.songbook.disconnect')}</button>
           </div>
         </div>
 
@@ -623,7 +660,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           <Search className="search-icon" size={16} />
           <input 
             type="text" 
-            placeholder="노래책 내에서 곡명, 가수 검색..."
+            placeholder={t('search.songbook.filterPlaceholder')}
             value={localSearch}
             onChange={(e) => setLocalSearch(e.target.value)}
             className="glass-input search-input"
@@ -643,7 +680,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           )}
           {!isLoading && songs.length > 0 && filteredSongs.length === 0 && (
             <div className="empty-state composer-empty-state">
-              일치하는 곡이 없습니다.
+              {t('search.songbook.noMatch')}
             </div>
           )}
           {displaySongs.map(song => {
@@ -651,35 +688,43 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
             const cacheKey = songbookCacheKey(platform, song.id);
             const cachedMr = songbookMrCache[cacheKey];
             const isCheckingCache = cacheLookupKeys[cacheKey];
+            const isOpening = openingSongbookKey === cacheKey;
             const hasLinkedMr = Boolean(cachedMr?.mrId || youtubeId);
             const hasSongbookMr = Boolean(youtubeId);
             const hasMrCandidate = hasLinkedMr || hasSongbookMr;
             const isTitleReady = platform !== 'youtube-playlist' || song.titleStatus === 'ready';
             const isTitleRetrying = retryingPlaylistTitleIds.has(song.sourceId || song.id);
             const canRetryTitle = platform === 'youtube-playlist' && song.titleStatus === 'error';
-            const displayTitle = isTitleReady ? song.title : song.titleStatus === 'error' ? 'AI 곡명 정리 실패' : 'AI 곡명 정리 중…';
-            const pendingActionLabel = song.titleStatus === 'error' ? '정리 실패' : '곡명 정리 중';
-            const primaryActionLabel = hasMrCandidate ? 'MR 확인' : 'MR 찾기';
+            const displayTitle = isTitleReady ? song.title : t(song.titleStatus === 'error'
+              ? 'search.songbook.titleFailed'
+              : 'search.songbook.titlePending');
+            const pendingActionLabel = t(song.titleStatus === 'error'
+              ? 'search.songbook.action.titleFailed'
+              : 'search.songbook.action.titlePending');
+            const primaryActionLabel = t(hasMrCandidate
+              ? 'search.songbook.action.checkMr'
+              : 'search.songbook.action.findMr');
             const mrStateLabel = hasLinkedMr
-              ? '연결된 MR 있음'
+              ? t('search.songbook.mr.linked')
               : isCheckingCache
-                ? 'MR 연결 확인 중'
-                : 'MR 연결 없음';
+                ? t('search.songbook.mr.checking')
+                : t('search.songbook.mr.missing');
             return (
             <div key={song.id} className="result-item songbook-item">
               <button
                 type="button"
                 className="songbook-copy"
                 onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
-                disabled={!isTitleReady}
+                disabled={!isTitleReady || isOpening}
+                aria-busy={isOpening || undefined}
                 aria-label={t('search.songbook.select', { title: displayTitle })}
               >
                 <div className={`songbook-title ${isTitleReady ? '' : 'is-pending'}`}>{displayTitle}</div>
                 <div className="songbook-artist">{song.artist}</div>
                 {song.tags && song.tags.length > 0 && (
                   <div className="songbook-tags">
-                    {song.tags.map(t => (
-                      <span key={t}>{t}</span>
+                    {song.tags.map((tag) => (
+                      <span key={tag}>{tag}</span>
                     ))}
                   </div>
                 )}
@@ -688,7 +733,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 </div>
                 {isTitleReady && (
                   <span className="songbook-select-hint">
-                    {t('search.songbook.selectHint')} <ChevronRight size={14} aria-hidden="true" />
+                    {isOpening
+                      ? <><Loader2 size={13} className="spinner" aria-hidden="true" /> {t('search.songbook.opening')}</>
+                      : <>{t('search.songbook.selectHint')} <ChevronRight size={14} aria-hidden="true" /></>}
                   </span>
                 )}
               </button>
@@ -698,17 +745,21 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                     className="songbook-retry-action"
                     onClick={() => retryPlaylistTitle(song)}
                     disabled={isTitleRetrying}
-                    title="이 곡만 AI 곡명 정리를 다시 시도합니다"
+                    title={t('search.songbook.action.retryTitleTitle')}
                   >
-                    <RefreshCw size={13} className={isTitleRetrying ? 'spinner' : ''} /> 재분석
+                    <RefreshCw size={13} className={isTitleRetrying ? 'spinner' : ''} /> {t('search.songbook.action.retryTitle')}
                   </button>
                 ) : (
                   <button
                     className="btn-primary songbook-action-primary"
                     onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
-                    disabled={!isTitleReady}
+                    disabled={!isTitleReady || isOpening}
                   >
-                    {isTitleReady ? (hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>) : pendingActionLabel}
+                    {isOpening
+                      ? <><Loader2 className="spinner" size={14}/>{t('search.songbook.opening')}</>
+                      : isTitleReady
+                        ? (hasMrCandidate ? <><Music size={14}/>{primaryActionLabel}</> : <><Search size={14}/>{primaryActionLabel}</>)
+                        : pendingActionLabel}
                   </button>
                 )}
                 {hasMrCandidate && isTitleReady && (
@@ -716,16 +767,16 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                     className="btn-secondary songbook-action-secondary"
                     onClick={() => startSongbookMrSearch(song, platform)}
                   >
-                    다른 MR 찾기
+                    {t('search.songbook.action.findAnotherMr')}
                   </button>
                 )}
                 {platform !== 'youtube-playlist' && (
                   <button
                     className="songbook-file-action"
                     onClick={() => chooseSongbookUpload(song, platform)}
-                    title="파일은 이번 방송에서만 사용합니다"
+                    title={t('search.songbook.action.localFileTitle')}
                   >
-                    <FileUp size={14} /> 내 파일
+                    <FileUp size={14} /> {t('search.songbook.action.localFile')}
                   </button>
                 )}
               </div>
@@ -734,7 +785,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           })}
           {filteredSongs.length > 100 && (
              <div style={{textAlign:'center', fontSize:'0.8rem', color:'var(--text-muted)', padding:'1rem 0'}}>
-               100곡 이상 검색되었습니다. 검색어를 더 상세히 입력해주세요.
+               {t('search.songbook.limit')}
              </div>
           )}
         </div>
@@ -748,30 +799,19 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
         <div
           className="tabs source-tabs"
           role="group"
-          aria-label="곡 추가 방식"
-          data-source-tab-count="4"
+          aria-label={t('search.source.label')}
+          data-source-tab-count="3"
         >
           <button
             type="button"
-            className={`tab-btn source-tab ${activeTab === 'youtube' ? 'active' : ''}`}
+            className={`tab-btn source-tab ${['youtube', 'youtube-playlist'].includes(activeTab) ? 'active' : ''}`}
             data-source="youtube"
-            aria-pressed={activeTab === 'youtube'}
-            title={t('search.tab.youtubeSearch')}
-            onClick={() => handleTabChange('youtube')}
+            aria-pressed={['youtube', 'youtube-playlist'].includes(activeTab)}
+            title={t('search.tab.youtube')}
+            onClick={openYoutubeSource}
           >
             <Search size={14} aria-hidden="true" />
-            <span className="source-tab-label">{t('search.tab.youtubeSearch')}</span>
-          </button>
-          <button
-            type="button"
-            className={`tab-btn source-tab ${activeTab === 'youtube-playlist' ? 'active' : ''}`}
-            data-source="youtube-playlist"
-            aria-pressed={activeTab === 'youtube-playlist'}
-            title={t('search.tab.youtubeList')}
-            onClick={() => handleTabChange('youtube-playlist')}
-          >
-            <Link size={14} aria-hidden="true" />
-            <span className="source-tab-label">{t('search.tab.youtubeList')}</span>
+            <span className="source-tab-label">{t('search.tab.youtube')}</span>
           </button>
           <button
             type="button"
@@ -799,7 +839,40 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
       </header>
       
       <main className="composer-content">
-        {activeTab === 'youtube' && renderYoutubeTab()}
+        {['youtube', 'youtube-playlist'].includes(activeTab) && (
+          <section className="youtube-source-workspace" aria-label={t('search.tab.youtube')}>
+            <div className="youtube-mode-switch" role="tablist" aria-label={t('search.youtube.mode.label')}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'youtube'}
+                className={activeTab === 'youtube' ? 'is-active' : ''}
+                onClick={() => handleTabChange('youtube')}
+              >
+                <Search size={14} aria-hidden="true" /> {t('search.youtube.mode.search')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'youtube-playlist'}
+                className={activeTab === 'youtube-playlist' ? 'is-active' : ''}
+                onClick={() => handleTabChange('youtube-playlist')}
+              >
+                <ListVideo size={14} aria-hidden="true" /> {t('search.youtube.mode.playlist')}
+              </button>
+            </div>
+            {activeTab === 'youtube' ? renderYoutubeTab() : renderSongbook(
+              'youtube-playlist',
+              { ...playlist, isLoading: isPlaylistLoading, error: playlistImportError || playlist.error, refresh: () => handlePlaylistImport(youtubePlaylistSourceUrl) },
+              playlistSearch,
+              setPlaylistSearch,
+              youtubePlaylistCatalog.length > 0,
+              '',
+              () => {},
+              t('search.songbook.empty.youtubePlaylist')
+            )}
+          </section>
+        )}
         {activeTab === 'meloming' && renderSongbook(
           'meloming', 
           melo, 
@@ -808,17 +881,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           melomingChannelId, 
           tempMeloId, 
           setTempMeloId, 
-          '노래책에 등록된 곡이 없습니다.'
-        )}
-          {activeTab === 'youtube-playlist' && renderSongbook(
-          'youtube-playlist',
-          { ...playlist, isLoading: isPlaylistLoading, error: playlistImportError || playlist.error, refresh: () => handlePlaylistImport(youtubePlaylistSourceUrl) },
-          playlistSearch,
-          setPlaylistSearch,
-          youtubePlaylistCatalog.length > 0,
-          '',
-          () => {},
-          '가져온 플레이리스트에 영상이 없습니다.'
+          t('search.songbook.empty.meloming')
         )}
         {activeTab === 'setlink' && renderSongbook(
           'setlink', 
@@ -828,7 +891,7 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
           setlinkCatalog.length > 0,
           '',
           () => {},
-          '가져온 공개 목록에 곡이 없습니다.'
+          t('search.songbook.empty.setlink')
         )}
       </main>
       <input

@@ -7,6 +7,7 @@ function createHarness() {
   const calls = [];
   const resolved = [];
   let emitEvidence = null;
+  let insideEvidenceObserver = false;
   const engine = {
     execute() {},
     snapshot() {
@@ -17,6 +18,7 @@ function createHarness() {
       return Promise.resolve({ status: 'loading' });
     },
     play(command) {
+      if (insideEvidenceObserver) throw Object.assign(new Error('observer_reentry'), { code: 'observer_reentry' });
       calls.push(['play', command]);
       return Promise.resolve({ status: 'playing' });
     },
@@ -41,7 +43,19 @@ function createHarness() {
       return engine;
     },
   });
-  return { calls, controller, emitEvidence: (value) => emitEvidence(value), resolved };
+  return {
+    calls,
+    controller,
+    emitEvidence(value) {
+      insideEvidenceObserver = true;
+      try {
+        emitEvidence(value);
+      } finally {
+        insideEvidenceObserver = false;
+      }
+    },
+    resolved,
+  };
 }
 
 test('local speaker loads and autoplays without any route lease or player candidate', async () => {
@@ -99,6 +113,22 @@ test('every local speaker controller remains independent and supports normal tra
   assert.equal(first.controller.sendCommand({ type: 'seek', runId: 'run-first', position: 30 }), 'seeked');
   assert.equal(first.controller.sendCommand({ type: 'volume', runId: 'run-first', volume: 45 }), 'volume');
   assert.equal(first.controller.sendCommand({ type: 'stop', runId: 'run-first' }), 'stopped');
+});
+
+test('a pause between READY and deferred autoplay prevents a stale song from starting', async () => {
+  const harness = createHarness();
+  await harness.controller.sendCommand({
+    type: 'load',
+    runId: 'run-cancelled-autoplay',
+    song: { type: 'youtube', src: 'abcdefghijk' },
+  });
+
+  harness.emitEvidence({ type: 'ready', runId: 'run-cancelled-autoplay' });
+  harness.controller.sendCommand({ type: 'pause', runId: 'run-cancelled-autoplay' });
+  await Promise.resolve();
+
+  assert.equal(harness.calls.filter(([name]) => name === 'play').length, 0);
+  assert.equal(harness.calls.filter(([name]) => name === 'pause').length, 1);
 });
 
 test('prefetch remains a media optimization and does not create playback authority', async () => {

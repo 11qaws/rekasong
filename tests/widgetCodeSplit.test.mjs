@@ -141,6 +141,7 @@ test('DisplayWidget retains remote sync and display WebSocket behavior', async (
     'react',
     'framer-motion',
     '../hooks/useRemoteSync',
+    '../copy/widgetMessages.js',
     './Widget.css',
   ]);
   assert.match(displayWidget, /useWidgetSync\(room, publicKeyB64,/);
