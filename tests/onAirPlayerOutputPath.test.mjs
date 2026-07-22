@@ -228,6 +228,24 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
     /setObsControlRequested\(false\)/,
     'same-page Speaker recovery keeps an already-started OBS controller alive for cleanup',
   );
+  const transferCreateIndex = speakerSelection.indexOf('createPlaybackOutputTransfer({');
+  const transferFenceIndex = speakerSelection.indexOf('playbackOutputTransferRef.current = transfer;');
+  const stateFenceIndex = speakerSelection.indexOf('stateRef.current = transferredState;');
+  const activeFenceIndex = speakerSelection.indexOf('activeRef.current = transferredState.active;');
+  const obsCleanupIndex = speakerSelection.indexOf("type: 'stop'");
+  assert.ok(
+    transferCreateIndex >= 0
+      && transferFenceIndex > transferCreateIndex
+      && stateFenceIndex > transferFenceIndex
+      && activeFenceIndex > stateFenceIndex
+      && obsCleanupIndex > activeFenceIndex,
+    'Speaker ownership and both synchronous event fences must commit before best-effort OBS cleanup',
+  );
+  assert.doesNotMatch(
+    speakerSelection,
+    /setObsControlRequested\(true\)|start_?streaming|startStreaming/i,
+    'Speaker transfer must never activate OBS control or streaming',
+  );
   assert.match(
     obsSelection,
     /setObsControlRequested\(true\)/,
@@ -237,6 +255,21 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
     source,
     /const runOutputMode = outputMode === 'obs' \|\| outputMode === 'speaker'[\s\S]*?outputModePreference === 'obs' \? 'obs' : 'speaker'/,
     'new playback must follow the local route choice instead of a stale OBS lease',
+  );
+  assert.match(
+    source,
+    /preparedSpeakerLoadQueueRef\.current\.enqueue\(preparedLoad\)[\s\S]*?preparedSpeakerLoadQueueRef\.current\.claim\(committedActive\)[\s\S]*?dispatchPreparedPlaybackLoadRef\.current\?\.\(preparedLoad\)/,
+    'Speaker LOAD must be claimed exactly once by the committed run instead of a timer race',
+  );
+  assert.match(
+    source,
+    /payload\.type === 'snapshot'[\s\S]*?shouldIgnoreRemotePlayback\(\{[\s\S]*?playbackOutputTransferRef\.current[\s\S]*?payload\.type === 'player_event'[\s\S]*?shouldIgnoreRemotePlayback\(\{/,
+    'late OBS snapshots and terminal events must be fenced during and after transfer',
+  );
+  assert.match(
+    source,
+    /const restoredActive = \{[\s\S]*?phase: onAirStatusToPhase\(remoteTransport\.status\),[\s\S]*?outputMode: 'obs'/,
+    'a restored remote OBS run must retain its output identity for later Speaker transfer',
   );
   assert.match(
     source,

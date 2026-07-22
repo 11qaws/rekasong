@@ -37,6 +37,13 @@ import {
   isConfirmedDiscardSnapshot,
   isConfirmedDiscardStop,
 } from '../lib/dashboardPlaybackSafety';
+import {
+  commitPlaybackOutputTransfer,
+  createPlaybackOutputTransfer,
+  createPreparedSpeakerLoadQueue,
+  isPlaybackOutputTransferCommitted,
+  shouldIgnoreRemotePlayback,
+} from '../lib/playbackOutputTransfer';
 import { onAirSessionRecoveryGate } from '../lib/onAirSessionRecoveryGate';
 import {
   OUTPUT_CONTROL_AUTHORITY_STATES,
@@ -202,6 +209,12 @@ export default function Dashboard() {
     });
   }
   const beginPlaybackRunRef = useRef(null);
+  const playbackOutputTransferRef = useRef(null);
+  const preparedSpeakerLoadQueueRef = useRef(null);
+  if (!preparedSpeakerLoadQueueRef.current) {
+    preparedSpeakerLoadQueueRef.current = createPreparedSpeakerLoadQueue({ limit: 8 });
+  }
+  const dispatchPreparedPlaybackLoadRef = useRef(null);
   const currentEntry = state?.currentEntry || null;
   const active = state?.active || null;
   const history = useMemo(() => Array.isArray(state?.history) ? state.history : [], [state?.history]);
@@ -707,6 +720,8 @@ export default function Dashboard() {
   useEffect(() => () => {
     const error = new Error(t('playback.localSpeaker.notReady'));
     localSpeakerCommandQueueRef.current.rejectAll(error);
+    preparedSpeakerLoadQueueRef.current.clear();
+    playbackOutputTransferRef.current = null;
   }, []);
 
   const isCurrentRun = (marker) => Boolean(
@@ -1491,18 +1506,48 @@ export default function Dashboard() {
   const handleSelectOutputMode = useCallback((mode) => {
     if (!['speaker', 'obs'].includes(mode)) return;
     if (mode === 'speaker') {
-      setOutputModePreference('speaker');
-      setQueuedOutputIntent(null);
-      setOutputControlRecoveryRequired(false);
       // Local listening never waits for control ownership, an OBS stop proof,
       // another tab, or a server route transition. Keep a prepared OBS source
       // connected for fast return; new playback commands now go only to this
-      // tab's audio element. An already-running OBS song is migrated below by
-      // the playback-run ref once it is available.
+      // tab's audio element. For a live OBS run, transfer playback authority
+      // to a new Speaker run before sending best-effort OBS cleanup. This
+      // ordering fences even an immediate old-run STOP/ENDED event.
       const activeRun = activeRef.current;
       const activeEntry = stateRef.current?.currentEntry;
       if (activeRun?.outputMode === 'obs' && activeEntry) {
         const resumePosition = Number.isFinite(currentTime) ? currentTime : 0;
+        let transfer;
+        let transferredState;
+        try {
+          const nextActive = beginPlaybackRunRef.current?.(activeEntry, {
+            outputMode: 'speaker',
+            position: resumePosition,
+          });
+          if (!nextActive) throw new Error(t('playback.localSpeaker.loadFailed'));
+          transfer = createPlaybackOutputTransfer({
+            entry: activeEntry,
+            active: activeRun,
+            targetActive: nextActive,
+            resumePosition,
+          });
+          transferredState = commitPlaybackOutputTransfer(stateRef.current, transfer);
+          if (transferredState === stateRef.current) {
+            preparedSpeakerLoadQueueRef.current.discard(nextActive.runId);
+            throw new Error(t('playback.localSpeaker.loadFailed'));
+          }
+        } catch (error) {
+          showToast(error?.message || t('playback.localSpeaker.loadFailed'), 'error');
+          return;
+        }
+
+        // These refs are the synchronous event fence. A WebSocket terminal
+        // event can arrive before React paints, but it will already see the
+        // Speaker run and cannot finalize the transferred entry as history.
+        playbackOutputTransferRef.current = transfer;
+        stateRef.current = transferredState;
+        activeRef.current = transferredState.active;
+        setSharedState((previous) => commitPlaybackOutputTransfer(previous, transfer));
+
         try {
           Promise.resolve(sendOnAirCommand({
             type: 'stop',
@@ -1514,23 +1559,10 @@ export default function Dashboard() {
         } catch {
           showToast(t('onair.output.localSpeaker.obsCleanupFailed'), 'info');
         }
-        window.setTimeout(() => {
-          try {
-            const nextActive = beginPlaybackRunRef.current?.(activeEntry, {
-              outputMode: 'speaker',
-              position: resumePosition,
-            });
-            if (!nextActive) return;
-            setSharedState((previous) => (
-              previous.currentEntry?.entryId === activeEntry.entryId
-                ? { ...previous, active: nextActive }
-                : previous
-            ));
-          } catch (error) {
-            showToast(error?.message || t('playback.localSpeaker.loadFailed'), 'error');
-          }
-        }, 0);
       }
+      setOutputModePreference('speaker');
+      setQueuedOutputIntent(null);
+      setOutputControlRecoveryRequired(false);
       return;
     } else {
       // This is the single page-lifetime gate that wakes OBS control. The
@@ -1812,6 +1844,27 @@ export default function Dashboard() {
     return prepareStatesRef.current[song.src]?.status === 'ready' ? 'safe' : 'blocked';
   };
 
+  const dispatchPreparedPlaybackLoad = ({ entryId, runId, outputMode, command }) => {
+    let operation;
+    try {
+      operation = dispatchPlaybackCommand(command, outputMode);
+    } catch (error) {
+      operation = Promise.reject(error);
+    }
+    Promise.resolve(operation).catch((error) => {
+      window.setTimeout(() => {
+        handleMediaFailureRef.current?.(
+          { entryId, runId },
+          outputMode === 'obs'
+            ? t('onair.output.playback.source')
+            : t('playback.localSpeaker.source'),
+          error?.message || t('playback.localSpeaker.loadFailed'),
+        );
+      }, 0);
+    });
+  };
+  dispatchPreparedPlaybackLoadRef.current = dispatchPreparedPlaybackLoad;
+
   // 새 PlaybackRun 시작 (§1: runId는 재생 시도마다 발급).
   // setState updater 밖에서만 호출한다(D-10) — On-Air 명령 송신 같은 I/O가 있다.
   // 직접 재생 모드의 실제 시작은 숨김 플레이어의 key={runId} 리마운트 + autoPlay가
@@ -1853,35 +1906,36 @@ export default function Dashboard() {
         position: initialPosition,
         volume: outputVolumeForMode(volumeProfilesRef.current, runOutputMode)
       };
-      const dispatchLoad = () => {
-        // A local cached source can become ready in the same task. Wait until
-        // React has committed this run marker so its first PLAYING evidence
-        // cannot arrive before the dashboard knows which run owns it.
-        if (runOutputMode === 'speaker' && activeRef.current?.runId !== runId) return;
-        let operation;
-        try {
-          operation = dispatchPlaybackCommand(command, runOutputMode);
-        } catch (error) {
-          operation = Promise.reject(error);
-        }
-        Promise.resolve(operation).catch((error) => {
-          window.setTimeout(() => {
-            handleMediaFailureRef.current?.(
-              { entryId: entry.entryId, runId },
-              runOutputMode === 'obs'
-                ? t('onair.output.playback.source')
-                : t('playback.localSpeaker.source'),
-              error?.message || t('playback.localSpeaker.loadFailed'),
-            );
-          }, 0);
-        });
+      const preparedLoad = {
+        entryId: entry.entryId,
+        runId,
+        outputMode: runOutputMode,
+        command,
       };
-      if (runOutputMode === 'speaker') window.setTimeout(dispatchLoad, 0);
-      else dispatchLoad();
+      if (runOutputMode === 'speaker') {
+        // The matching React commit claims this command exactly once. A timer
+        // can run before a concurrent commit and silently lose the LOAD; the
+        // commit-owned queue has no such timing window.
+        preparedSpeakerLoadQueueRef.current.enqueue(preparedLoad);
+      } else {
+        dispatchPreparedPlaybackLoad(preparedLoad);
+      }
     }
     return { entryId: entry.entryId, runId, phase: 'starting', outputMode: runOutputMode };
   };
   beginPlaybackRunRef.current = beginPlaybackRun;
+
+  useEffect(() => {
+    const committedActive = activeRef.current;
+    if (isPlaybackOutputTransferCommitted(playbackOutputTransferRef.current, committedActive)) {
+      playbackOutputTransferRef.current = null;
+    }
+    const preparedLoad = preparedSpeakerLoadQueueRef.current.claim(committedActive);
+    if (!preparedLoad) return;
+    // claim() deletes before dispatch, so StrictMode or a later render cannot
+    // emit a duplicate LOAD for the same playback run.
+    dispatchPreparedPlaybackLoadRef.current?.(preparedLoad);
+  }, [active?.entryId, active?.outputMode, active?.runId]);
 
   // 재생 출력 정지(다음 곡 없음). On-Air 명령 실패는 호출자가 처리한다.
   const stopPlaybackOutput = ({ stoppingEntryId, stoppingRunId } = {}) => {
@@ -2872,6 +2926,10 @@ export default function Dashboard() {
       // Legacy observer snapshots describe the Worker/OBS transport. A local
       // speaker run owns its own timeline and must never be paused, restored,
       // or relabelled by a late remote snapshot.
+      if (shouldIgnoreRemotePlayback({
+        active: activeRef.current,
+        transfer: playbackOutputTransferRef.current,
+      })) return;
       if (actualOutputMode !== 'obs' && activeRef.current?.outputMode !== 'obs') return;
       const remoteTransport = payload.transport || {};
       const remoteSong = remoteTransport.song;
@@ -2884,7 +2942,8 @@ export default function Dashboard() {
           const restoredActive = {
             entryId: restored.entryId,
             runId: newId(),
-            phase: onAirStatusToPhase(remoteTransport.status)
+            phase: onAirStatusToPhase(remoteTransport.status),
+            outputMode: 'obs',
           };
           setSharedState((previous) => {
             if (previous.currentEntry?.entryId === restored.entryId) return previous;
@@ -2897,6 +2956,10 @@ export default function Dashboard() {
       setIsPlaying(remoteTransport.status === 'playing' || remoteTransport.status === 'buffering' || remoteTransport.status === 'loading');
     }
     if (payload.type === 'player_event') {
+      if (shouldIgnoreRemotePlayback({
+        active: activeRef.current,
+        transfer: playbackOutputTransferRef.current,
+      })) return;
       const event = payload.event || {};
       const remoteTransport = payload.transport || {};
       if (Number.isFinite(remoteTransport.position)) setCurrentTime(remoteTransport.position);
@@ -2934,10 +2997,17 @@ export default function Dashboard() {
       }
     }
     if (payload.type === 'session_ended') {
+      const reason = payload.reasonCode || payload.reason || '';
+      if (reason !== 'explicit' && shouldIgnoreRemotePlayback({
+        active: activeRef.current,
+        transfer: playbackOutputTransferRef.current,
+      })) {
+        showToast(t('onair.session.ended.localSpeakerContinues'), 'info');
+        return;
+      }
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
-      const reason = payload.reasonCode || payload.reason || '';
       if (reason === 'explicit') {
         // Destructive list cleanup is reserved for the user's explicit
         // "end broadcast" action. A player timeout or OBS restart must never
@@ -2945,11 +3015,6 @@ export default function Dashboard() {
         revokePageBlobSrcs(collectBlobSrcs(stateRef.current));
         setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
         showToast(t('onair.session.ended.explicit'), 'info');
-        return;
-      }
-
-      if (activeRef.current?.outputMode === 'speaker') {
-        showToast(t('onair.session.ended.localSpeakerContinues'), 'info');
         return;
       }
 

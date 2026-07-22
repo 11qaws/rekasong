@@ -1,5 +1,16 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — v0.2.13 OBS → Speaker 원자적 재생권 이관과 방송 시작 금지
+
+- 공개 v0.2.12의 실제 OBS 재검증에서 1차 forwarded-ref 문제는 사라졌지만 두 번째 순서 경쟁을 확인했다. 사용자가 OBS 재생 중 Speaker를 누르면 UI는 `스피커 송출 중`으로 바뀌고 OBS 신호도 멈췄으나, OBS STOP/ENDED 증거가 Speaker run을 만드는 `setTimeout(0)`보다 먼저 도착해 현재 곡을 `natural` 완료로 이력에 넣고 source를 회수했다. 그 결과 Speaker `<audio>`가 재생할 곡을 잃었다.
+- v0.2.13은 같은 곡의 새 Speaker run을 먼저 만들고 `currentEntry`·queue·history는 그대로 둔 채 active 재생권만 한 번에 교체한다. React paint 전에도 `stateRef`와 `activeRef`를 새 run으로 동기화해 즉시 도착한 이전 OBS STOP/ENDED/error/snapshot이 곡을 완료·실패·복원 처리하지 못하게 한다. 그 뒤의 OBS STOP은 실패해도 Speaker 시작을 막지 않는 best-effort 정리다.
+- Speaker LOAD는 타이머 한 번에 맡기지 않는다. 새 active marker가 React에 실제 commit된 뒤 작은 bounded queue에서 일치하는 LOAD를 claim하고, claim 전에 제거해 StrictMode·재렌더에서도 정확히 한 번만 보낸다. commit되지 않은 시도는 최대 8개로 제한하고, 하나가 commit되면 나머지 stale Blob command 참조를 즉시 회수한다.
+- 원격 session 종료도 로컬 Speaker run을 멈추거나 현재 시간을 0으로 되돌리지 않는다. 단 사용자가 명시적으로 `방송 종료`를 실행한 `explicit` 종료는 기존처럼 목록과 Blob을 정리한다. legacy snapshot에서 복원한 run에도 `outputMode: 'obs'`를 붙여 이후 Speaker 이관과 늦은 이벤트 차단이 같은 규칙을 사용한다.
+- 방송 안전 경계를 별도 회귀 계약으로 고정했다. 앱/Worker 명령 allowlist에는 OBS 방송·녹화 시작/종료 명령이 없고, OBS runtime의 streaming/recording 상태는 관측만 한다. 실제 시험 자동화는 새로 확인한 `streaming=false`와 전용 test profile·scene이 없으면 PCM을 재생하지 않으며, 사용자가 허용한 로컬 녹화만 시작·종료할 수 있다. `Start Streaming`과 방송용 profile·scene·Browser Source URL 조작은 금지한다.
+- 이번 작업 중 실제 OBS 방송은 시작되지 않았다. OBS UI가 `Start Streaming`·`Start Recording`, 방송 타이머 `00:00:00`인 것을 다시 확인했고, 시험용 Browser Source URL은 원래 224자 URL로 정확히 복원해 설정 파일에서 일치 여부와 임시 URL 부재를 확인했다. 이후 임시 headless 시험 브라우저도 종료했으며, 안전 경계 합의 뒤 실제 OBS 재생은 추가 실행하지 않았다.
+- 검증: 자동 테스트 674/674, lint 신규 경고 0(기존 `functions/api/gemini.js` escape 경고 2건만 유지), 모든 Functions/Worker 문법, production build, OBS 정적 closure 예산(raw 382,809B / gzip 117,317B / brotli 102,792B)을 통과했다. 로컬 Speaker 실재생은 session HTTP 0회/WebSocket 0개/frame 0개, local playback chunk 2개/remote chunk 0개를 유지했고 로컬 파일 복구·drag도 통과했다. 1,000곡은 cold 223.8ms, warm p95 32.7ms, post-GC heap 증가 0B, 320px overflow 0이었다.
+- 로컬 production Dashboard는 124 DOM node, decoded resource 1,000,733B, warm DCL 23.3–25.0ms, warm long task 0건이었다. cold 73–79ms long task 1건은 공개 v0.2.12에서도 80ms로 동일하게 재현돼 이번 변경의 신규 회귀가 아니며, Dashboard chunk는 362.83kB raw / 99.57kB gzip이다. 한국어·영어 320/375/768/1100px, 320px 설정창, 기본 Speaker, 유레카의 3px 노란 머리선도 모두 통과했다.
+
 ## 2026-07-22 (Codex) — v0.2.12 재생 중 OBS → Speaker 전환 복구
 
 - 공개 v0.2.11과 실제 OBS 30.2.0 `Rekasong` Browser Source로 48kHz mono 880Hz 펄스 WAV를 재생했다. OBS 믹서의 `Rekasong` 레벨이 실제로 움직였고, 로컬 녹화 `C:\Users\Qumin\Videos\2026-07-22 18-40-45.mp4`는 223.933초 H.264 + AAC 48kHz stereo, 34,830,505바이트였다. 첫 실행은 18개 펄스를 모두 기록했고 두 번째 실행은 Speaker 전환 시점까지 10개를 기록한 뒤 OBS 신호가 멈췄으며, 전체 peak는 -19.1dB로 clipping이 없었다. 라이브 송출은 시작하지 않았다.

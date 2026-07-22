@@ -52,6 +52,7 @@ OBS profile, scene collection, source, audio device, sample rate, monitoring, tr
 다음 중 하나면 자동 시험을 시작하지 않는다.
 
 - production 방송이 실제 송출 중이다.
+- 현재 OBS 상태를 새로 조회해 `streaming=false`임을 확인할 수 없다. 스트림 키가 연결돼 있다는 사실은 방송 상태와 별개이며, 확인 불가는 OFF로 간주하지 않는다.
 - OBS가 이미 녹화 중인데 그 녹화의 소유권을 현재 `checkId`로 증명할 수 없다.
 - 기존 출력이 완전히 정지했다는 pause·source detach·autoplay cancel 증거가 없다.
 - 같은 출력 모드의 eligible player가 0개 또는 2개 이상이다.
@@ -61,6 +62,8 @@ OBS profile, scene collection, source, audio device, sample rate, monitoring, tr
 - player heartbeat, source-active attestation, lease 또는 실제 media 상태 중 하나가 `unknown`이다.
 
 앱은 위 상황에서 speaker로 자동 fallback하거나 자동 resume하지 않는다. 긴급 정지는 모든 live player에 보내되, 정지 ACK가 모두 모이기 전에는 새 출력을 활성화하지 않는다.
+
+앱과 시험 자동화는 `Start Streaming` 또는 방송 종료를 조작하지 않는다. 실제 OBS 자동 조작은 전용 test profile·scene에서 사용자가 허용한 로컬 녹화 시작·종료만 가능하다. 방송용 profile·scene·Browser Source URL은 시험 대상으로 수정하지 않는다.
 
 ## 4. 시험 환경 준비
 
