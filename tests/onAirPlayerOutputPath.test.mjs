@@ -136,6 +136,31 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   );
   assert.match(
     source,
+    /const \[obsControlRequested, setObsControlRequested\] = useState\(false\);/,
+    'a new page must start as a normal Speaker player without OBS control intent',
+  );
+  assert.match(
+    source,
+    /useOnAirSession\([\s\S]*?\{ enabled: obsControlRequested, observeOnly: true \}[\s\S]*?\);/,
+    'the legacy OBS observer must remain dormant until OBS is explicitly selected',
+  );
+  assert.match(
+    source,
+    /useOnAirOutputControl\(\{[\s\S]*?enabled: obsControlRequested\s+&& onAir\.configured/,
+    'the authoritative OBS controller must remain dormant during Speaker listening',
+  );
+  assert.match(
+    source,
+    /const outputControlUnavailable = obsControlRequested\s+&& !outputControlTakeoverPending/,
+    'a dormant OBS controller must not turn into a visible Speaker route failure',
+  );
+  assert.match(
+    source,
+    /const outputBootstrapSelectionAvailable = !obsControlRequested \|\| Boolean\(/,
+    'the first explicit OBS click must be allowed to start the controller bootstrap',
+  );
+  assert.match(
+    source,
     /<DashboardLocalSpeaker[\s\S]*?ref=\{localSpeakerRef\}[\s\S]*?onEvidence=\{handleLocalSpeakerEvidence\}/,
     'the dashboard must host its own local player without a Worker route lease',
   );
@@ -186,10 +211,22 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   const speakerSelectionStart = source.indexOf("if (mode === 'speaker') {");
   const obsSelectionStart = source.indexOf('} else {', speakerSelectionStart);
   const speakerSelection = source.slice(speakerSelectionStart, obsSelectionStart);
+  const obsSelectionEnd = source.indexOf('outputIntentSequenceRef.current += 1;', obsSelectionStart);
+  const obsSelection = source.slice(obsSelectionStart, obsSelectionEnd);
   assert.doesNotMatch(
     speakerSelection,
     /outputControllerReady|outputControlConflict|outputControlUnavailable|selectLocalSpeakerMode/,
     'Speaker selection must never wait for OBS authority or a server route transition',
+  );
+  assert.doesNotMatch(
+    speakerSelection,
+    /setObsControlRequested\(false\)/,
+    'same-page Speaker recovery keeps an already-started OBS controller alive for cleanup',
+  );
+  assert.match(
+    obsSelection,
+    /setObsControlRequested\(true\)/,
+    'only an explicit OBS selection may wake the OBS controller',
   );
   assert.match(
     source,

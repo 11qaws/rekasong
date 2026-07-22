@@ -168,6 +168,10 @@ export default function Dashboard() {
   // explicit opt-in for this visit; a stale browser preference must never make
   // a returning listener wait for a broadcast route.
   const [outputModePreference, setOutputModePreference] = useState('speaker');
+  // A media credential may be needed for prepared YouTube bytes or an upload,
+  // but that does not make this page an OBS controller. Keep both control
+  // WebSockets dormant until this visit contains an explicit OBS intent.
+  const [obsControlRequested, setObsControlRequested] = useState(false);
   const [localSpeakerState, setLocalSpeakerState] = useState('initializing');
   const [obsMixerVerificationRecord, setObsMixerVerificationRecord] = useState(() => {
     if (typeof window === 'undefined') return null;
@@ -200,7 +204,7 @@ export default function Dashboard() {
   const onAirEventHandlerRef = useRef(null);
   const onAir = useOnAirSession(
     (payload) => onAirEventHandlerRef.current?.(payload),
-    { observeOnly: true }
+    { enabled: obsControlRequested, observeOnly: true }
   );
   const useOnAirPlayer = onAir.configured;
   const onAirSession = onAir.session;
@@ -223,7 +227,8 @@ export default function Dashboard() {
     baseUrl: onAir.baseUrl,
     // Protocol v2 owns its control lease. A transient legacy observer reconnect
     // must not dispose that owner in the middle of a run.
-    enabled: onAir.configured
+    enabled: obsControlRequested
+      && onAir.configured
       && Boolean(onAirSession)
       && !['invalid', 'ended'].includes(onAirSessionState)
   });
@@ -247,17 +252,18 @@ export default function Dashboard() {
       : null;
   const outputControlConflict = outputControlTakeoverPending
     || outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.OTHER_OWNER;
-  const outputControlUnavailable = !outputControlTakeoverPending
+  const outputControlUnavailable = obsControlRequested
+    && !outputControlTakeoverPending
     && (outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.UNAVAILABLE
       || Boolean(outputControlRecoveryReason));
   const outputControlSafeToTakeOver = isSafeOutputControlTakeover(outputControl.snapshot);
-  const outputBootstrapSelectionAvailable = Boolean(
+  const outputBootstrapSelectionAvailable = !obsControlRequested || Boolean(
     !outputControllerEverReady
-    && !outputControllerReady
-    && !outputControlConflict
-    && !outputControlUnavailable
-    && !outputControlRecoveryReason
-    && !['invalid', 'ended'].includes(onAirSessionState),
+      && !outputControllerReady
+      && !outputControlConflict
+      && !outputControlUnavailable
+      && !outputControlRecoveryReason
+      && !['invalid', 'ended'].includes(onAirSessionState),
   );
 
   useEffect(() => {
@@ -1378,6 +1384,10 @@ export default function Dashboard() {
       }
       return;
     } else {
+      // This is the single page-lifetime gate that wakes OBS control. The
+      // existing session bootstrap effect will create/adopt media credentials,
+      // then the queued intent waits for authoritative control readiness.
+      setObsControlRequested(true);
       if (activeRef.current?.outputMode === 'speaker') {
         showToast(t('onair.output.obs.finishLocalTrackFirst'), 'info');
         return;
