@@ -87,6 +87,7 @@ import {
 import {
   outputSwitchFailureMessageKey,
 } from '../copy/outputMessages';
+import { deriveObsSetupWaitReason } from '../lib/playbackOutputStatus';
 import { getAppMessage as t } from '../copy/appMessages';
 import { useAppLocale } from '../hooks/useAppLocale';
 import {
@@ -285,6 +286,23 @@ export default function Dashboard() {
     && (outputControlAuthority.state === OUTPUT_CONTROL_AUTHORITY_STATES.UNAVAILABLE
       || Boolean(outputControlRecoveryReason));
   const outputControlSafeToTakeOver = isSafeOutputControlTakeover(outputControl.snapshot);
+  const obsPlayerCandidate = outputControl.outputView?.candidates?.obs ?? null;
+  const connectedObsPlayers = outputControl.snapshot?.playerSnapshot?.players?.filter((player) => (
+    player?.clientKind === 'obs-browser-source'
+  )) ?? [];
+  // A source that is still connected but hidden is a setup instruction, not a
+  // broken route. Keep the user's OBS intent alive until the source becomes an
+  // eligible candidate again.
+  const obsSourceInactive = connectedObsPlayers.length === 1 && Boolean(
+    connectedObsPlayers[0]?.runtime?.sourceActive === false
+    || connectedObsPlayers[0]?.runtime?.sourceVisible === false
+  );
+  const obsSetupWaitReason = deriveObsSetupWaitReason({
+    requestedMode: queuedOutputIntent?.mode ?? null,
+    controllerReady: outputControllerReady,
+    candidateState: obsPlayerCandidate?.state ?? null,
+    sourceInactive: obsSourceInactive,
+  });
   const outputBootstrapSelectionAvailable = !obsControlRequested || Boolean(
     !outputControllerEverReady
       && !outputControllerReady
@@ -319,7 +337,11 @@ export default function Dashboard() {
       }
     }, OUTPUT_INTENT_WAIT_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [outputControllerReady, queuedOutputIntent, retryOnAirOutputControl]);
+  }, [
+    outputControllerReady,
+    queuedOutputIntent,
+    retryOnAirOutputControl,
+  ]);
 
   const outputControlSessionKey = onAirSession?.room && onAirSession?.controlToken
     ? `${onAirSession.room}:${onAirSession.controlToken}`
@@ -364,9 +386,11 @@ export default function Dashboard() {
         ? 'blocked'
         : !outputControllerReady
           ? 'connecting'
-    : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
-      ? 'switching'
-      : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
+          : obsSetupWaitReason
+            ? 'connecting'
+            : outputSwitchStatus === 'deactivating' || outputSwitchStatus === 'activating'
+              ? 'switching'
+              : outputSwitchStatus === 'blocked' ? 'blocked' : 'idle';
   const obsSourceTemporarilyInactive = establishedObsRouteConnected && Boolean(
     activeOutputPlayer?.runtime?.sourceActive === false
     || activeOutputPlayer?.runtime?.sourceVisible === false
@@ -390,18 +414,6 @@ export default function Dashboard() {
         messageKey: 'onair.output.status.obs.heartbeatDelayed',
       }
       : outputControl.outputView;
-  const obsPlayerCandidate = outputControl.outputView?.candidates?.obs ?? null;
-  const connectedObsPlayers = outputControl.snapshot?.playerSnapshot?.players?.filter((player) => (
-    player?.clientKind === 'obs-browser-source'
-  )) ?? [];
-  // A connected Browser Source that explicitly reports inactive/hidden is a
-  // concrete OBS setup state, not an unknown route that needs destructive
-  // reset. Initial unobserved runtime remains valid; only callback-proven false
-  // reaches this branch.
-  const obsSourceInactive = connectedObsPlayers.length === 1 && Boolean(
-    connectedObsPlayers[0]?.runtime?.sourceActive === false
-    || connectedObsPlayers[0]?.runtime?.sourceVisible === false
-  );
   const obsAudioCheck = deriveObsAudioCheckView({
     snapshot: outputControl.snapshot,
     actualOutputMode,
@@ -1624,6 +1636,10 @@ export default function Dashboard() {
       return;
     }
     if (!outputControllerReady) return;
+    // A missing, duplicate, or hidden OBS source is a known setup state. Keep
+    // the intent pending and the control connection alive; when exactly one
+    // eligible source appears this same effect continues automatically.
+    if (obsSetupWaitReason) return;
     if (claimedOutputIntentRef.current === queuedOutputIntent.id) return;
 
     claimedOutputIntentRef.current = queuedOutputIntent.id;
@@ -1637,6 +1653,7 @@ export default function Dashboard() {
     outputControlRecoveryReason,
     outputControlUnavailable,
     outputControlSessionKey,
+    obsSetupWaitReason,
     queuedOutputIntent,
   ]);
 
@@ -3139,6 +3156,7 @@ export default function Dashboard() {
             onAirStatus={onAirSessionState}
             onAirPlayerCandidate={obsPlayerCandidate}
             obsSourceInactive={obsSourceInactive}
+            obsSetupWaitReason={obsSetupWaitReason}
             onAirDisplayConnected={onAir.displayConnected}
             onPrepareOnAir={onAir.preparePlayer}
             onPrepareOnAirDisplay={onAir.prepareDisplay}

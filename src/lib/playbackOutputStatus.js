@@ -1,6 +1,19 @@
 const VALID_OUTPUT_MODES = new Set(['speaker', 'obs']);
 const VALID_SWITCH_STATES = new Set(['idle', 'connecting', 'conflict', 'switching', 'blocked']);
 
+export function deriveObsSetupWaitReason({
+  requestedMode = null,
+  controllerReady = false,
+  candidateState = null,
+  sourceInactive = false,
+} = {}) {
+  if (requestedMode !== 'obs' || controllerReady !== true) return null;
+  if (sourceInactive === true) return 'source_inactive';
+  if (candidateState === 'none') return 'candidate_none';
+  if (candidateState === 'duplicate') return 'candidate_duplicate';
+  return null;
+}
+
 export function derivePlaybackOutputNextAction({
   statusKey,
   targetMode = null,
@@ -20,6 +33,15 @@ export function derivePlaybackOutputNextAction({
   }
   if (statusKey === 'onair.output.header.connecting.speaker') return 'onair.output.nextAction.speaker.connecting';
   if (statusKey === 'onair.output.header.connecting.obs') return 'onair.output.nextAction.obs.connecting';
+  if (statusKey === 'onair.output.header.setup.obs.none') {
+    return 'onair.output.nextAction.obs.candidateNone';
+  }
+  if (statusKey === 'onair.output.header.setup.obs.duplicate') {
+    return 'onair.output.nextAction.obs.candidateDuplicate';
+  }
+  if (statusKey === 'onair.output.header.setup.obs.sourceInactive') {
+    return 'onair.output.nextAction.obs.sourceInactiveConnected';
+  }
   if (statusKey === 'onair.output.header.blocked.obs.sourceInactive') {
     return 'onair.output.nextAction.obs.sourceInactive';
   }
@@ -78,6 +100,19 @@ export function derivePlaybackOutputStatus({
       return { key: 'onair.output.header.connecting.speaker', tone: 'pending', mode: null };
     }
     if (normalizedTargetMode === 'obs') {
+      if (targetSourceInactive === true) {
+        return {
+          key: 'onair.output.header.setup.obs.sourceInactive',
+          tone: 'notice',
+          mode: null,
+        };
+      }
+      if (targetCandidateState === 'none') {
+        return { key: 'onair.output.header.setup.obs.none', tone: 'notice', mode: null };
+      }
+      if (targetCandidateState === 'duplicate') {
+        return { key: 'onair.output.header.setup.obs.duplicate', tone: 'notice', mode: null };
+      }
       return { key: 'onair.output.header.connecting.obs', tone: 'pending', mode: null };
     }
     return { key: 'onair.output.header.active.connecting', tone: 'pending', mode: null };

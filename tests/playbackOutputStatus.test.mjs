@@ -2,9 +2,45 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  deriveObsSetupWaitReason,
   derivePlaybackOutputNextAction,
   derivePlaybackOutputStatus,
 } from '../src/lib/playbackOutputStatus.js';
+
+test('known OBS setup gaps wait without becoming route failures', () => {
+  assert.equal(deriveObsSetupWaitReason({
+    requestedMode: 'obs',
+    controllerReady: false,
+    candidateState: 'none',
+  }), null);
+  assert.equal(deriveObsSetupWaitReason({
+    requestedMode: 'obs',
+    controllerReady: true,
+    candidateState: 'none',
+  }), 'candidate_none');
+  assert.equal(deriveObsSetupWaitReason({
+    requestedMode: 'obs',
+    controllerReady: true,
+    candidateState: 'duplicate',
+  }), 'candidate_duplicate');
+  assert.equal(deriveObsSetupWaitReason({
+    requestedMode: 'obs',
+    controllerReady: true,
+    candidateState: 'single',
+    sourceInactive: true,
+  }), 'source_inactive');
+  assert.equal(deriveObsSetupWaitReason({
+    requestedMode: 'obs',
+    controllerReady: true,
+    candidateState: 'single',
+    sourceInactive: false,
+  }), null, 'one eligible visible player must release the pending intent');
+  assert.equal(deriveObsSetupWaitReason({
+    requestedMode: 'speaker',
+    controllerReady: true,
+    candidateState: 'none',
+  }), null);
+});
 
 test('output status always maps to a concrete next action', () => {
   assert.equal(
@@ -46,6 +82,48 @@ test('output status always maps to a concrete next action', () => {
       controlRecoveryRequired: true,
     }),
     'onair.output.nextAction.control',
+  );
+  assert.equal(
+    derivePlaybackOutputNextAction({
+      statusKey: 'onair.output.header.setup.obs.none',
+      targetMode: 'obs',
+    }),
+    'onair.output.nextAction.obs.candidateNone',
+  );
+  assert.equal(
+    derivePlaybackOutputNextAction({
+      statusKey: 'onair.output.header.setup.obs.duplicate',
+      targetMode: 'obs',
+    }),
+    'onair.output.nextAction.obs.candidateDuplicate',
+  );
+});
+
+test('OBS setup states tell the user what to do without showing a broken route', () => {
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'connecting',
+      targetMode: 'obs',
+      targetCandidateState: 'none',
+    }),
+    { key: 'onair.output.header.setup.obs.none', tone: 'notice', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'connecting',
+      targetMode: 'obs',
+      targetCandidateState: 'duplicate',
+    }),
+    { key: 'onair.output.header.setup.obs.duplicate', tone: 'notice', mode: null },
+  );
+  assert.deepEqual(
+    derivePlaybackOutputStatus({
+      outputSwitchState: 'connecting',
+      targetMode: 'obs',
+      targetCandidateState: 'none',
+      targetSourceInactive: true,
+    }),
+    { key: 'onair.output.header.setup.obs.sourceInactive', tone: 'notice', mode: null },
   );
 });
 

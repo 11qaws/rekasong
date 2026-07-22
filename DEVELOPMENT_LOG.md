@@ -1,5 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.21 OBS 준비 대기와 경로 고장 분리
+
+- OBS를 처음 선택했지만 Browser Source가 아직 열리지 않은 정상 설정 단계를 기존 코드가 즉시 `selectOutputMode('obs')`로 넘겼고, coordinator의 exact-one 후보 검사가 이를 전환 실패로 확정했다. 그 결과 실제 고장이 아닌 `OBS 플레이어 없음`이 `송출 경로 확인 필요`·완전 초기화·긴급 정지 UI로 승격됐다.
+- 사용자가 명시적으로 OBS를 고른 의도와 실제 활성 경로를 계속 분리한다. control이 writable인 뒤 후보가 없음·중복이거나 연결된 단일 source가 숨겨져 있으면 선택 의도를 메모리에 유지하고 route 명령을 보내지 않는다. 정확히 하나의 보이는 eligible player가 나타나면 같은 React effect가 그 의도를 한 번만 소비해 활성화를 자동으로 이어 간다. Speaker 선택은 대기 의도를 즉시 취소하고 서버 증명 없이 로컬 플레이어로 돌아간다.
+- 이 준비 대기는 실패 watchdog의 대상이 아니다. control 자체가 8초 안에 writable해지지 않는 경우만 기존 bounded reconnect 대상으로 유지하며, candidate `unknown`, 권한 충돌, malformed snapshot, 실제 route timeout은 계속 fail-closed다. 준비 대기 중에는 음악 LOAD/PLAY, 재시도 polling, 추가 heartbeat, 완전 초기화나 긴급 정지를 자동 실행하지 않는다.
+- 헤더와 설정은 `OBS 플레이어를 열어 주세요`·`하나만 남겨 주세요`·`OBS 소스를 켜 주세요` 중 실제 다음 행동을 한국어/영어로 표시한다. 조건이 맞으면 자동으로 계속된다는 점을 명시하고, 준비 전에는 오디오 점검 버튼과 이전 mixer 확인 기록을 노출하지 않는다.
+- production 설정의 로컬 UI에서 플레이어가 없는 OBS 선택을 11초 이상 유지해도 경고·초기화·긴급 정지가 나타나지 않았고, Speaker 선택은 1.2초 뒤에도 `스피커 송출 중`을 유지했다. 같은 동작을 build preview에서 9초 대기 뒤 다시 확인했으며 영문 화면은 `Open the OBS player`와 자동 연결 안내를 표시하고 언어 선택지 외 한국어 앱 문구를 남기지 않았다.
+- 전체 `709/709` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), production build, OBS bundle 예산을 통과했다. Dashboard는 `369.83kB raw / 101.28kB gzip`으로 v0.2.20보다 raw 약 1.49kB·gzip 약 0.37kB 증가했고, OBS closure는 기존과 같은 `383,782B raw / 117,550B gzip / 102,988B brotli`다.
+- production preview smoke는 기본 Speaker, YouTube 단일 상위 소스+Search/Playlist, Setlink, Meloming, 한·영 reload, 320/375/768/1100px, 320px 설정, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류와 ntfy 요청은 0, warm DCL `24.8ms`, long task 0, JS heap 약 `7.87MiB`였다.
+
 ## 2026-07-23 (Codex) — v0.2.20 OBS 장면 전환 연속성과 제어 연결 관측 분리
 
 - 실제 앱 설정은 production Worker `rekasong-session.11qaws.workers.dev`를 사용하지만, 이전 작업 기록에 남은 `rekasong-session.11qaws-test.workers.dev`는 아직 legacy snapshot만 반환했다. Protocol v2 실제 OBS 시험은 production 주소로 바로잡았고 공개 Pages+production Worker 8초 smoke를 먼저 통과했다. 오래된 staging 주소는 별도로 업그레이드하기 전까지 v2 합격 근거로 사용하지 않는다.

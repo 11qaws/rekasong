@@ -95,7 +95,12 @@ test('PlaybackPanel keeps only output status in the header and route controls in
   assert.match(source.slice(detailsStart), /className="output-route-switch"/);
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.selected/);
   assert.match(source.slice(detailsStart), /onair\.output\.selector\.status\.actual/);
-  assert.match(source.slice(detailsStart), /outputView\?\.messageKey/);
+  assert.match(
+    source,
+    /const outputRouteDetailMessageKey = obsSetupWaitMessageKey[\s\S]*?outputView\?\.messageKey/,
+    'setup guidance must take precedence without discarding authoritative route diagnostics',
+  );
+  assert.match(source.slice(detailsStart), /t\(outputRouteDetailMessageKey\)/);
   assert.match(source.slice(detailsStart), /obs\.setup\.recovery\.routeUnknown/);
 });
 
@@ -331,6 +336,14 @@ test('speaker stays clickable while OBS intent waits for writable authority', as
   );
   assert.match(dashboardSource, /const \[outputControllerEverReady, setOutputControllerEverReady\] = useState\(false\);/);
   assert.match(dashboardSource, /!outputControllerEverReady\s+&& !outputControllerReady/);
+  assert.match(dashboardSource, /const obsSetupWaitReason = deriveObsSetupWaitReason\(\{/);
+  assert.match(
+    dashboardSource,
+    /if \(!outputControllerReady\) return;[\s\S]*?if \(obsSetupWaitReason\) return;[\s\S]*?dispatchOutputModeSelection\(queuedOutputIntent\.mode\);/,
+    'a known missing, duplicate, or hidden OBS source must stay pending until it becomes one eligible player',
+  );
+  assert.match(dashboardSource, /obsSetupWaitReason[\s\S]*?\? 'connecting'/);
+  assert.match(dashboardSource, /obsSetupWaitReason=\{obsSetupWaitReason\}/);
   assert.match(
     dashboardSource,
     /if \(!outputControllerReady\) return;[\s\S]*?claimedOutputIntentRef\.current = queuedOutputIntent\.id;[\s\S]*?setQueuedOutputIntent\(null\);[\s\S]*?dispatchOutputModeSelection\(queuedOutputIntent\.mode\);/,
@@ -539,7 +552,10 @@ test('a connected but hidden OBS source gets a direct recovery action without fu
     dashboardSource,
     /const obsSourceInactive = connectedObsPlayers\.length === 1[\s\S]*?sourceActive === false[\s\S]*?sourceVisible === false/,
   );
-  assert.match(panelSource, /targetSourceInactive: failedSelectionMode === 'obs' && obsSourceInactive/);
+  assert.match(
+    panelSource,
+    /targetSourceInactive: \(failedSelectionMode === 'obs' \|\| transitionTargetMode === 'obs'\)[\s\S]*?&& obsSourceInactive/,
+  );
   assert.match(panelSource, /activeSourceInactive: selectedOutputMode === 'obs' && obsSourceInactive/);
   assert.match(panelSource, /connectedButInactive=\{obsSourceInactive\}/);
   assert.match(panelSource, /obs\.setup\.player\.candidate\.sourceInactive/);
@@ -551,6 +567,7 @@ test('a connected but hidden OBS source gets a direct recovery action without fu
   for (const key of [
     'onair.output.header.blocked.obs.sourceInactive',
     'onair.output.header.active.obs.sourceInactive',
+    'onair.output.header.setup.obs.sourceInactive',
     'onair.output.nextAction.obs.sourceInactive',
     'onair.output.nextAction.obs.sourceInactiveConnected',
     'onair.output.selector.status.sourceInactive',
@@ -691,6 +708,10 @@ test('initial output setup copy is calm and does not claim a server failure', ()
   assert.doesNotMatch(outputMessageCatalog.ko['onair.output.selector.status.connecting'], /서버|실패|오류/);
   assert.match(outputMessageCatalog.ko['onair.output.selector.status.connecting'], /정상 단계/);
   assert.match(outputMessageCatalog.en['onair.output.selector.status.connecting'], /normal/i);
+  assert.match(outputMessageCatalog.ko['onair.output.nextAction.obs.candidateNone'], /자동/);
+  assert.match(outputMessageCatalog.ko['onair.output.nextAction.obs.candidateDuplicate'], /자동/);
+  assert.doesNotMatch(outputMessageCatalog.ko['onair.output.nextAction.obs.candidateNone'], /다시 선택/);
+  assert.doesNotMatch(outputMessageCatalog.en['onair.output.nextAction.obs.candidateNone'], /choose OBS again/i);
   assert.doesNotMatch(outputMessageCatalog.ko['obs.setup.server.connecting'], /대기|실패|오류/);
   assert.match(outputMessageCatalog.ko['obs.setup.player.waiting'], /아직 열리지 않았습니다/);
   assert.match(outputMessageCatalog.ko['obs.setup.display.waiting'], /아직 열리지 않았습니다/);
@@ -698,6 +719,12 @@ test('initial output setup copy is calm and does not claim a server failure', ()
     'obs.setup.server.connecting',
     'obs.setup.player.waiting',
     'obs.setup.display.waiting',
+    'onair.output.header.setup.obs.none',
+    'onair.output.header.setup.obs.duplicate',
+    'onair.output.selector.status.waitingForObsPlayer',
+    'onair.output.selector.status.duplicateObsPlayer',
+    'onair.output.status.connecting',
+    'obs.audioCheck.block.connectionPreparing',
   ]) {
     assert.ok(outputMessageCatalog.en[key]?.trim(), `missing calm English setup copy for ${key}`);
   }

@@ -67,6 +67,7 @@ export default function PlaybackPanel({
   onAirStatus,
   onAirPlayerCandidate,
   obsSourceInactive = false,
+  obsSetupWaitReason = null,
   onAirDisplayConnected,
   onEndBroadcastSession,
   canEndBroadcastSession = false,
@@ -176,6 +177,16 @@ export default function PlaybackPanel({
   const pendingSelectionMode = pendingOutputMode === 'speaker' || pendingOutputMode === 'obs'
     ? pendingOutputMode
     : null;
+  const obsSetupWaitMessageKey = ({
+    candidate_none: 'obs.audioCheck.block.candidateNone',
+    candidate_duplicate: 'obs.audioCheck.block.candidateDuplicate',
+    source_inactive: 'obs.audioCheck.block.sourceInactive',
+  })[obsSetupWaitReason] ?? null;
+  const obsSetupSelectionStatusKey = ({
+    candidate_none: 'onair.output.selector.status.waitingForObsPlayer',
+    candidate_duplicate: 'onair.output.selector.status.duplicateObsPlayer',
+    source_inactive: 'onair.output.selector.status.sourceInactiveWaiting',
+  })[obsSetupWaitReason] ?? null;
   const outputRouteStateUnknown = outputView?.statusCode === 'state_unknown';
   const outputLeaseNeedsEmergencyStop = outputRouteStateUnknown
     && ['unknown', 'failed'].includes(outputView?.lease?.status);
@@ -184,6 +195,10 @@ export default function PlaybackPanel({
   const normalizedOutputSwitchState = ['idle', 'connecting', 'conflict', 'switching', 'blocked'].includes(outputSwitchState)
     ? outputSwitchState
     : 'blocked';
+  const isObsSetupPending = selectedOutputMode === 'obs'
+    && normalizedOutputSwitchState === 'connecting';
+  const outputRouteDetailMessageKey = obsSetupWaitMessageKey
+    ?? (isObsSetupPending ? 'onair.output.status.connecting' : outputView?.messageKey);
   const outputSelectionLocked = ['conflict', 'switching'].includes(normalizedOutputSwitchState)
     || (normalizedOutputSwitchState === 'connecting' && !allowOutputSelectionWhileConnecting)
     || outputControlRecoveryRequired
@@ -293,7 +308,8 @@ export default function PlaybackPanel({
     isRouteStable: outputRouteStable,
     targetMode: failedSelectionMode ?? transitionTargetMode,
     targetCandidateState,
-    targetSourceInactive: failedSelectionMode === 'obs' && obsSourceInactive,
+    targetSourceInactive: (failedSelectionMode === 'obs' || transitionTargetMode === 'obs')
+      && obsSourceInactive,
     activeSourceInactive: selectedOutputMode === 'obs' && obsSourceInactive,
     reasonCode: outputSwitchReasonCode,
   });
@@ -310,7 +326,11 @@ export default function PlaybackPanel({
   const outputNeedsDestructiveReset = outputNeedsAttention && !(
     failedSelectionMode === 'obs' && obsSourceInactive
   );
-  const obsAudioCheckStage = obsAudioCheck?.stage ?? 'unknown';
+  const obsAudioCheckStage = isObsSetupPending ? 'setup' : obsAudioCheck?.stage ?? 'unknown';
+  const obsAudioCheckMessageKey = obsSetupWaitMessageKey
+    ?? (isObsSetupPending
+      ? 'obs.audioCheck.block.connectionPreparing'
+      : obsAudioCheck?.messageKey ?? 'obs.audioCheck.stage.unknown');
   const obsAudioCheckMarkerSeconds = ((obsAudioCheck?.markerTimeMs ?? 0) / 1_000).toFixed(1);
   const obsAudioCheckDurationSeconds = ((obsAudioCheck?.durationMs ?? 0) / 1_000).toFixed(0);
   const shouldOfferObsAudioCheckStop = Boolean(
@@ -903,7 +923,8 @@ export default function PlaybackPanel({
                   <strong>{t('onair.output.selector.status.switching')}</strong>
                 )}
                 {normalizedOutputSwitchState === 'connecting' && (
-                  <strong>{t('onair.output.selector.status.connecting')}</strong>
+                  <strong>{t(obsSetupSelectionStatusKey
+                    ?? 'onair.output.selector.status.connecting')}</strong>
                 )}
                 {normalizedOutputSwitchState === 'conflict' && (
                   <strong>{t('onair.output.selector.status.otherTab')}</strong>
@@ -921,8 +942,10 @@ export default function PlaybackPanel({
                   )}</strong>
                 )}
               </div>
-              {outputView?.messageKey && (
-                <p className="output-route-authoritative-detail">{t(outputView.messageKey)}</p>
+              {outputRouteDetailMessageKey && (
+                <p className="output-route-authoritative-detail">
+                  {t(outputRouteDetailMessageKey)}
+                </p>
               )}
               <p className="output-route-next-action" role="note">
                 <span>{t('onair.output.nextAction.label')}:</span> {t(outputNextActionKey)}
@@ -1051,7 +1074,7 @@ export default function PlaybackPanel({
                   aria-live="polite"
                   aria-atomic="true"
                 >
-                  {t(obsAudioCheck?.messageKey ?? 'obs.audioCheck.stage.unknown', {
+                  {t(obsAudioCheckMessageKey, {
                     count: obsAudioCheck?.markerCount ?? 0,
                     seconds: obsAudioCheckMarkerSeconds,
                     duration: obsAudioCheckDurationSeconds,
@@ -1094,7 +1117,7 @@ export default function PlaybackPanel({
               )}
 
               <p id="obs-audio-check-prompt" className="obs-audio-check-prompt">
-                {t('obs.audioCheck.mixerPrompt')}
+                {t(isObsSetupPending ? outputNextActionKey : 'obs.audioCheck.mixerPrompt')}
               </p>
               <div className="obs-audio-check-actions">
                 {shouldOfferObsAudioCheckStop ? (
@@ -1114,7 +1137,9 @@ export default function PlaybackPanel({
                     type="button"
                     className="btn-secondary"
                     onClick={() => runObsAudioCheckAction('start')}
-                    disabled={!obsAudioCheck?.canStart || typeof onStartObsAudioCheck !== 'function'}
+                    disabled={isObsSetupPending
+                      || !obsAudioCheck?.canStart
+                      || typeof onStartObsAudioCheck !== 'function'}
                     aria-describedby="obs-audio-check-scope obs-audio-check-status obs-audio-check-prompt"
                   >
                     {t(obsAudioCheck?.pendingOperation === 'start'
@@ -1126,7 +1151,7 @@ export default function PlaybackPanel({
                 )}
               </div>
 
-              {obsMixerVerification?.shouldShow && (
+              {!isObsSetupPending && obsMixerVerification?.shouldShow && (
                 <section
                   className={`obs-mixer-verification is-${obsMixerVerificationStatus}`}
                   aria-labelledby="obs-mixer-verification-title"

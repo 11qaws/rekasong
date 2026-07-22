@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포와 로컬 검증 기준은 v0.2.20이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.20, 로컬 검증 후보는 v0.2.21이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -20,6 +20,7 @@
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
+| OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약 통과 | 배포 전 | 실제 OBS source 후발 연결 공개 확인 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 ID 자동 복구 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작 완료 | v0.2.19 공개 CEF로 5분 scene 전환 실기 완료 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
@@ -31,6 +32,13 @@
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
 현재 공개 Pages는 `0.2.20` / release commit `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb`까지 성공적으로 배포됐다. 이번 release의 사용자 앱 runtime source는 v0.2.19와 같고 OBS 장면 전환 harness·Worker close 관측·문서가 추가됐다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19 player는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구와 5분 scene 전환 연속성을 통과했다. source refresh·재시작은 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. scene 전환은 동일 player·connection·run을 유지하고 302.5초 fixture를 wall 오차 `84ms`로 자연 종료했다. production Worker의 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+
+### v0.2.21 로컬 후보 — 2026-07-23
+
+- OBS를 고른 뒤 플레이어가 없음·중복이거나 단일 source가 숨겨져 있으면 이를 route 실패로 확정하지 않는다. 선택 의도를 보존하고 exact-one visible candidate가 되면 같은 상태 전이가 자동으로 활성화를 이어 간다. control negotiation 자체의 timeout과 unknown authority는 기존처럼 별도 실패 경계다.
+- production Worker 설정의 로컬 Dashboard와 production build preview에서 `OBS 플레이어 없음`을 각각 11초·9초 유지했다. 두 경우 모두 `송출 경로 확인 필요`, 완전 초기화, 긴급 정지가 나타나지 않았고 실제 다음 행동과 자동 계속 조건만 표시됐다. Speaker를 누르면 추가 reset 없이 즉시 `스피커 송출 중`으로 돌아왔다.
+- 준비 대기는 route activation·LOAD·PLAY·오디오 점검·추가 polling을 시작하지 않는다. 정확히 한 플레이어가 나타날 때까지 control/session 연결만 유지한다.
+- 자동 검증은 `709/709`, production build와 OBS bundle 예산을 통과했다. Dashboard는 `369.83kB raw / 101.28kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`다. production preview smoke의 warm DCL은 `24.8ms`, long task 0, JS heap 약 `7.87MiB`, HTTP 오류·ntfy 요청 0이었다.
 
 ### v0.2.20 실제 OBS scene 전환 — 2026-07-23
 
@@ -187,10 +195,10 @@
 - v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- v0.2.20 현재 후보 전체 테스트: 707/707 통과.
+- v0.2.21 로컬 후보 전체 테스트: 709/709 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 368.34 kB raw / 100.91 kB gzip. 이번 변경 전과 동일하다.
+- Dashboard chunk: 369.83 kB raw / 101.28 kB gzip.
 - Dashboard CSS: 61.55 kB raw / 11.63 kB gzip.
 - 탭별 local Speaker controller lazy chunk: 7.25 kB raw / 2.51 kB gzip. 공용 playback engine은 24.87 kB raw / 6.56 kB gzip이며 둘 다 Speaker 유휴 첫 화면에는 로드하지 않는다.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
