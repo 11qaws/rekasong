@@ -10,6 +10,7 @@
 - 세 번의 장면 시험 전후 OBS UI에서 `Start Streaming`·`Start Recording`과 두 타이머 `00:00:00`을 확인했다. 실제 방송·녹화는 시작하지 않았다. 매 run 뒤 session credential handoff를 제거하고 Browser Source URL을 검증된 백업으로 원자 복원했으며, 재사용 가능한 빈 `Scene 2`는 전용 test collection에 보존했다.
 - production Worker close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 정상 동작의 storage write·heartbeat cadence·snapshot 의미는 바꾸지 않았다.
 - 전체 `707/707` 테스트, Worker·harness 문법, production build, `git diff --check`, OBS bundle 예산을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남았다. Dashboard는 `368.34kB raw / 100.91kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`로 v0.2.19와 동일해 앱 첫 화면과 OBS 정적 경로 무게를 늘리지 않았다.
+- v0.2.20 commit `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb`을 배포했다. Pages workflow `29952984161`은 clean install·707 tests·lint·Worker 문법·build·OBS budget·publish를 통과했고 GitHub Pages deployment가 같은 SHA를 가리킨다. 사용자 앱 runtime source는 v0.2.19와 같아 공개 entry `assets/index-Dhdct1g2.js`도 그대로다. 공개 Dashboard smoke는 기본 Speaker, 두 출력 버튼, 한·영 전환·reload, 320/375/768/1100px, 금발 선, ntfy 요청 0, HTTP 오류 0을 통과했고 warm DCL `20.9ms`, long task 0, JS heap 약 `7.9MiB`였다.
 
 ## 2026-07-23 (Codex) — v0.2.19 OBS Chromium 103 호환과 실제 refresh·재시작 복구
 

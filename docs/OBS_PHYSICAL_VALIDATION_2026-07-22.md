@@ -8,6 +8,8 @@
 >
 > 추가 source refresh·OBS 재시작 복구: `0.2.19` / `187224c0a77f28a33b3a2024e0914773a66386f0`
 >
+> 추가 scene 전환 harness 배포: `0.2.20` / `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb`
+>
 > Production Worker: `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`
 >
 > OBS: `30.2.0`, 전용 profile·scene collection `Rekasong_Local_Record_Test_20260722`
