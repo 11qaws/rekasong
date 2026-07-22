@@ -5,11 +5,13 @@
 - 새 Dashboard는 일반 웹 플레이어인 Speaker로 즉시 시작하며, 페이지 진입이나 검색만으로 production Worker의 `/v1/sessions`를 만들지 않는다. 준비할 YouTube 미디어·로컬 업로드·OBS 주소처럼 실제 미디어 자격이 필요한 행동에서만 저장 세션을 만들거나 재사용한다.
 - 미디어 HTTP 자격과 OBS 제어권을 분리했다. Speaker에서 곡 준비용 세션이 생기거나 저장 세션이 있는 채로 새로고침해도 legacy observer와 Protocol v2 control WebSocket은 열리지 않는다. 이 페이지에서 사용자가 OBS를 명시적으로 고른 뒤에만 두 제어 연결을 깨운다.
 - 첫 OBS 선택은 비활성 controller의 초기 상태를 오류로 보지 않고 bootstrap intent로 받아들인다. 같은 페이지에서 OBS 연결을 한번 시작한 뒤 Speaker로 돌아오는 경우에는 진행 중인 OBS 정리와 빠른 복구를 위해 controller를 유지하지만, Speaker 선택·재생은 그 권한이나 정지 증거를 기다리지 않는다.
-- 새 production-browser smoke는 격리된 Chrome에서 idle 1.5초, 검색, 첫 곡 준비, 저장 세션 새로고침을 각각 계측한다. idle·검색·저장 세션 재방문은 session HTTP 0회 / WebSocket 0개 / 전송 frame 0개였고, 첫 곡 준비만 session POST 1회였으며 WebSocket은 계속 0개였다. 곡 drag smoke에서도 검색·이력 drop의 Worker session 요청이 모두 0회가 됐다.
+- 새 production-browser smoke는 격리된 Chrome에서 idle 1.5초, 검색, 첫 곡 준비, 저장 세션 새로고침을 각각 계측한다. idle·검색·저장 세션 재방문은 session HTTP 0회 / WebSocket 0개 / 전송 frame 0개였고, 첫 곡 준비만 session POST 1회였으며 WebSocket은 계속 0개였다. 곡 drag smoke도 검색 자체와 이력 drop 자체가 별도 session 요청을 만들지 않음을 확인했다.
 - 계약 문서에 Speaker 출력·미디어 인증·OBS 제어의 세 상태와 전이를 분리해 기록했다. 로컬 파일을 서버 없이 page Blob으로 먼저 재생하고 실제 OBS 수요 때만 업로드하는 후속 상태기는 파일 수명과 업로드 복구를 포함해 별도로 적용한다.
 - 사용자 노출 문구는 추가하지 않았으며 locale catalog parity에 영향이 없다. OBS player·Worker media graph와 protocol은 수정하지 않았다. 유레카의 금발을 뜻하는 실제 3px 노란 선도 영구 불변식으로 명시하고 320/375/768/1100px 한국어·영어 production-browser smoke에서 다시 확인했다.
 - 검증: 자동 테스트 654/654, 그 안의 500회 Speaker↔OBS 왕복, lint 신규 경고 0(기존 Gemini escape 경고 2건), Worker 문법, production build, 로컬 Dashboard/곡 drag/로컬 파일 복구/Speaker network smoke를 통과했다. 1,000곡은 cold 220.2ms, warm p95 30.9ms, post-GC heap 증가 0B이며 320px overflow가 없다.
 - 성능: 초기 Dashboard는 제어 세션이 없어서 DOM 124개, warm load 33.1ms, long task 0건으로 실측됐다. Dashboard JS 356.31kB raw / 97.69kB gzip, CSS 59.79kB raw / 11.32kB gzip이며 OBS 정적 closure는 raw 382,301B / gzip 116,103B / brotli 101,699B로 기존 예산 안이다.
+- 앱 커밋 `ea5b871`을 Pages workflow `29905853199`로 배포했다. clean install 뒤 654개 테스트, lint, Worker 문법, production build, OBS bundle budget과 publish가 모두 성공했다.
+- 캐시를 우회한 공개 v0.2.10에서 Speaker idle 1.5초와 검색 후 Worker session HTTP 0회, control WebSocket 0개, 전송 frame 0개를 재확인했다. 공개 Dashboard는 DOM 124개, warm DCL 25.9ms, warm long task 0건이었고 320/375/768/1100px의 머리핀·3px 금발 선, 한영 전환을 통과했다. 공개 1,000곡은 cold 109.1ms, warm p95 63.0ms, post-GC heap 증가 0B다.
 - 실제 청취, 비공개 방송/VOD, 모바일 OS별 백그라운드, 장면/소스 새로고침·OBS 재시작 변형, 10분 마이크↔MR 상호상관은 이 연결 분리와 별도의 물리 관문으로 계속 남는다.
 
 ## 2026-07-22 (Codex) — v0.2.9 곡 클릭·드래그 빠른 배치
