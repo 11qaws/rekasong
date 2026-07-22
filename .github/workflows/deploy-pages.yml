@@ -35,6 +35,8 @@ jobs:
         run: node --check workers/rekasong-session/src/index.js
       - name: Build
         run: npm run build
+      - name: Pseudo-locale layout
+        run: npm run test:dashboard:pseudo
       - name: Check OBS bundle
         run: npm run check:obs:bundle
       - name: Upload Pages artifact

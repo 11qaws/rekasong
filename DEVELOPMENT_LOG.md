@@ -1,5 +1,16 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.25 번역 길이·모바일 레이아웃 배포 관문
+
+- Graphify의 locale/catalog/pseudo/mobile/layout 경로와 번역 계획을 실제 소스에 대조했다. 현재 사용자 흐름의 한국어/영어 semantic key 이관과 selector는 완료됐지만, 계획서에 요구된 pseudo-locale 30~50% 길이 확장과 320/375/768/1100px 자동 시각 검증은 일회성 수동 확인만 있고 배포 관문에는 없었다.
+- production에 검수되지 않은 언어를 노출하지 않고 `scripts/pseudo-locale-fixture.mjs`에 test-only deterministic 변환기를 만들었다. 일반 ASCII 문구는 accent 형태로 바꾸고 약 40% 늘리되 `{{placeholder}}`, URL, 이메일, Rekasong/YouTube 등의 제품명, OBS/G2 같은 protocol token, version·수치·단위는 그대로 둔다. 한국어/English selector와 runtime catalog에는 pseudo locale를 추가하지 않았다.
+- `scripts/dashboard-pseudo-locale-smoke.mjs`는 production build preview에서 메인 Dashboard, Speaker 설정, 전체 OBS 설정과 performer-monitor 상세를 각각 새 격리 browser context로 연다. 본문과 `aria-label`·`aria-description`·`title`·`placeholder`·`alt`를 변환하고 320/375/768/1100px에서 document/dialog overflow, 화면 밖 조작부, 숨은 control/text 잘림을 검사한다.
+- 320px 실제 캡처를 직접 확인했다. 메인 머리핀 상태, Speaker 설정, 긴 OBS 설정 모두 가로 이탈 0이고 긴 설정은 세로 스크롤로 이어진다. 각 시나리오가 변환한 text/접근성 속성은 메인 `16/11`, Speaker 설정 `32/14`, OBS 설정 `69/14`이며 네 폭 모두 최대 document overflow `0px`다. 머리핀의 우측 13px 흰 장식은 실제 내용 잘림과 분리해 최대 16px만 명시적으로 허용하고, 내부 text/control 이탈 검사는 그대로 유지한다.
+- OBS 화면 검사는 `/v1/sessions` HTTP를 browser 안에서 격리된 503으로 끝내고 모든 WebSocket을 실제 서버 연결 전에 닫는다. OBS 선택 UI 요청 1회가 이 차단을 통과했으며 세 시나리오 모두 media element/source/playing `0/0/0`이었다. 음악·OBS player·점검 신호·방송·녹화는 시작하지 않았다.
+- Pages workflow는 production build 뒤, OBS bundle 검사와 artifact upload 전에 `npm run test:dashboard:pseudo`를 실행한다. 변환기·browser smoke·테스트는 `scripts/`와 `tests/`에만 있어 사용자 앱과 OBS player import graph·다운로드 크기를 늘리지 않는다.
+- 전체 `720/720` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법, production build, pseudo browser gate, OBS bundle 예산과 `git diff --check`를 통과했다. Dashboard는 `370.81kB raw / 101.51kB gzip`, CSS는 `61.49kB / 11.61kB`, OBS closure는 `383,782B raw / 117,550B gzip / 103,024B brotli`로 v0.2.24와 같은 범위다.
+- 후보 production preview는 기본 Speaker, YouTube 단일 상위 소스+Search/Playlist, Setlink, Meloming, 한·영 전환·reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼과 금발 선을 통과했다. warm DCL `32.1ms`, warm long task 0, JS heap `7,889,032B`, HTTP 오류·ntfy 요청 0이었다. Speaker 로컬 WAV는 실제 시간이 `0.176891s`로 진행하는 동안 idle/local 구간 Worker session HTTP·socket·frame이 모두 0이었고, drag click→review·취소 mutation 0·history drop 무재생·320px 세 대상도 통과했다.
+
 ## 2026-07-23 (Codex) — v0.2.24 실제 OBS 활성 곡의 제어 소켓 복구
 
 - 기존 실제 CEF harness는 `OnAirControlCoordinator`를 직접 사용해 Dashboard의 `OnAirOutputController.retryConnection()` 경로를 통과하지 않았다. `--control-gap` 전용 모드를 추가해 실제 output controller와 coordinator를 그대로 사용하면서 생성 48kHz WAV, coordinator factory 횟수, 제어 socket 수명, route/media 명령 횟수를 계측한다. 이 모드는 방송·녹화 명령 surface를 갖지 않으며 `--recovery`·`--scene-transition`과 동시에 실행할 수 없다.

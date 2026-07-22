@@ -21,7 +21,7 @@
 - `SearchPanel` 회귀 테스트가 해당 화면의 `t('…')` 키에 한국어·영어 catalog가 모두 존재하는지 검사한다.
 - 기본 문서 언어는 실제 UI와 동일한 `<html lang="ko">`로 유지한다.
 - 현재 사용자 흐름의 하드코딩 문구 이관과 무새로고침 선택기는 완료했다. AI 진행 상태도 한국어 문장 정규식이 아니라 locale-neutral 단계와 message key를 저장한다.
-- 남은 범위는 pseudo-locale, 모바일의 긴 영어 문구 시각 검증, 앞으로 추가되는 서버 이벤트의 semantic status code 확대다. 곡명·가수명·태그·사용자 입력·외부 고유명사는 번역하지 않는다.
+- pseudo-locale와 모바일 긴 문구 검증은 test-only browser gate로 완료했다. 남은 범위는 앞으로 추가되는 서버 이벤트의 semantic status code 확대다. 곡명·가수명·태그·사용자 입력·외부 고유명사는 번역하지 않는다.
 
 ## 1. 결정
 
@@ -122,6 +122,10 @@ src/i18n/
 
 첫 vertical slice 동안 `src/copy/outputMessages.js` 같은 domain catalog를 사용할 수 있다. 다만 외부 component는 catalog 객체를 직접 읽지 않고 translator facade만 호출한다. 정식 i18n runtime을 붙일 때 component를 다시 바꾸지 않기 위해서다.
 
+현재 pseudo-locale는 production locale pack에 넣지 않는다. `scripts/pseudo-locale-fixture.mjs`와
+`scripts/dashboard-pseudo-locale-smoke.mjs`에서만 reviewed English copy를 변형한다. 따라서 정식 선택기는
+계속 한국어/English만 표시하고, 첫 화면과 OBS player closure의 다운로드 크기도 늘리지 않는다.
+
 ## 6. translator 계약
 
 component에서 기대하는 최소 API:
@@ -220,6 +224,16 @@ pseudo-locale는 번역 품질이 아니라 구현 누락과 layout을 검사한
 - 320/375/768/1100px에서 overflow와 잘림을 검사한다.
 - button, tab, toast, modal, table, OBS status strip을 포함한다.
 - screen reader label도 missing key가 그대로 노출되지 않는지 검사한다.
+
+적용 상태:
+
+- [x] 일반 문구를 accent 형태로 바꾸고 약 40% 늘리는 deterministic fixture
+- [x] `{{placeholder}}`, URL, 이메일, 제품명, 대문자 protocol token과 version/단위 보존
+- [x] 본문뿐 아니라 `aria-label`, `aria-description`, `title`, `placeholder`, `alt` 변환
+- [x] 메인 Dashboard, Speaker 설정, 전체 OBS 설정과 performer-monitor 상세 검사
+- [x] 320/375/768/1100px document/dialog overflow, 버튼 이탈, 숨은 잘림 검사
+- [x] OBS 설정 검사 중 session HTTP와 모든 WebSocket 차단, media source·재생 0 확인
+- [x] production build 뒤 Pages artifact upload 전에 실패시키는 CI gate
 
 ## 12. 자동 검증
 
@@ -341,3 +355,5 @@ pseudo-locale는 번역 품질이 아니라 구현 누락과 layout을 검사한
 - AI title 진행 상태와 오래된 Dashboard toast는 locale-neutral code로 이관했고, Widget/Display 전용 소형 locale pack을 분리했다.
 - `tests/i18nSourceGuard.test.mjs`가 실제 Dashboard 사용자 화면의 하드코딩 한국어, 정적 title/aria/placeholder, toast/confirm 증가를 배포 전 `npm test`에서 막는다.
 - 참조가 없고 번역되지 않은 구형 `LivePanel.jsx`는 v0.2.5에서 제거했다. 현재 Dashboard 사용자 흐름의 번역 범위와 별개인 죽은 화면을 baseline backlog로 유지하지 않는다.
+- `scripts/dashboard-pseudo-locale-smoke.mjs`가 reviewed English copy를 test-only `qps-ploc` 형태로 늘려 메인/Speaker 설정/OBS 설정을 320/375/768/1100px에서 검사한다. 이 검사는 session HTTP에 격리된 503을 반환하고 WebSocket을 서버에 연결하지 않으며, audio/video source와 재생이 0인지 확인한다.
+- `.github/workflows/deploy-pages.yml`은 production build 직후 `npm run test:dashboard:pseudo`를 실행하고, 통과한 artifact만 Pages에 올린다. pseudo catalog와 Playwright 검사는 runtime import graph에 들어가지 않는다.
