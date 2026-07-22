@@ -9,6 +9,8 @@
 - production 설정의 로컬 UI에서 플레이어가 없는 OBS 선택을 11초 이상 유지해도 경고·초기화·긴급 정지가 나타나지 않았고, Speaker 선택은 1.2초 뒤에도 `스피커 송출 중`을 유지했다. 같은 동작을 build preview에서 9초 대기 뒤 다시 확인했으며 영문 화면은 `Open the OBS player`와 자동 연결 안내를 표시하고 언어 선택지 외 한국어 앱 문구를 남기지 않았다.
 - 전체 `709/709` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), production build, OBS bundle 예산을 통과했다. Dashboard는 `369.83kB raw / 101.28kB gzip`으로 v0.2.20보다 raw 약 1.49kB·gzip 약 0.37kB 증가했고, OBS closure는 기존과 같은 `383,782B raw / 117,550B gzip / 102,988B brotli`다.
 - production preview smoke는 기본 Speaker, YouTube 단일 상위 소스+Search/Playlist, Setlink, Meloming, 한·영 reload, 320/375/768/1100px, 320px 설정, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류와 ntfy 요청은 0, warm DCL `24.8ms`, long task 0, JS heap 약 `7.87MiB`였다.
+- v0.2.21 commit `128f977eb835d70fcd44dbb57da575658f3f29d1`을 배포했다. Pages workflow `29955448969`는 clean install·709 tests·lint·Worker 문법·production build·OBS budget·artifact upload·deploy를 모두 통과했다. 공개 main/Dashboard는 `index-nTobOpEa.js` / `Dashboard-CVlr6ZcZ.js`이며 Dashboard 자산에 새 setup 상태·candidate reason·connection-preparing key가 실제 포함됐다.
+- 공개 격리 smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 모바일 설정, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `25.8ms`, long task 0, JS heap 약 `7.97MiB`였다. 기존 검증 브라우저 origin에는 다른 control owner가 실제 남아 있어 정확히 `다른 탭에서 출력 제어 중`을 표시했고, 이 경우를 플레이어 없음으로 숨기지 않았다. 해당 상태에서도 Speaker는 즉시 정상 복귀했다.
 
 ## 2026-07-23 (Codex) — v0.2.20 OBS 장면 전환 연속성과 제어 연결 관측 분리
 

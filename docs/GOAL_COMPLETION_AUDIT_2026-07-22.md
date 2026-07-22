@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.20, 로컬 검증 후보는 v0.2.21이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포와 로컬 검증 기준은 v0.2.21이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -20,7 +20,7 @@
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
-| OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약 통과 | 배포 전 | 실제 OBS source 후발 연결 공개 확인 |
+| OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약 통과 | v0.2.21 배포·공개 자산 확인 | 실제 OBS source 후발 연결 확인 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 ID 자동 복구 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작 완료 | v0.2.19 공개 CEF로 5분 scene 전환 실기 완료 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
@@ -31,14 +31,16 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.20` / release commit `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb`까지 성공적으로 배포됐다. 이번 release의 사용자 앱 runtime source는 v0.2.19와 같고 OBS 장면 전환 harness·Worker close 관측·문서가 추가됐다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19 player는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구와 5분 scene 전환 연속성을 통과했다. source refresh·재시작은 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. scene 전환은 동일 player·connection·run을 유지하고 302.5초 fixture를 wall 오차 `84ms`로 자연 종료했다. production Worker의 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.21` / release commit `128f977eb835d70fcd44dbb57da575658f3f29d1`까지 성공적으로 배포됐다. v0.2.21은 최초 OBS 설정 대기와 실제 route failure를 분리한다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19 player는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구와 5분 scene 전환 연속성을 통과했다. source refresh·재시작은 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. scene 전환은 동일 player·connection·run을 유지하고 302.5초 fixture를 wall 오차 `84ms`로 자연 종료했다. production Worker의 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
-### v0.2.21 로컬 후보 — 2026-07-23
+### v0.2.21 공개 배포 — 2026-07-23
 
 - OBS를 고른 뒤 플레이어가 없음·중복이거나 단일 source가 숨겨져 있으면 이를 route 실패로 확정하지 않는다. 선택 의도를 보존하고 exact-one visible candidate가 되면 같은 상태 전이가 자동으로 활성화를 이어 간다. control negotiation 자체의 timeout과 unknown authority는 기존처럼 별도 실패 경계다.
 - production Worker 설정의 로컬 Dashboard와 production build preview에서 `OBS 플레이어 없음`을 각각 11초·9초 유지했다. 두 경우 모두 `송출 경로 확인 필요`, 완전 초기화, 긴급 정지가 나타나지 않았고 실제 다음 행동과 자동 계속 조건만 표시됐다. Speaker를 누르면 추가 reset 없이 즉시 `스피커 송출 중`으로 돌아왔다.
 - 준비 대기는 route activation·LOAD·PLAY·오디오 점검·추가 polling을 시작하지 않는다. 정확히 한 플레이어가 나타날 때까지 control/session 연결만 유지한다.
 - 자동 검증은 `709/709`, production build와 OBS bundle 예산을 통과했다. Dashboard는 `369.83kB raw / 101.28kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`다. production preview smoke의 warm DCL은 `24.8ms`, long task 0, JS heap 약 `7.87MiB`, HTTP 오류·ntfy 요청 0이었다.
+- commit `128f977eb835d70fcd44dbb57da575658f3f29d1`의 Pages workflow `29955448969`는 709 tests·lint·Worker syntax·build·OBS budget·deploy를 모두 통과했다. 공개 main/Dashboard 자산은 `index-nTobOpEa.js` / `Dashboard-CVlr6ZcZ.js`이며 새 setup 상태 key가 게시 파일에 포함됐다.
+- 공개 격리 smoke는 기본 Speaker, 한·영 reload, 320/375/768/1100px, YouTube 묶음, 두 출력 버튼과 금발 선을 통과했다. HTTP 오류·ntfy 요청은 0, warm DCL `25.8ms`, long task 0, JS heap 약 `7.97MiB`였다. 기존 브라우저의 실제 다른 control owner 상태는 계속 별도 안내하고 Speaker 복귀를 막지 않았다.
 
 ### v0.2.20 실제 OBS scene 전환 — 2026-07-23
 
@@ -208,8 +210,8 @@
 
 ## 7. 배포 완료와 다음 관문
 
-1. Worker `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`와 frontend `0.2.20` / `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb` 배포를 완료했다. 앱 배포 workflow `29952984161`은 성공했다.
-2. GitHub Pages clean install·707개 테스트·build·OBS budget·publish, production recovery smoke, ntfy 요청 0·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
+1. Worker `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`와 frontend `0.2.21` / `128f977eb835d70fcd44dbb57da575658f3f29d1` 배포를 완료했다. 앱 배포 workflow `29955448969`는 성공했다.
+2. GitHub Pages clean install·709개 테스트·build·OBS budget·publish, production recovery smoke, ntfy 요청 0·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
 3. 실제 OBS G3, G4, source hide/show, 5분 scene 전환, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
