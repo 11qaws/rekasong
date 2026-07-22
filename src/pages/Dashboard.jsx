@@ -11,7 +11,6 @@ import {
   createQueueEntry,
   isExpiredLocalSongDef,
   newId,
-  sanitizeSongDef,
   toLegacySong,
   toQueueEntry,
 } from '../lib/queueEntry';
@@ -24,6 +23,11 @@ import {
   revokeBlobSrcs,
 } from '../lib/blobLifecycle';
 import { createBoundedCommandQueue } from '../lib/boundedCommandQueue';
+import {
+  attachObsAssetToPlaybackState,
+  collectLocalObsAssetCandidates,
+  localSongNeedsObsAsset,
+} from '../lib/localObsAsset';
 import { apiUrl } from '../lib/api';
 import {
   isConfirmedDiscardSnapshot,
@@ -161,6 +165,8 @@ export default function Dashboard() {
   }, []);
 
   const [state, setSharedState, syncLoadNotice] = useSyncState();
+  const setSharedStateRef = useRef(setSharedState);
+  setSharedStateRef.current = setSharedState;
   const [queuedOutputIntent, setQueuedOutputIntent] = useState(null);
   const [outputControlRecoveryRequired, setOutputControlRecoveryRequired] = useState(false);
   const [outputControllerEverReady, setOutputControllerEverReady] = useState(false);
@@ -553,15 +559,23 @@ export default function Dashboard() {
   const activeRef = useRef(active);
   activeRef.current = active;
   const pageOwnedBlobSrcsRef = useRef(new Set());
+  const localFileByBlobSrcRef = useRef(new Map());
+  const localObsAssetUploadsRef = useRef(new Map());
+  const onAirUploadAssetRef = useRef(onAir.uploadAsset);
+  onAirUploadAssetRef.current = onAir.uploadAsset;
   const createPageBlobSrc = useCallback((file) => {
     const src = URL.createObjectURL(file);
     pageOwnedBlobSrcsRef.current.add(src);
+    localFileByBlobSrcRef.current.set(src, file);
     return src;
   }, []);
   const revokePageBlobSrcs = useCallback((srcs) => {
     const candidates = [...srcs];
     revokeBlobSrcs(candidates);
-    candidates.forEach((src) => pageOwnedBlobSrcsRef.current.delete(src));
+    candidates.forEach((src) => {
+      pageOwnedBlobSrcsRef.current.delete(src);
+      localFileByBlobSrcRef.current.delete(src);
+    });
   }, []);
 
   // Completed local-file history is a bounded convenience cache, never
@@ -654,11 +668,6 @@ export default function Dashboard() {
     if (outputMode === 'obs') return sendOnAirCommand(command);
     const localSpeaker = localSpeakerRef.current;
     if (!localSpeaker) {
-      if (useOnAirPlayer && !onAirSession) {
-        const pending = queueLocalSpeakerCommand(command);
-        retryLocalSpeakerSession().catch(() => {});
-        return pending;
-      }
       if (localSpeakerState === 'initializing') return queueLocalSpeakerCommand(command);
       throw new Error(t('playback.localSpeaker.notReady'));
     }
@@ -815,11 +824,150 @@ export default function Dashboard() {
     setCurrentTime(time);
   };
 
+  // Toast notifications are declared before the local-file demand callbacks so
+  // their translated completion/failure actions can use one stable publisher.
+  const [toasts, setToasts] = useState([]);
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
+  const showToast = useCallback((message, type = 'info', action = null) => {
+    const id = Date.now().toString() + '-' + Math.random().toString(36).slice(2, 7);
+    setToasts(prev => [...prev, { id, message, type, action }]);
+    setTimeout(() => dismissToast(id), action ? 5000 : 3000);
+  }, [dismissToast]);
+
   const [stagedItem, setStagedItem] = useState(null);
   const [songDragCandidate, setSongDragCandidate] = useState(null);
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
   stagedItemRef.current = stagedItem;
+  const obsAssetReadyNoticeRef = useRef(new Set());
+
+  const uploadLocalBlobForObs = useCallback((src, onProgress = null) => {
+    if (typeof src !== 'string' || !src.startsWith('blob:')) {
+      return Promise.reject(new Error('local_obs_asset_invalid_source'));
+    }
+    const existing = localObsAssetUploadsRef.current.get(src);
+    if (existing) return existing;
+
+    let uploadPromise;
+    uploadPromise = Promise.resolve()
+      .then(async () => {
+        const retainedFile = localFileByBlobSrcRef.current.get(src);
+        if (retainedFile) return retainedFile;
+        const response = await fetch(src);
+        if (!response.ok) throw new Error('local_obs_asset_blob_unavailable');
+        return response.blob();
+      })
+      .then((file) => onAirUploadAssetRef.current(file, onProgress))
+      .then((asset) => {
+        if (typeof asset?.assetId !== 'string' || !asset.assetId) {
+          throw new Error('local_obs_asset_invalid_response');
+        }
+        return asset;
+      })
+      .finally(() => {
+        if (localObsAssetUploadsRef.current.get(src) === uploadPromise) {
+          localObsAssetUploadsRef.current.delete(src);
+        }
+      });
+    localObsAssetUploadsRef.current.set(src, uploadPromise);
+    return uploadPromise;
+  }, []);
+
+  const applyLocalObsAsset = useCallback((src, assetId) => {
+    setSharedStateRef.current((previous) => attachObsAssetToPlaybackState(previous, { src, assetId }));
+    setStagedItem((previous) => (
+      previous?.type === 'local' && previous.src === src
+        ? { ...previous, assetId, assetStatus: 'ready', assetProgress: 100, assetError: null }
+        : previous
+    ));
+  }, []);
+
+  const prepareLocalSongForObs = useCallback((song, { onProgress = null } = {}) => {
+    if (!localSongNeedsObsAsset(song)) return Promise.resolve(song?.assetId || null);
+    return uploadLocalBlobForObs(song.src, onProgress).then((asset) => {
+      applyLocalObsAsset(song.src, asset.assetId);
+      return asset.assetId;
+    });
+  }, [applyLocalObsAsset, uploadLocalBlobForObs]);
+
+  const requestLocalSongObsAsset = useCallback((song) => {
+    if (!localSongNeedsObsAsset(song)) return;
+    const src = song.src;
+    const operation = prepareLocalSongForObs(song);
+    if (!obsAssetReadyNoticeRef.current.has(src)) {
+      obsAssetReadyNoticeRef.current.add(src);
+      operation.then(
+        () => showToast(t('dashboard.localFile.obsReadyAction'), 'success'),
+        () => {
+          obsAssetReadyNoticeRef.current.delete(src);
+          showToast(t('dashboard.localFile.obsPrepareFailedAction'), 'error');
+        },
+      );
+    }
+  }, [prepareLocalSongForObs, showToast]);
+
+  const localObsAssetCandidateKey = collectLocalObsAssetCandidates(state)
+    .map((song) => song.src)
+    .join('\n');
+
+  // Selecting OBS is the first moment queued local files need a shared asset.
+  // Upload in the background, but never let this preparation block a return to
+  // Speaker or mutate the page-owned Blob used by local playback.
+  useEffect(() => {
+    if (outputModePreference !== 'obs' || !localObsAssetCandidateKey) return;
+    collectLocalObsAssetCandidates(stateRef.current).forEach((song) => {
+      prepareLocalSongForObs(song).catch(() => {
+        showToast(t('dashboard.localFile.obsPrepareFailedAction'), 'error');
+      });
+    });
+  }, [
+    localObsAssetCandidateKey,
+    outputModePreference,
+    prepareLocalSongForObs,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    if (outputModePreference !== 'obs'
+      || stagedItem?.type !== 'local'
+      || !stagedItem.src?.startsWith('blob:')
+      || stagedItem.assetId
+      || ['uploading', 'error'].includes(stagedItem.assetStatus)) return;
+    const { src } = stagedItem;
+    setStagedItem((previous) => previous?.src === src
+      ? { ...previous, assetStatus: 'uploading', assetProgress: 0, assetError: null }
+      : previous);
+    prepareLocalSongForObs(stagedItem, {
+      onProgress: (assetProgress) => {
+        setStagedItem((previous) => previous?.src === src
+          ? { ...previous, assetProgress }
+          : previous);
+      },
+    }).catch(() => {
+      setStagedItem((previous) => previous?.src === src
+        ? { ...previous, assetStatus: 'error', assetError: t('dashboard.localFile.obsPrepareFailedAction') }
+        : previous);
+      showToast(t('dashboard.localFile.obsPrepareFailedAction'), 'error');
+    });
+  }, [
+    outputModePreference,
+    prepareLocalSongForObs,
+    showToast,
+    stagedItem,
+  ]);
+
+  const retryStagedLocalObsAsset = useCallback(() => {
+    setStagedItem((previous) => (
+      previous?.type === 'local'
+        && previous.src?.startsWith('blob:')
+        && !previous.assetId
+        && previous.assetStatus === 'error'
+        ? { ...previous, assetStatus: 'local', assetProgress: 0, assetError: null }
+        : previous
+    ));
+  }, []);
 
   // Stage 6c (계약 §5): videoId별 준비 상태 — Worker 전역 캐시의 로컬 거울.
   // 게이팅의 근거이므로 연결 실패는 원인별 상태로 기록하되, 어떤 경로로도 실제
@@ -1165,18 +1313,6 @@ export default function Dashboard() {
       setAiStatus('dashboard.stage.songbookTitle', {}, 3);
     }
   }, [setAiStatus, stagedItem?.skipAiTitleExtraction, stagedItem?.stagingId]);
-
-  // Toast notifications
-  const [toasts, setToasts] = useState([]);
-  const dismissToast = useCallback((id) => {
-    setToasts(prev => prev.filter(toast => toast.id !== id));
-  }, []);
-
-  const showToast = useCallback((message, type = 'info', action = null) => {
-    const id = Date.now().toString() + '-' + Math.random().toString(36).slice(2, 7);
-    setToasts(prev => [...prev, { id, message, type, action }]);
-    setTimeout(() => dismissToast(id), action ? 5000 : 3000);
-  }, [dismissToast]);
 
   const applySpeakerSinkToCurrentMedia = useCallback(async (deviceId) => {
     const target = useOnAirPlayer
@@ -1580,26 +1716,11 @@ export default function Dashboard() {
       skipAiTitleExtraction: Boolean(songbookContext),
       file: file,
       localCacheKey: `${file.name}:${file.size}:${file.lastModified}`,
-      assetStatus: useOnAirPlayer ? 'uploading' : 'local',
-      assetProgress: useOnAirPlayer ? 0 : null,
+      assetStatus: 'local',
+      assetProgress: null,
       assetId: null
     });
     showToast(t('dashboard.localFile.loaded'), 'info');
-
-    if (useOnAirPlayer) {
-      onAir.uploadAsset(file, (assetProgress) => {
-        setStagedItem((previous) => previous?.stagingId === stagingId ? { ...previous, assetProgress } : previous);
-      }).then((asset) => {
-        setStagedItem((previous) => previous?.stagingId === stagingId
-          ? { ...previous, assetId: asset.assetId, assetStatus: 'ready', assetProgress: 100 }
-          : previous);
-      }).catch((error) => {
-        setStagedItem((previous) => previous?.stagingId === stagingId
-          ? { ...previous, assetStatus: 'error', assetError: error.message }
-          : previous);
-        showToast(error.message || t('dashboard.localFile.prepareFailed'), 'error');
-      });
-    }
 
     let metadata = {};
     // Try parsing tags for better alias
@@ -1696,6 +1817,10 @@ export default function Dashboard() {
     const runOutputMode = outputMode === 'obs' || outputMode === 'speaker'
       ? outputMode
       : outputModePreference === 'obs' ? 'obs' : 'speaker';
+    if (useOnAirPlayer && runOutputMode === 'obs' && localSongNeedsObsAsset(entry.song)) {
+      requestLocalSongObsAsset(entry.song);
+      throw new Error(t('dashboard.localFile.obsPreparingAction'));
+    }
     const initialPosition = Number.isFinite(position) && position >= 0 ? position : 0;
     if (useOnAirPlayer && runOutputMode === 'obs' && !outputRouteStable) {
       throw new Error(t('onair.output.playback.routeNotConfirmed'));
@@ -1856,8 +1981,10 @@ export default function Dashboard() {
     // OBS를 아직 안 연 상태에서도 setlist 예약은 허용해야 한다(송출만 막는다).
     // 예전의 control 연결 게이트는 대시보드 자신의 서버 연결만 봐서 위젯 없이도
     // 통과시키는 거짓 게이트였다.
-    if (useOnAirPlayer && sourceItem.type === 'local' && !sourceItem.assetId) {
-      showToast(sourceItem.assetError || t('dashboard.localFile.preparing'), 'info');
+    if (useOnAirPlayer && outputModePreference === 'obs'
+      && sourceItem.type === 'local' && !sourceItem.assetId) {
+      requestLocalSongObsAsset(sourceItem);
+      showToast(sourceItem.assetError || t('dashboard.localFile.obsPreparingAction'), 'info');
       return false;
     }
     // Stage 6c 게이팅(계약 §5): `ready`가 아닌 YouTube 곡은 방송 출력에 올리지
@@ -1878,8 +2005,8 @@ export default function Dashboard() {
       type: sourceItem.type,
       title: sourceItem.title,
       artist: sourceItem.artist,
-      src: useOnAirPlayer && sourceItem.type === 'local' ? sourceItem.assetId : sourceItem.src,
-      assetId: useOnAirPlayer && sourceItem.type === 'local' ? sourceItem.assetId : undefined,
+      src: sourceItem.src,
+      assetId: sourceItem.type === 'local' ? sourceItem.assetId : undefined,
       mediaType: sourceItem.mediaType || 'audio',
       tags: sourceItem.tags || [],
       source: sourceItem.source || 'youtube',
@@ -1971,15 +2098,9 @@ export default function Dashboard() {
 
     if (clearStagedItem) {
       cancelAiExtraction();
-      setStagedItem((previous) => {
-        // On-Air 송출 항목은 assetId(R2 자산)를 참조하므로 미리보기 blob은 여기서
-        // 회수한다. 직접 재생 모드는 entry가 이 blob src 자체를 쓰므로 유지된다.
-        if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:') &&
-          !isBlobReferenced(previous.src, stateRef.current)) {
-          revokePageBlobSrcs([previous.src]);
-        }
-        return null;
-      });
+      // The committed entry owns the page Blob for ordinary Speaker playback.
+      // OBS preparation adds assetId beside it and never replaces or revokes it.
+      setStagedItem(null);
     }
     return true;
   };
@@ -2683,35 +2804,17 @@ export default function Dashboard() {
     const mediaType = file.type === 'video/mp4' ? 'video' : 'audio';
     let restoredSong;
     let blobSrc = null;
-    if (useOnAirPlayer) {
-      showToast(t('dashboard.localFile.preparing'), 'info');
-      try {
-        const asset = await onAir.uploadAsset(file);
-        restoredSong = sanitizeSongDef({
-          ...sourceEntry.song,
-          src: asset.assetId,
-          assetId: asset.assetId,
-          localSourceExpired: false,
-          localBlobBytes: file.size,
-          mediaType,
-        });
-      } catch {
-        showToast(t('queue.localFile.restoreFailed'), 'error');
-        return false;
-      }
-    } else {
-      try {
-        blobSrc = createPageBlobSrc(file);
-      } catch {
-        showToast(t('queue.localFile.restoreFailed'), 'error');
-        return false;
-      }
-      restoredSong = restoreLocalBlobSong(sourceEntry.song, {
-        src: blobSrc,
-        bytes: file.size,
-        mediaType,
-      });
+    try {
+      blobSrc = createPageBlobSrc(file);
+    } catch {
+      showToast(t('queue.localFile.restoreFailed'), 'error');
+      return false;
     }
+    restoredSong = restoreLocalBlobSong(sourceEntry.song, {
+      src: blobSrc,
+      bytes: file.size,
+      mediaType,
+    });
     if (!restoredSong) {
       if (blobSrc) revokePageBlobSrcs([blobSrc]);
       showToast(t('queue.localFile.restoreMissing'), 'error');
@@ -2863,6 +2966,12 @@ export default function Dashboard() {
   const stagedPrepareState = stagedItem?.type === 'youtube'
     ? songPrepareState({ type: 'youtube', src: stagedItem.src }, prepareStates)
     : null;
+  const shouldMountLocalSpeaker = useOnAirPlayer && Boolean(
+    onAirSession
+      || (stagedItem?.type === 'local' && stagedItem.src?.startsWith('blob:'))
+      || isLocalBlobSong(currentEntry?.song)
+      || (state?.queue || []).some((entry) => isLocalBlobSong(entry?.song)),
+  );
 
   return (
     <div className={`dashboard-container ${stagedItem ? 'staging-active' : ''}`}>
@@ -2984,6 +3093,8 @@ export default function Dashboard() {
                 onRetryAiExtraction: handleRetryAiExtraction,
                 prepareState: stagedPrepareState,
                 onRetryPrepare: handleRetryPrepare,
+                outputMode: selectedOutputMode,
+                onRetryLocalObsAsset: retryStagedLocalObsAsset,
                 showToast
               }}
             />
@@ -3024,13 +3135,12 @@ export default function Dashboard() {
           모드에서는 beginPlaybackRun이 YouTube run 생성 자체를 막는다(blocked).
           iframe 등 광고가 나갈 수 있는 폴백 경로는 존재하지 않는다. */}
       <div className="live-players-hidden">
-        {useOnAirPlayer && onAirSession?.room && onAirSession?.playerToken && (
+        {shouldMountLocalSpeaker && (
           <Suspense fallback={null}>
             <DashboardLocalSpeaker
               ref={localSpeakerRef}
               apiBaseUrl={onAir.baseUrl}
-              room={onAirSession.room}
-              token={onAirSession.playerToken}
+              ensureSession={ensureOnAirSession}
               sinkId={speakerOutputDevice.deviceId}
               onEvidence={handleLocalSpeakerEvidence}
               onSinkError={handleSpeakerSinkRestoreFailure}

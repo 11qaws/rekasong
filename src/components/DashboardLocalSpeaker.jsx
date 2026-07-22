@@ -7,22 +7,17 @@ import React, {
 } from 'react';
 
 import { createLocalSpeakerController } from '../lib/localSpeakerController.js';
-import {
-  createOnAirPrefetchCache,
-  ON_AIR_PREFETCH_MAX_CACHED_BYTES,
-} from '../lib/onAirPrefetchCache.js';
-import { createOnAirSourceResolver } from '../lib/onAirSourceResolver.js';
 import { applySpeakerOutputDevice } from '../lib/speakerOutputDevice.js';
+import { createSpeakerSourcePipeline } from '../lib/speakerSourceResolver.js';
 
 /**
- * The dashboard's normal music-player output. It downloads prepared media
- * through the authenticated session, but playback itself is browser-local and
- * never depends on an output lease, a player heartbeat, or OBS attestation.
+ * The dashboard's normal music-player output. Page-owned local files play
+ * immediately; prepared media acquires HTTP credentials only when requested.
+ * Playback itself never depends on an output lease, heartbeat, or OBS proof.
  */
 const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
   apiBaseUrl,
-  room,
-  token,
+  ensureSession,
   sinkId = '',
   onEvidence = null,
   onSinkError = null,
@@ -66,34 +61,24 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
     setState('initializing');
     callbacksRef.current.onStateChange?.('initializing');
     const audio = audioRef.current;
-    if (!audio || !apiBaseUrl || !room || !token) {
+    if (!audio || !apiBaseUrl || typeof ensureSession !== 'function') {
       setState('invalid_configuration');
       callbacksRef.current.onStateChange?.('invalid_configuration');
       return undefined;
     }
 
     let disposed = false;
-    let prefetchCache = null;
+    let sourcePipeline = null;
     let controller = null;
     try {
-      const resolverConfig = { baseUrl: apiBaseUrl, room, token };
-      const loadResolver = createOnAirSourceResolver({
-        ...resolverConfig,
-        maxBytes: 200 * 1024 * 1024,
-      });
-      const prefetchResolver = createOnAirSourceResolver({
-        ...resolverConfig,
-        maxBytes: ON_AIR_PREFETCH_MAX_CACHED_BYTES,
-      });
-      prefetchCache = createOnAirPrefetchCache({
-        loadResolver,
-        prefetchResolver,
-        loadResolverMaxBytes: 200 * 1024 * 1024,
+      sourcePipeline = createSpeakerSourcePipeline({
+        baseUrl: apiBaseUrl,
+        ensureSession,
       });
       controller = createLocalSpeakerController({
         audio,
-        resolveSource: prefetchCache.resolveSource,
-        prefetchSources: prefetchCache.prefetch,
+        resolveSource: sourcePipeline.resolveSource,
+        prefetchSources: sourcePipeline.prefetch,
         onEvidence(evidence) {
           if (disposed) return;
           callbacksRef.current.onEvidence?.(evidence);
@@ -111,9 +96,9 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
       disposed = true;
       if (controllerRef.current === controller) controllerRef.current = null;
       controller?.dispose();
-      prefetchCache?.dispose();
+      sourcePipeline?.dispose();
     };
-  }, [apiBaseUrl, room, token]);
+  }, [apiBaseUrl, ensureSession]);
 
   return (
     <div data-local-speaker-state={state} aria-hidden="true">

@@ -1,5 +1,16 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — v0.2.11 Speaker 로컬 파일 완전 로컬 우선
+
+- 로컬 파일 선택·검토·즉시 재생·대기열 추가·파일 다시 선택은 이제 page-owned `blob:`만 사용한다. Speaker에서는 파일을 Worker에 올리거나 `/v1/sessions`를 만들지 않으며, 로컬 WAV를 실제 `<audio>`로 재생해 시간이 증가하는 동안 session HTTP 0회 / control WebSocket 0개 / 전송 frame 0개를 확인했다.
+- 한 로컬 곡은 Speaker용 `blob:`과 선택적인 OBS용 `assetId`를 나란히 가진다. OBS 준비가 끝나도 Speaker source를 덮어쓰거나 회수하지 않으므로 업로드·OBS 연결 실패 뒤에도 같은 페이지에서 Speaker로 즉시 돌아갈 수 있다. 같은 Blob을 참조하는 현재 곡·대기열·이력은 source별 업로드 하나를 공유한다.
+- OBS를 명시적으로 고른 순간에만 현재 곡·대기열·검토 중 파일의 방송 자산을 준비한다. 유효한 `assetId` 전에는 strict OBS 재생을 시작하지 않으며, 준비 완료 뒤 곡을 다시 누르라는 다음 행동을 한국어·영어로 안내한다. 실패는 자동 무한 재시도하지 않고, 검토 화면에는 `OBS 파일 다시 준비` 버튼을 제공하며 대기열 곡은 다시 누를 때만 재시도한다.
+- Speaker 출력은 OBS 파일 준비가 진행 중이거나 실패해도 잠기지 않는다. 로컬 파일 다시 선택도 먼저 Blob을 복구하며 OBS 업로드를 기다리지 않는다. Blob URL은 기존처럼 `localStorage`와 탭 간 공유 상태에 쓰지 않고 마지막 페이지 참조가 사라질 때 회수한다.
+- 첫 화면에서는 `DashboardLocalSpeaker`, `playbackEngine`, 원격 prepare/cache graph를 모두 내려받지 않는다. 로컬 파일을 검토할 때 Speaker controller와 playback engine 두 청크만 지연 로드하고, 원격 resolver/cache 두 청크는 로컬 재생에서 계속 0개였다. 새 Dashboard는 DOM 124개, script 6개, decoded resource 약 0.99MiB를 유지한다.
+- 모든 새 사용자 문구는 locale catalog의 semantic key로 한국어·영어를 함께 추가했다. OBS player·Worker protocol·단일 출력 lease는 수정하지 않았다. 유레카의 금발을 뜻하는 3px 노란 선은 연결·파일 상태와 독립된 영구 UI 계약으로 유지하고 320/375/768/1100px, 한국어·영어 로컬 브라우저에서 다시 확인했다.
+- 검증: 자동 테스트 664/664, lint 신규 경고 0(기존 Gemini escape 경고 2건), Worker 문법, production build, OBS 정적 closure 예산(raw 382,809B / gzip 117,326B / brotli 102,762B), Speaker network/local-file recovery/drag/Dashboard/1,000곡 browser smoke를 통과했다. 업로드 실패→수동 재시도→Blob 보존→Speaker 실제 재생도 격리 브라우저에서 통과했다. 1,000곡은 최대 100행, cold 218.7ms, warm p95 33.2ms, post-GC heap 증가 0B이며 320px overflow가 없다.
+- 실제 OBS에서 로컬 파일을 업로드해 송출한 뒤 같은 파일을 Speaker로 다시 듣는 과정, 사용자 청취, 비공개 방송/VOD, 모바일 OS별 백그라운드·장치, 장면/소스 새로고침·OBS 재시작 변형, 10분 마이크↔MR 상호상관은 자동 증거와 구분한 물리 관문으로 남긴다.
+
 ## 2026-07-22 (Codex) — v0.2.10 Speaker 수요 기반 연결 분리
 
 - 새 Dashboard는 일반 웹 플레이어인 Speaker로 즉시 시작하며, 페이지 진입이나 검색만으로 production Worker의 `/v1/sessions`를 만들지 않는다. 준비할 YouTube 미디어·로컬 업로드·OBS 주소처럼 실제 미디어 자격이 필요한 행동에서만 저장 세션을 만들거나 재사용한다.

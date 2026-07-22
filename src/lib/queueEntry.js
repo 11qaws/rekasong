@@ -29,7 +29,7 @@ export const sanitizeSongDef = (song) => {
       : (type === 'youtube' ? 'youtube' : 'local'),
     songbookId: source.songbookId || null,
     mediaType: source.mediaType === 'video' ? 'video' : 'audio',
-    // On-Air(원격 플레이어) 로컬 곡은 blob 대신 세션 자산 id를 참조한다.
+    // OBS용 세션 자산은 선택 사항이며 Speaker의 page Blob src를 대체하지 않는다.
     ...(source.assetId ? { assetId: source.assetId } : {}),
     // 표시 전용(수동) 항목 마커 — setlist 표기용으로 직접 입력한 곡(재생 src 없음).
     ...(source.manual === true ? { manual: true } : {}),

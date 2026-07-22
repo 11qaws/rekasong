@@ -5,8 +5,8 @@
 // QueueEntry가 여러 개 생기므로, revoke는 항상 "이 src를 참조하는 entry가
 // 상태(queue/history/currentEntry) 어디에도 없을 때"만 수행한다(D-02).
 //
-// On-Air 로컬 곡은 blob이 아니라 세션 R2 자산 id(assetId)를 src로 참조하므로
-// revoke 대상이 아니다 — 모든 판정이 `blob:` 접두 검사를 거쳐 자연히 걸러진다.
+// Speaker 로컬 곡은 page Blob을 src로 계속 쓰며 OBS를 선택한 경우에만 assetId를
+// 옆에 덧붙인다. assetId 존재 여부와 무관하게 Blob의 실제 참조를 기준으로 회수한다.
 
 import { sanitizeSongDef } from './queueEntry.js';
 

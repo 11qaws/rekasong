@@ -174,10 +174,15 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
     /LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000[\s\S]*?timeoutError: \(\) => new Error\(t\('playback\.localSpeaker\.notReady'\)\)/,
     'a missing local player must reject its queued command instead of waiting forever',
   );
+  assert.doesNotMatch(
+    source,
+    /if \(useOnAirPlayer && !onAirSession\) \{[\s\S]*?retryLocalSpeakerSession\(\)/,
+    'a local Speaker command must not create a media session while its lazy element mounts',
+  );
   assert.match(
     source,
-    /if \(useOnAirPlayer && !onAirSession\) \{[\s\S]*?queueLocalSpeakerCommand\(command\)[\s\S]*?retryLocalSpeakerSession\(\)/,
-    'a later Speaker play must retry a failed media-session bootstrap automatically',
+    /if \(!localSpeaker\) \{\s+if \(localSpeakerState === 'initializing'\) return queueLocalSpeakerCommand\(command\);/,
+    'the first local command waits only for the page-owned player element',
   );
   assert.doesNotMatch(source, /DashboardSpeakerPlayerV2|shouldHostDashboardSpeaker|rekasong-output-owner/);
   assert.doesNotMatch(source, /const selectLocalSpeakerMode = outputControl\.selectLocalSpeakerMode;/);

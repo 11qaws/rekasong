@@ -4,7 +4,7 @@ import YouTube from 'react-youtube';
 import { prepareBlockMessage } from '../lib/preparePipeline';
 import { getAppMessage as t } from '../copy/appMessages';
 
-export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, aiStatusPhase = 1, onRetryAiExtraction, prepareState, onRetryPrepare }) {
+export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, aiStatusPhase = 1, onRetryAiExtraction, prepareState, onRetryPrepare, outputMode = 'speaker', onRetryLocalObsAsset = null }) {
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
@@ -18,7 +18,9 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
 
   const { type, src, title } = stagedItem;
   const hasPlayableMr = type === 'local' ? Boolean(src) : type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(src || '');
-  const needsBroadcastAsset = type === 'local' && stagedItem.assetStatus && stagedItem.assetStatus !== 'local';
+  const needsBroadcastAsset = outputMode === 'obs'
+    && type === 'local'
+    && !stagedItem.assetId;
   const isBroadcastAssetReady = !needsBroadcastAsset || stagedItem.assetStatus === 'ready';
   // Stage 6c(계약 §5): YouTube 곡의 준비 상태가 송출 버튼의 동작을 결정한다.
   // 로컬 파일은 준비가 필요 없다(prepareKind='ready') — 소스 불문 같은 규칙.
@@ -140,9 +142,16 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         <div className="staging-action-notices">
           {type === 'local' && needsBroadcastAsset && (
             <p className={`staging-asset-status ${stagedItem.assetStatus === 'error' ? 'is-error' : ''}`}>
-              {stagedItem.assetStatus === 'uploading'
-                ? t('staging.asset.uploading', { progress: stagedItem.assetProgress || 0 })
-                : stagedItem.assetError || t('staging.asset.failed')}
+              <span>
+                {stagedItem.assetStatus === 'uploading'
+                  ? t('staging.asset.uploading', { progress: stagedItem.assetProgress || 0 })
+                  : stagedItem.assetError || t('staging.asset.failed')}
+              </span>
+              {stagedItem.assetStatus === 'error' && onRetryLocalObsAsset && (
+                <button type="button" className="ai-retry-button" onClick={onRetryLocalObsAsset}>
+                  {t('staging.asset.retry')}
+                </button>
+              )}
             </p>
           )}
           {/* Stage 6c: 준비 상태 안내 — 실패는 방송 전에 여기서 먼저 보인다.
