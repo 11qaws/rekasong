@@ -10,7 +10,8 @@
 - 유레카의 금발을 뜻하는 3px 노란 선은 기존 stacking-context 회귀 검사와 Dashboard smoke에 계속 포함된다. 이 성능 변경에서도 320/375/768/1100px 한국어·영어 화면의 선 높이·불투명 색·머리핀 범위를 다시 통과했다.
 - 검증: 자동 테스트 635/635, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, 로컬 Dashboard smoke, 1,000곡 production-browser 성능 smoke, OBS 정적 closure budget(raw `382,301B` / gzip `116,113B` / brotli `101,719B`), `git diff --check`를 통과했다.
 - 첫 Pages workflow `29898243550`은 clean install 뒤 기존 adapter 통합 테스트의 fixture Blob 대기가 CI에서 29ms 만에 만료돼 중단됐다. 제품 timeout이 아니라 `setImmediate` 250회라는 CPU 속도 의존 테스트 상한이 원인이었다. 이를 실제 시간 2초의 bounded wait로 교체해 빠른 로컬과 병렬 Linux CI가 같은 시간 계약을 사용하게 했다. 실제 고착은 여전히 2초 뒤 실패한다.
-- 주 기능은 `511beed`에 커밋했으며 CI 대기 보강은 후속 커밋·배포 전이다. 공개 Pages는 계속 frontend `0.2.5`이며, 배포 뒤 같은 1,000곡 측정을 공개 URL에서 다시 수행한다.
+- 주 기능은 `511beed`, CI 대기 보강은 `eb25839`에 커밋했다. Pages workflow `29898336642`는 clean install, 635개 테스트, lint, Worker 문법, build, OBS budget, publish를 모두 통과했다.
+- 공개 `https://11qaws.github.io/rekasong/` 재검증은 Speaker 기본값·활성화된 Speaker/OBS 버튼·YouTube 단일 소스·한영 전환·320/375/768/1100px의 머리핀과 3px 금발 선을 모두 통과했다. 공개 1,000곡 실측은 최대 100행, 저장 `290,235B`, cold open `32.3ms`, warm p95 `46.9ms`, 320px overflow 0, post-GC heap 증가 `219,300B`였다.
 
 ## 2026-07-22 (Codex) — 실제 OBS 녹화 G4와 숨은 소스 비파괴 복구
 

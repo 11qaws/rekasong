@@ -6,7 +6,7 @@
 - production Chromium 전용 harness가 1,000곡 전체 10페이지, 최신 복귀, 5회 재개폐, 320px 모바일, GC 뒤 heap을 측정한다. 저장은 `290,235B`, 최초 개방 `31.9~259.4ms`, warm p95 `30.6~42.8ms`, 모바일 overflow 0, post-GC heap 증가 약 0.2MiB로 각각 1MiB/300ms/100ms/16MiB 예산을 통과했다.
 - 개발 서버의 module transform을 UI 성능으로 잘못 세지 않도록 production build/preview만 합격 판정에 사용하고, 최초 cold open을 warm p95 표본에서 분리했다. 같은 harness는 배포 후 공개 URL도 직접 검사할 수 있다.
 - 한국어·영어 이력 이동 문구를 semantic key로 추가했다. 기존 유레카 금발 3px 선의 불투명도·stacking context·반응형 가시성 회귀 검사는 그대로 유지한다.
-- 이 후보는 아직 frontend `0.2.6`으로 커밋·배포 전이다. Worker와 OBS media graph/protocol에는 변경이 없다.
+- frontend `0.2.6` 앱 release `eb25839`를 workflow `29898336642`로 배포했다. clean install·635개 테스트·build·OBS budget·publish와 공개 1,000곡 재측정을 통과했으며 Worker와 OBS media graph/protocol에는 변경이 없다.
 
 ## 2026-07-22 유레카 브랜드 선·실제 OBS 장시간 시험 보강
 
@@ -24,7 +24,7 @@
 
 > 작업 범위: `D:\Agents\rekasong\Codex\workspace`만 수정했다.
 > 판정 원칙: 실제 OBS CEF·mixer·녹화·stream artifact가 없는 상태를 “OBS 송출 확인 완료”로 표시하지 않는다.
-> 배포 상태: frontend `0.2.5` / release commit `743ac9a`, Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 production에 배포했다. v0.2.5는 공개 Dashboard UX·성능 smoke와 의존성 정리이며 런타임 UI 자산 hash는 유지된다.
+> 배포 상태: frontend `0.2.6` / app release commit `eb25839`, Worker version `7a725d35-6372-4422-b45b-2809c118ff73`를 production에 배포했다. v0.2.6은 고정 100행 이력 탐색과 공개 1,000곡 성능 관문이며 OBS media graph/protocol은 바뀌지 않았다.
 
 ## 1. 현재 결론
 
