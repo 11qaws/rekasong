@@ -468,9 +468,10 @@ export default function Dashboard() {
     outputControlAuthority.shouldRetryReleasedOwner,
   ]);
 
-  // A transport drop is different from another-tab ownership. Rebuild the
-  // coordinator a few times with bounded delays, preserving the page identity
-  // and never replaying an unresolved playback/output command.
+  // A transport drop is different from another-tab ownership. Ask the output
+  // controller for bounded recovery; a plain socket gap reuses the existing
+  // coordinator so its owned run survives, while superseded/stuck authority
+  // may still require a fresh coordinator. No route or media command is replayed.
   const reconnectPolicyRef = useRef({ sessionKey: null, attempts: 0 });
   useEffect(() => {
     const sessionKey = onAirSession?.room && onAirSession?.controlToken

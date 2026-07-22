@@ -377,6 +377,20 @@ export class OnAirOutputController {
 
   retryConnection() {
     this.#assertUsable();
+    const currentSnapshot = this.#snapshot ?? this.#coordinator.snapshot();
+    const hasLiveRun = Boolean(
+      currentSnapshot?.activeRun
+      || currentSnapshot?.playerSnapshot?.activeFamily,
+    );
+    const recoveringPlainConnectionLoss = currentSnapshot?.unknownLock?.code
+      === ON_AIR_CONTROL_COORDINATOR_CODES.CONNECTION_LOST
+      && currentSnapshot?.state !== ON_AIR_V2_CONNECTION_STATES.SUPERSEDED;
+    const preservesCoordinator = hasLiveRun || recoveringPlainConnectionLoss;
+    const socketCanReconnect = [
+      ON_AIR_V2_CONNECTION_STATES.IDLE,
+      ON_AIR_V2_CONNECTION_STATES.DISCONNECTED,
+      ON_AIR_V2_CONNECTION_STATES.CLOSED,
+    ].includes(currentSnapshot?.state);
     this.#clearAutomaticReconnect(true);
     this.#clearConnectionWatchdog();
     this.#clearSwitchWatchdog();
@@ -389,6 +403,42 @@ export class OnAirOutputController {
       this.#stopRequested = false;
     }
     this.#switchState = outputSwitchState();
+
+    // A plain control-socket gap does not invalidate the page-owned run. The
+    // coordinator deliberately keeps that run identity so a fresh welcome and
+    // authoritative snapshot can prove that the same OBS playback survived.
+    // Replacing the coordinator here would discard that identity and turn the
+    // still-playing song into an unowned run, making recovery itself lock the
+    // controls. Keep the coordinator and reconnect only its socket. Other
+    // When there is no live run, other recovery cases (stuck negotiation,
+    // released owner, superseded authority, invalid snapshot) may still use a
+    // fresh coordinator below. Ambiguous state with a live run stays fenced
+    // until the user chooses the explicit full-reset boundary.
+    if (preservesCoordinator) {
+      this.#connected = true;
+      this.#publish();
+      if (!socketCanReconnect) {
+        this.#reconcileConnectionWatchdog();
+        return Object.freeze({
+          status: currentSnapshot?.ready === true
+            ? 'already_ready'
+            : 'reconnect_in_progress',
+          state: currentSnapshot.state,
+        });
+      }
+      try {
+        const result = this.#coordinator.connect();
+        this.#reconcileConnectionWatchdog();
+        return result;
+      } catch (error) {
+        this.#snapshot = this.#coordinator.snapshot();
+        this.#reconcileAutomaticReconnect();
+        this.#reconcileConnectionWatchdog();
+        this.#publish();
+        throw error;
+      }
+    }
+
     this.#coordinatorUnsubscribe?.();
     this.#coordinatorUnsubscribe = null;
     this.#coordinator?.dispose();

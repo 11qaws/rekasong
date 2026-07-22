@@ -1663,6 +1663,104 @@ test('idle control disconnect reconnects the same coordinator without replaying 
   assert.equal(timers.size, 0, 'disposing the page cancels its reconnect timer');
 });
 
+test('manual recovery of an active OBS socket gap preserves its coordinator and owned run', () => {
+  const activeRun = {
+    entryId: 'obs-entry',
+    runId: 'obs-run',
+    targetPlayerInstanceId: 'obs-player',
+    leaseEpoch: 4,
+    acknowledged: true,
+    observed: true,
+  };
+  const protocol = readyRoute('obs', {
+    lease: {
+      epoch: 4,
+      leaseTarget: 'obs-player',
+      clientKind: 'obs-browser-source',
+      status: 'audible',
+      switchId: 'obs-switch',
+    },
+    activeFamily: { family: 'run', entryId: 'obs-entry', runId: 'obs-run' },
+    desiredTransport: {
+      status: 'playing',
+      entryId: 'obs-entry',
+      runId: 'obs-run',
+      position: 41,
+    },
+    confirmedPlayback: {
+      status: 'playing',
+      entryId: 'obs-entry',
+      runId: 'obs-run',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      paused: false,
+      audible: true,
+    },
+  });
+  const disconnected = coordinatorSnapshot(protocol, {
+    state: 'disconnected',
+    ready: false,
+    writable: false,
+    unknown: true,
+    authorityUnknown: true,
+    unknownLock: { code: 'control_coordinator_connection_lost' },
+    activeRun,
+  });
+  const { controller, coordinators } = createHarness(disconnected);
+  const coordinator = coordinators[0];
+
+  controller.retryConnection();
+
+  assert.equal(coordinators.length, 1, 'a socket gap must not replace the run-owning coordinator');
+  assert.equal(coordinator.disposed, false);
+  assert.equal(coordinator.connectCalls, 2);
+  assert.deepEqual(coordinator.snapshot().activeRun, activeRun);
+  assert.equal(
+    coordinator.calls.some(([name]) => [
+      'activateOutput',
+      'deactivateOutput',
+      'emergencyStop',
+      'load',
+      'play',
+      'pause',
+      'seek',
+      'setVolume',
+      'stop',
+    ].includes(name)),
+    false,
+    'recovery reconnects control only and never changes the established media graph',
+  );
+
+  coordinator.emit({ ...disconnected, state: 'negotiating' });
+  assert.deepEqual(controller.retryConnection(), {
+    status: 'reconnect_in_progress',
+    state: 'negotiating',
+  });
+  assert.equal(coordinators.length, 1, 'a second retry cannot replace an in-flight recovery');
+  assert.equal(coordinator.connectCalls, 2, 'an in-flight socket is not opened twice');
+  assert.deepEqual(coordinator.snapshot().activeRun, activeRun);
+
+  coordinator.emit(coordinatorSnapshot(protocol, { activeRun }));
+  assert.equal(controller.getState().actualOutputMode, 'obs');
+  assert.equal(controller.sendCommand({
+    type: 'pause',
+    entryId: 'obs-entry',
+    runId: 'obs-run',
+  }), 'pause');
+  assert.deepEqual(
+    coordinator.calls.at(-1),
+    ['pause'],
+    'only a fresh explicit command may act after authoritative recovery proof',
+  );
+  assert.deepEqual(controller.retryConnection(), {
+    status: 'already_ready',
+    state: 'ready',
+  });
+  assert.equal(coordinators.length, 1, 'a late recovery timer cannot discard a live run');
+  assert.equal(coordinator.connectCalls, 2);
+  assert.equal(coordinator.disposed, false);
+});
+
 test('a terminal session close never enters automatic control reconnect', () => {
   const timers = createTimerHarness();
   const { controller, coordinators } = createHarness(coordinatorSnapshot(), {

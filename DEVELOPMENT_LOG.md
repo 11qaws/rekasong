@@ -1,5 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.23 OBS 제어 재연결의 활성 곡 소유권 보존
+
+- established OBS route의 전체 절단 경로를 Graphify와 실제 소스로 다시 추적했다. source active/visible 변화, streaming telemetry, heartbeat warning/stale, player event 전달 불명, player WebSocket 일시 단절은 일반 곡의 media graph를 정지하지 않는다. 명시적 STOP·route deactivate·emergency stop·실제 player dispose·session end만 물리 정지 경계다.
+- 실제 남은 결함은 player가 아니라 Dashboard control 복구였다. 대시보드의 350ms 빠른 복구가 `retryConnection()`을 호출하면 기존 구현은 제어 coordinator를 폐기했다. OBS 음원은 계속 재생되더라도 새 coordinator는 현재 `runId`를 소유하지 않아 fresh snapshot을 `unowned active run`으로 잠글 수 있었다.
+- 순수 `control_coordinator_connection_lost`에서는 같은 coordinator와 page-lifetime control identity를 보존하고 WebSocket만 다시 연다. 이미 connecting/negotiating이면 두 번째 coordinator나 socket을 만들지 않고 `reconnect_in_progress`로 기존 시도를 기다린다. fresh snapshot 뒤 늦게 도착한 recovery timer도 active run이 있으면 `already_ready`로 끝내 coordinator를 폐기하지 않는다. superseded authority, owner release, 시작 협상 고착처럼 활성 run 없이 새 권한 증거가 필요한 경우만 기존 fresh-coordinator 복구를 유지한다.
+- 복구는 route·LOAD·PLAY·PAUSE·SEEK·VOLUME·STOP·emergency를 하나도 재전송하지 않는다. 기존 `entryId/runId/player/lease`와 Worker snapshot이 다시 정확히 맞을 때만 connection-loss lock이 풀린다. 명령 결과 불명이나 identity 불일치는 추측으로 해소하지 않고 명시적 완전 초기화 경계에 남긴다.
+- 집중 회귀는 control coordinator, output controller, playback adapter, Worker protocol의 `298/298`을 통과했다. 활성 OBS run을 가진 disconnected snapshot에서 수동/대시보드 복구가 coordinator 1개, connect 1회 추가, media·route 명령 0을 유지하고, 협상 중 두 번째 retry도 coordinator/socket을 늘리지 않는 계약을 추가했다.
+- 전체 `716/716` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법 검사를 통과했다. production build의 Dashboard는 `370.81kB raw / 101.51kB gzip`, CSS는 `61.49kB raw / 11.61kB gzip`이며 OBS closure는 `383,782B raw / 117,552B gzip / 102,951B brotli`로 기존 예산 안이다.
+- production preview smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 전환과 reload 지속성, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼, 금발 선을 통과했다. HTTP 오류·ntfy 요청·브라우저 console error는 0이고 warm DCL `21.6ms`, warm long task 0, JS heap `7,896,004B`였다. 이 테스트는 OBS route·재생·방송·녹화를 건드리지 않았다.
+
 ## 2026-07-23 (Codex) — v0.2.22 Speaker 출력 장치 탈착 복구
 
 - Speaker에는 `visibilitychange`, `document.hidden`, PiP, OBS route proof, heartbeat를 이유로 재생을 끊는 경로가 없음을 Graphify 연결 추적과 소스 검토로 다시 확인했다. 이 불변식을 정적 회귀 테스트로 고정해 이후 검증 로직이 Speaker transport에 다시 들어오지 못하게 했다.
