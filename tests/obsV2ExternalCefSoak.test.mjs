@@ -15,6 +15,7 @@ test('external CEF soak keeps the player credential in a short-lived handoff fil
   assert.match(source, /Refresh cache of current page/);
   assert.match(source, /REKASONG_CEF_SOAK_CANDIDATE_STABLE_MS/);
   assert.match(source, /REKASONG_CEF_SOAK_CANDIDATE_STABLE_MS',\s*75_000/);
+  assert.match(source, /REKASONG_CEF_SOAK_CONTROL_TIMEOUT_MS',\s*60_000/);
   assert.match(source, /REKASONG_CEF_SOAK_RECONNECT_GRACE_MS',\s*60_000/);
   assert.match(source, /async function waitForStableObsCandidate\(\)/);
   assert.match(source, /function recoverControlConnection\(snapshot, now = Date\.now\(\)\)/);
@@ -100,5 +101,37 @@ test('external CEF recovery requires explicit source refresh and OBS restart act
   assert.equal(
     packageJson.scripts['test:obs:v2:cef-recovery'],
     'node scripts/obs-v2-external-cef-soak.mjs --recovery',
+  );
+});
+
+test('external CEF scene transition preserves one live player until natural end', async () => {
+  const source = await readFile(scriptUrl, 'utf8');
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
+  assert.match(source, /const SCENE_TRANSITION_MODE = process\.argv\.includes\('--scene-transition'\)/);
+  assert.match(source, /await writeStatus\('awaiting_scene_away'/);
+  assert.match(source, /console\.log\('ACTION_SWITCH_AWAY_SCENE'\)/);
+  assert.match(source, /player\?\.runtime\?\.sourceActive === expectedActive/);
+  assert.match(source, /protocol\.lease\.leaseTarget === candidate\.playerInstanceId/);
+  assert.match(source, /protocol\.confirmedPlayback\.playerInstanceId === candidate\.playerInstanceId/);
+  assert.match(source, /player\?\.connectionId === candidate\.connectionId/);
+  assert.match(source, /await writeStatus\('awaiting_scene_return'/);
+  assert.match(source, /console\.log\('ACTION_SWITCH_BACK_SCENE'\)/);
+  assert.match(source, /scene transition fixture natural end/);
+  assert.match(source, /endedPlayer\?\.connectionId === candidate\.connectionId/);
+  assert.match(
+    source,
+    /observation\.unknownLockCode !== ON_AIR_CONTROL_COORDINATOR_CODES\.CONNECTION_LOST/,
+  );
+  assert.match(source, /observation\.ready && observation\.unknownLockCode === null/);
+  assert.match(source, /observation\.obsCandidateCount > 1/);
+  assert.match(source, /controlCloseDiagnostics/);
+  assert.match(source, /expectedTerminalClose/);
+  assert.match(source, /ON_AIR_CONTROL_COORDINATOR_CODES\.SESSION_ENDED/);
+  assert.match(source, /samePlayerAcrossSceneTransition: true/);
+  assert.match(source, /sameConnectionAcrossSceneTransition: true/);
+  assert.equal(
+    packageJson.scripts['test:obs:v2:cef-scene-transition'],
+    'node scripts/obs-v2-external-cef-soak.mjs --scene-transition',
   );
 });

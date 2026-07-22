@@ -1,5 +1,16 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.20 OBS 장면 전환 연속성과 제어 연결 관측 분리
+
+- 실제 앱 설정은 production Worker `rekasong-session.11qaws.workers.dev`를 사용하지만, 이전 작업 기록에 남은 `rekasong-session.11qaws-test.workers.dev`는 아직 legacy snapshot만 반환했다. Protocol v2 실제 OBS 시험은 production 주소로 바로잡았고 공개 Pages+production Worker 8초 smoke를 먼저 통과했다. 오래된 staging 주소는 별도로 업그레이드하기 전까지 v2 합격 근거로 사용하지 않는다.
+- `test:obs:v2:cef-scene-transition`을 추가했다. 전용 OBS profile·scene에서 동일한 player ID·connection ID·entry/run·audible lease를 유지한 채 `sourceActive=false` 10초와 복귀 후 `sourceActive=true` 5초를 요구하고, 5분 fixture가 자연 종료될 때까지 restart·seek·skip이 없는지 검사한다. 장면 밖의 established player는 새 활성화 후보 목록에서 빠져 `obsCandidateCount=0`이 되는 것이 정상이며, exact leased player와 media graph는 계속 보존한다.
+- control WebSocket의 일시 단절은 60초 안에서 bounded reconnect하되 LOAD·PLAY·STOP을 재전송하거나 오디오를 끊지 않는다. 실제 route 손상, 중복 player, 다른 lease target, unknown/failed lease는 계속 실패한다. harness는 client close code·clean close 여부·재접속 횟수·최대 control gap을 별도 증거로 남긴다. Worker는 종료 이벤트 때만 role/protocol/close code/clean 여부를 기록하며 close reason 원문과 credential은 기록하지 않는다.
+- 최종 실제 OBS run은 29,040,044바이트/302.5초 WAV를 장면 밖 10초→복귀 5초 뒤에도 동일 player·동일 connection으로 자연 종료했다. wall `302,584ms`, 오차 `84ms`, candidate transition `0`, unsafe route 관측 `0`, HTTP 410 session fence를 통과했다. 앞선 두 5분 run의 wall 오차도 `97ms`, `31ms`였고 어느 run도 장면 전환으로 재시작되거나 건너뛰지 않았다.
+- 30초 cadence는 위치와 연결 상태를 관찰·기록하는 용도로만 유지한다. 곡 중 자동 seek·restart·playback-rate 변경은 하지 않고, 각 다음 곡을 새 run의 0초 기준으로 시작하면서 OBS route는 유지한다.
+- 세 번의 장면 시험 전후 OBS UI에서 `Start Streaming`·`Start Recording`과 두 타이머 `00:00:00`을 확인했다. 실제 방송·녹화는 시작하지 않았다. 매 run 뒤 session credential handoff를 제거하고 Browser Source URL을 검증된 백업으로 원자 복원했으며, 재사용 가능한 빈 `Scene 2`는 전용 test collection에 보존했다.
+- production Worker close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 정상 동작의 storage write·heartbeat cadence·snapshot 의미는 바꾸지 않았다.
+- 전체 `707/707` 테스트, Worker·harness 문법, production build, `git diff --check`, OBS bundle 예산을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남았다. Dashboard는 `368.34kB raw / 100.91kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`로 v0.2.19와 동일해 앱 첫 화면과 OBS 정적 경로 무게를 늘리지 않았다.
+
 ## 2026-07-23 (Codex) — v0.2.19 OBS Chromium 103 호환과 실제 refresh·재시작 복구
 
 - 실제 OBS 30.2.0의 `obs-browser 2.23.5`가 Chromium `103.0.5060.134`를 사용하지만 Vite 8 기본 production target은 Chrome 111 이상이라는 호환 공백을 확인했다. 현재 브라우저에서는 정상이어도 OBS CEF가 player 등록 전에 멈출 수 있으므로 JS와 CSS target을 모두 `chrome103`으로 고정했다. 이 차이가 이전 실제 등록 실패의 원인이었다고 단정하지 않고, 새 빌드의 실제 CEF 등록으로 별도 판정한다.

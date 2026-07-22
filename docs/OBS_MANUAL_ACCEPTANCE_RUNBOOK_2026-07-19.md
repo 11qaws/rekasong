@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS G4·CEF 60분·source refresh·OBS 재시작 복구 통과 · 물리 G6 시작 offset 실패/5분 drift 경계 · 가상 케이블 격리 G6 5분 drift 통과/고정 offset 실패 · G5 미실행
+> 상태: 실행 절차 확정 · 실제 OBS G4·CEF 60분·source refresh·OBS 재시작·5분 scene 전환 통과 · 물리 G6 시작 offset 실패/5분 drift 경계 · 가상 케이블 격리 G6 5분 drift 통과/고정 offset 실패 · G5 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -67,7 +67,7 @@ OBS profile, scene collection, source, audio device, sample rate, monitoring, tr
 
 ## 4. 시험 환경 준비
 
-1. production이 아닌 전용 local/staging Worker, bucket, session을 사용한다.
+1. 반복·장애·부하 시험은 production이 아닌 전용 local/staging Worker, bucket, session을 사용한다. 현재 `rekasong-session.11qaws-test.workers.dev`는 legacy snapshot만 반환하므로 Protocol v2 시험에는 업그레이드 전까지 사용하지 않는다. production 실제 CEF 인수 시험은 사용자 명시 승인, 전용 test profile, 방송 OFF 재확인, bounded 단일 session일 때만 예외적으로 실행한다.
 2. OBS에 전용 test profile과 scene collection을 만든다. 사용자의 실제 방송 profile을 자동 수정하지 않는다.
 3. 오디오 Browser Source는 정확히 하나만 둔다.
 4. Browser Source에서 `Local file`을 해제한다.

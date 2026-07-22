@@ -20,7 +20,7 @@
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
-| OBS 재접속 중 재생 연결을 우선 보존 | 같은 ID 자동 복구 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·60분 CEF·source refresh·OBS 재시작 완료 | v0.2.19 공개 CEF recovery 실기 완료 | scene 전환 변형 |
+| OBS 재접속 중 재생 연결을 우선 보존 | 같은 ID 자동 복구 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작 완료 | v0.2.19 공개 CEF로 5분 scene 전환 실기 완료 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
@@ -30,7 +30,15 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 frontend `0.2.19` / release commit `187224c0a77f28a33b3a2024e0914773a66386f0`까지 성공적으로 배포됐다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구를 통과했다. 두 변형 모두 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. production Worker는 변경하지 않았으며 version `51f9c6e8-60aa-4f74-962a-98ac55eda0be`다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 frontend `0.2.19` / release commit `187224c0a77f28a33b3a2024e0914773a66386f0`까지 성공적으로 배포됐다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구와 5분 scene 전환 연속성을 통과했다. source refresh·재시작은 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. scene 전환은 동일 player·connection·run을 유지하고 302.5초 fixture를 wall 오차 `84ms`로 자연 종료했다. production Worker의 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+
+### v0.2.20 실제 OBS scene 전환 — 2026-07-23
+
+- 공개 v0.2.19 player와 production Worker를 전용 OBS 30.2.0 test collection에서 검증했다. 빈 장면 10초와 원래 장면 복귀 5초 동안 동일 player ID·connection ID·entry/run·audible lease가 유지됐다.
+- 최종 302.5초 fixture는 wall `302,584ms`(오차 `84ms`)로 자연 종료했고 candidate transition `0`, unsafe route 관측 `0`, 종료 session HTTP 410을 통과했다. 장면 밖에서 `obsCandidateCount=0`인 것은 inactive source가 새 활성화 후보에서 제외되는 정상 상태이며 established lease 실패가 아니다.
+- 앞선 두 run도 wall 오차 `97ms`, `31ms`로 자연 종료했다. 한 run에서 control socket이 잠깐 끊겼지만 OBS media graph는 끝까지 진행했고, 다음 두 run 중 하나는 control 단절 0이었다. 검증기는 bounded control reconnect와 실제 route 손상을 분리해 기록한다.
+- 30초 cadence는 관찰 전용이다. 곡 중 seek·restart·속도 보정은 하지 않으며 다음 곡 시작 때 새 run의 0초 기준만 다시 잡는다.
+- 모든 run에서 OBS 방송·녹화 버튼과 타이머는 OFF/`00:00:00`이었고, 실제 방송·녹화는 시작하지 않았다. 시험 URL과 임시 credential은 실행 뒤 복원·제거했다.
 
 ### v0.2.19 공개 배포·실제 OBS 복구 — 2026-07-23
 
@@ -141,7 +149,7 @@
 - 각 곡은 새 run과 `position: 0`으로 기준점을 다시 잡되 OBS route와 lease는 유지한다. 정확한 이전 run stop proof 뒤에만 다음 media run을 load/play하며, 곡 중간에는 자동 seek·restart·속도 보정을 하지 않는다.
 - 실제 OBS source refresh와 정상 종료·재실행에서 새 CEF player identity를 각각 75초 안정화했고, old run 보존·replacement standby·무자동재생·명시적 full reset·재선택 뒤 5초 무음을 통과했다. profile·scene·Browser/FIFINE source·mixer 설정도 보존됐다.
 - OBS 30.2.0의 Chromium 103과 Vite 8 기본 Chrome 111+ target 사이의 공백은 v0.2.19의 명시적 `chrome103` JS·CSS target으로 제거했다. 전용 test collection에만 비공개 handoff URL을 백업 후 원자적으로 넣고 복원하는 fail-closed 도구와 실제 CEF run을 모두 통과했다.
-- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증, scene 전환 변형이다.
+- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증이다.
 
 세부 증거와 남은 절차는 `docs/OBS_REMAINING_VALIDATION_PLAN_2026-07-20.md`에 유지한다.
 
@@ -177,14 +185,14 @@
 - v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- v0.2.18 현재 후보 전체 테스트: 699/699 통과.
+- v0.2.20 현재 후보 전체 테스트: 707/707 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 368.34 kB raw / 100.91 kB gzip.
+- Dashboard chunk: 368.34 kB raw / 100.91 kB gzip. 이번 변경 전과 동일하다.
 - Dashboard CSS: 61.55 kB raw / 11.63 kB gzip.
 - 탭별 local Speaker controller lazy chunk: 7.25 kB raw / 2.51 kB gzip. 공용 playback engine은 24.87 kB raw / 6.56 kB gzip이며 둘 다 Speaker 유휴 첫 화면에는 로드하지 않는다.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 383,782B raw / 117,547B gzip / 102,918B brotli.
+- OBS 정적 경로: 383,782B raw / 117,550B gzip / 102,988B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 

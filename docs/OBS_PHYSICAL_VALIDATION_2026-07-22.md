@@ -8,7 +8,7 @@
 >
 > 추가 source refresh·OBS 재시작 복구: `0.2.19` / `187224c0a77f28a33b3a2024e0914773a66386f0`
 >
-> Production Worker: `7a725d35-6372-4422-b45b-2809c118ff73`
+> Production Worker: `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`
 >
 > OBS: `30.2.0`, 전용 profile·scene collection `Rekasong_Local_Record_Test_20260722`
 
@@ -21,6 +21,15 @@
 - Speaker 최종 상태는 일반 웹 플레이어 모드다. 설정을 닫은 상태에서 `스피커 송출 중`만 표시되며, 곡을 재생하지 않을 때 Worker session 연결을 만들지 않는다.
 - 플랫폼으로 실제 전송된 결과물 G5는 의도적으로 검증하지 않았다.
 - 라이브 마이크↔MR G6는 전용 분리 track과 물리 스피커·FIFINE 마이크로 10분까지 실행했다. 60/60 marker와 낮은 jitter는 확인했지만, 현재 장치 조합의 상대 drift가 허용치를 넘었으므로 **G6 통과로 판정하지 않는다**.
+- 공개 v0.2.19 OBS player의 302.5초 곡을 빈 장면으로 10초 전환했다가 복귀해도 동일 player·connection·run이 유지됐고 wall 오차 `84ms`로 자연 종료했다. 30초 관측은 기록 전용이며 곡 중 재생 위치나 속도를 보정하지 않는다.
+
+### 1.1 장면 전환 연속성 추가 검증 — 2026-07-23
+
+- 전용 `Rekasong_Local_Record_Test_20260722` collection의 `Scene`과 빈 `Scene 2`만 사용했다. `Shutdown source when not visible=false`, `Refresh browser when scene becomes active=false`, `Control audio via OBS=true`였다.
+- `sourceActive=false`를 10초 유지하는 동안 player 수는 1, 기존 lease target과 active run은 그대로였다. 이때 inactive source가 새 activation 후보에서 제외돼 candidate 수가 0인 것은 정상이다. 복귀 뒤 `sourceActive=true`를 5초 유지했고 같은 connection ID를 확인했다.
+- 최종 run은 `302,584ms / 기대 302,500ms / 오차 84ms`, candidate transition 0, unsafe route 0, session 종료 뒤 HTTP 410이었다. 앞선 두 run도 오차 `97ms`, `31ms`로 곡을 자연 종료했다.
+- 한 앞선 run의 control WebSocket 순간 단절에서도 OBS media graph는 계속 재생됐다. 최종 합격 run에는 client socket-close 진단과 재접속 시도가 없었다. 기존 raw disconnect counter 1은 `end_session` 뒤 정상 close까지 집계한 계측 오류였고, 정상 terminal close를 제외하도록 수정했다.
+- 세 run 모두 `Start Streaming`·`Start Recording` 버튼과 두 타이머 `00:00:00`을 매번 확인했다. 실제 방송·녹화는 시작하지 않았다. 각 run 뒤 Browser Source URL을 백업으로 복원하고 임시 credential 파일을 제거했다.
 
 ## 2. 안전 경계와 방송 OFF 증거
 

@@ -4034,9 +4034,20 @@ export class SessionRoom {
     return mediaResponse(object);
   }
 
-  async webSocketClose(socket) {
+  async webSocketClose(socket, code, reason, wasClean) {
     const closingAttachment = socket.deserializeAttachment() || {};
     const role = closingAttachment.role;
+    if (Number.isInteger(code) || typeof wasClean === 'boolean') {
+      console.info('websocket:close', {
+        role: typeof role === 'string' ? role : 'unknown',
+        protocolVersion: Number.isInteger(closingAttachment.protocolVersion)
+          ? closingAttachment.protocolVersion
+          : null,
+        code: Number.isInteger(code) ? code : null,
+        wasClean: typeof wasClean === 'boolean' ? wasClean : null,
+        reasonPresent: typeof reason === 'string' && reason.length > 0
+      });
+    }
     // 같은 역할의 다른 소켓이 남아 있으면(위젯 새로고침 시 새/구 연결 겹침 등)
     // connected 는 여전히 true 다 — 닫히는 소켓 자신은 집계에서 제외한다.
     // (거짓 false 로 대시보드 표시가 깜빡이거나 재생 게이트가 오작동하지 않게.)

@@ -15,10 +15,15 @@ const WORKER = process.env.REKASONG_WORKER || 'http://127.0.0.1:8787';
 const APP = process.env.REKASONG_APP || 'http://127.0.0.1:5100';
 const ASSET_PATH = process.env.REKASONG_CEF_SOAK_ASSET || '';
 const ASSET_MIME = process.env.REKASONG_CEF_SOAK_MIME || 'audio/mp4';
+const RECOVERY_MODE = process.argv.includes('--recovery');
+const SCENE_TRANSITION_MODE = process.argv.includes('--scene-transition');
+if (RECOVERY_MODE && SCENE_TRANSITION_MODE) {
+  throw new Error('choose exactly one external CEF scenario mode');
+}
 const EXPECTED_DURATION_MS = positiveIntegerEnvironment('REKASONG_CEF_SOAK_DURATION_MS', 60_000);
 const CONTROL_READY_TIMEOUT_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_SOAK_CONTROL_TIMEOUT_MS',
-  10_000,
+  60_000,
 );
 const CANDIDATE_TIMEOUT_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_SOAK_CANDIDATE_TIMEOUT_MS',
@@ -45,13 +50,20 @@ const CONTROL_RECONNECT_GRACE_MS = positiveIntegerEnvironment(
   60_000,
 );
 const EXTERNAL_STATUS_FILE = process.env.REKASONG_CEF_SOAK_STATUS_FILE || '';
-const RECOVERY_MODE = process.argv.includes('--recovery');
 const RECOVERY_ACTION_TIMEOUT_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_RECOVERY_ACTION_TIMEOUT_MS',
   600_000,
 );
 const RECOVERY_SILENCE_OBSERVATION_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_RECOVERY_SILENCE_MS',
+  5_000,
+);
+const SCENE_AWAY_STABLE_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_SCENE_AWAY_STABLE_MS',
+  10_000,
+);
+const SCENE_RETURN_STABLE_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_SCENE_RETURN_STABLE_MS',
   5_000,
 );
 const MAX_ASSET_BYTES = 64 * 1024 * 1024;
@@ -72,6 +84,7 @@ let currentControlReconnectAttempts = 0;
 let maxControlGapMs = 0;
 const commandResults = new Map();
 const routeObservations = [];
+const controlDiagnostics = [];
 const diagnostics = createHarnessDiagnosticSanitizer();
 
 function positiveIntegerEnvironment(name, fallback) {
@@ -368,6 +381,10 @@ async function removeSetupHandoff() {
 }
 
 function routeObservation(snapshot) {
+  const leaseTarget = snapshot?.playerSnapshot?.lease?.leaseTarget ?? null;
+  const leasedPlayer = snapshot?.playerSnapshot?.players?.find((player) => (
+    player.playerInstanceId === leaseTarget
+  ));
   return {
     at: Date.now(),
     ready: snapshot?.ready ?? false,
@@ -376,7 +393,9 @@ function routeObservation(snapshot) {
     playerCount: snapshot?.playerSnapshot?.players?.length ?? 0,
     obsCandidateCount: snapshot?.playerSnapshot?.eligibleCandidates?.obs?.length ?? 0,
     leaseStatus: snapshot?.playerSnapshot?.lease?.status ?? null,
-    leaseTarget: snapshot?.playerSnapshot?.lease?.leaseTarget ?? null,
+    leaseTarget,
+    leaseSourceActive: leasedPlayer?.runtime?.sourceActive ?? null,
+    leaseSourceVisible: leasedPlayer?.runtime?.sourceVisible ?? null,
     activeEntryId: snapshot?.playerSnapshot?.activeFamily?.entryId ?? null,
     activeRunId: snapshot?.playerSnapshot?.activeFamily?.runId ?? null,
     confirmedStatus: snapshot?.playerSnapshot?.confirmedPlayback?.status ?? null,
@@ -662,6 +681,168 @@ async function finishRecoverySession() {
   await verifyEndedStatus();
 }
 
+async function waitForSceneRuntimePhase({
+  candidate,
+  entryId,
+  runId,
+  expectedActive,
+  stableMs,
+  phase,
+}) {
+  let stableSince = null;
+  return waitFor(() => {
+    const snapshot = coordinator.snapshot();
+    const protocol = snapshot.playerSnapshot;
+    const player = protocol?.players?.find((entry) => (
+      entry.playerInstanceId === candidate.playerInstanceId
+    ));
+    const runtimeMatches = player?.runtime?.sourceActive === expectedActive;
+    const sameConnection = player?.connectionId === candidate.connectionId;
+    const runPreserved = protocol?.activeFamily?.entryId === entryId
+      && protocol.activeFamily.runId === runId
+      && protocol.confirmedPlayback?.status === 'playing'
+      && protocol.confirmedPlayback.entryId === entryId
+      && protocol.confirmedPlayback.runId === runId
+      && protocol.confirmedPlayback.playerInstanceId === candidate.playerInstanceId
+      && protocol.desiredTransport?.status === 'playing';
+    const routePreserved = protocol?.players?.length === 1
+      && protocol.lease?.status === 'audible'
+      && protocol.lease.leaseTarget === candidate.playerInstanceId;
+
+    if (!runtimeMatches || !sameConnection || !runPreserved || !routePreserved) {
+      stableSince = null;
+      return null;
+    }
+    stableSince ??= Date.now();
+    if (Date.now() - stableSince < stableMs) return null;
+    return {
+      snapshot,
+      player,
+      stableForMs: Date.now() - stableSince,
+    };
+  }, RECOVERY_ACTION_TIMEOUT_MS, `${phase} keeps the established OBS media graph`);
+}
+
+async function runSceneTransitionScenario({ candidate, assetId, candidateTransitions }) {
+  await activateRecoveryCandidate(candidate, 'initial');
+  const run = await startRecoveryPlayback(candidate, assetId, 'before-scene-transition');
+  const startedAt = Date.now();
+  routeObservations.length = 0;
+
+  await writeStatus('awaiting_scene_away', {
+    action: 'switch_to_another_scene_without_stopping_the_browser_source',
+  });
+  console.log('ACTION_SWITCH_AWAY_SCENE');
+  const away = await waitForSceneRuntimePhase({
+    candidate,
+    ...run,
+    expectedActive: false,
+    stableMs: SCENE_AWAY_STABLE_MS,
+    phase: 'scene away',
+  });
+  await writeStatus('scene_away_stable', {
+    stableMs: away.stableForMs,
+    sourceActive: false,
+    samePlayer: true,
+    sameConnection: true,
+  });
+
+  await writeStatus('awaiting_scene_return', {
+    action: 'switch_back_to_the_rekasong_browser_scene',
+  });
+  console.log('ACTION_SWITCH_BACK_SCENE');
+  const returned = await waitForSceneRuntimePhase({
+    candidate,
+    ...run,
+    expectedActive: true,
+    stableMs: SCENE_RETURN_STABLE_MS,
+    phase: 'scene return',
+  });
+  await writeStatus('scene_return_stable', {
+    stableMs: returned.stableForMs,
+    sourceActive: true,
+    samePlayer: true,
+    sameConnection: true,
+  });
+
+  const ended = await waitFor(() => {
+    const protocol = coordinator.snapshot().playerSnapshot;
+    return protocol?.confirmedPlayback?.status === 'ended'
+      && protocol.confirmedPlayback.entryId === run.entryId
+      && protocol.confirmedPlayback.runId === run.runId
+      && protocol.confirmedPlayback.playerInstanceId === candidate.playerInstanceId
+      ? protocol
+      : null;
+  }, EXPECTED_DURATION_MS + PLAYBACK_GRACE_MS, 'scene transition fixture natural end');
+  const wallDurationMs = Date.now() - startedAt;
+  const durationDriftMs = Math.abs(wallDurationMs - EXPECTED_DURATION_MS);
+  invariant(
+    durationDriftMs <= PLAYBACK_GRACE_MS,
+    'scene transition does not restart or skip the media timeline',
+    `wall=${wallDurationMs}ms expected=${EXPECTED_DURATION_MS}ms drift=${durationDriftMs}ms`,
+  );
+  invariant(
+    Math.abs((ended.confirmedPlayback.duration * 1_000) - EXPECTED_DURATION_MS) <= 1_000,
+    'scene transition media duration matches the fixture contract',
+  );
+  const endedPlayer = ended.players?.find((player) => (
+    player.playerInstanceId === candidate.playerInstanceId
+  ));
+  invariant(
+    ended.players?.length === 1
+      && endedPlayer?.connectionId === candidate.connectionId
+      && ended.lease?.leaseTarget === candidate.playerInstanceId,
+    'scene transition kept the exact OBS player connection through natural end',
+  );
+
+  const unsafeObservations = routeObservations.filter((observation) => (
+    (observation.unknownLockCode !== null
+      && observation.unknownLockCode !== ON_AIR_CONTROL_COORDINATOR_CODES.CONNECTION_LOST)
+    || (observation.ready && observation.unknownLockCode === null && (
+      observation.playerCount !== 1
+      || observation.obsCandidateCount > 1
+      || observation.leaseTarget !== candidate.playerInstanceId
+      || ['unknown', 'failed', 'emergency_stopping'].includes(observation.leaseStatus)
+    ))
+  ));
+  invariant(
+    unsafeObservations.length === 0,
+    'scene transition had no unrecoverable route corruption during bounded control reconnects',
+    diagnostics.json(unsafeObservations.slice(-8)),
+  );
+
+  const stop = coordinator.stop();
+  await waitFor(() => {
+    const protocol = coordinator.snapshot().playerSnapshot;
+    return protocol?.confirmedPlayback?.status === 'stopped'
+      && protocol.activeFamily === null
+      && protocol.lease?.status === 'ready'
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'scene transition fixture strong stop', {
+    commandId: stop.command.commandId,
+  });
+  await finishRecoverySession();
+  console.log(diagnostics.text(`EVIDENCE ${diagnostics.json({
+    mode: 'scene_transition',
+    samePlayerAcrossSceneTransition: true,
+    sameConnectionAcrossSceneTransition: true,
+    sceneAwayStableMs: away.stableForMs,
+    sceneReturnStableMs: returned.stableForMs,
+    wallDurationMs,
+    expectedDurationMs: EXPECTED_DURATION_MS,
+    durationDriftMs,
+    candidateTransitions,
+    unsafeObservationCount: unsafeObservations.length,
+    controlDisconnectCount,
+    controlReconnectAttemptCount,
+    maxControlGapMs,
+    controlCloseDiagnostics: controlDiagnostics
+      .filter((diagnostic) => diagnostic.code === 'v2_connection_socket_closed')
+      .slice(-8),
+  })}`));
+}
+
 async function runRecoveryScenario({ candidate, assetId, candidateTransitions }) {
   await activateRecoveryCandidate(candidate, 'initial');
   await startRecoveryPlayback(candidate, assetId, 'before-source-refresh');
@@ -785,8 +966,22 @@ async function run() {
         const commandId = result?.entry?.commandId;
         if (typeof commandId === 'string') commandResults.set(commandId, result);
       },
+      onDiagnostic(diagnostic) {
+        controlDiagnostics.push({
+          at: Date.now(),
+          code: typeof diagnostic?.code === 'string' ? diagnostic.code : 'connection_diagnostic',
+          closeCode: Number.isInteger(diagnostic?.detail?.code) ? diagnostic.detail.code : null,
+          wasClean: typeof diagnostic?.detail?.wasClean === 'boolean'
+            ? diagnostic.detail.wasClean
+            : null,
+        });
+        if (controlDiagnostics.length > 64) controlDiagnostics.shift();
+      },
       onStateChange(change) {
-        if (['disconnected', 'closed'].includes(change?.state)
+        const expectedTerminalClose = coordinator?.snapshot?.().unknownLock?.code
+          === ON_AIR_CONTROL_COORDINATOR_CODES.SESSION_ENDED;
+        if (!expectedTerminalClose
+          && ['disconnected', 'closed'].includes(change?.state)
           && controlGapStartedAt === null) {
           controlGapStartedAt = Date.now();
           controlDisconnectCount += 1;
@@ -829,6 +1024,10 @@ async function run() {
 
   if (RECOVERY_MODE) {
     await runRecoveryScenario({ candidate, assetId, candidateTransitions });
+    return;
+  }
+  if (SCENE_TRANSITION_MODE) {
+    await runSceneTransitionScenario({ candidate, assetId, candidateTransitions });
     return;
   }
 
@@ -999,12 +1198,20 @@ process.once('SIGTERM', requestStop);
 try {
   await run();
   await writeStatus('passed');
-  console.log(`RESULT Protocol v2 external OBS CEF ${RECOVERY_MODE ? 'recovery' : 'soak'} passed`);
+  const modeName = RECOVERY_MODE ? 'recovery' : SCENE_TRANSITION_MODE ? 'scene transition' : 'soak';
+  console.log(`RESULT Protocol v2 external OBS CEF ${modeName} passed`);
 } catch (error) {
   await writeStatus('failed', {
     error: diagnostics.errorText(error),
+    controlDisconnectCount,
+    controlReconnectAttemptCount,
+    maxControlGapMs,
+    controlCloseDiagnostics: controlDiagnostics
+      .filter((diagnostic) => diagnostic.code === 'v2_connection_socket_closed')
+      .slice(-8),
   }).catch(() => {});
-  console.error(`FAIL Protocol v2 external OBS CEF ${RECOVERY_MODE ? 'recovery' : 'soak'} - ${diagnostics.errorText(error)}`);
+  const modeName = RECOVERY_MODE ? 'recovery' : SCENE_TRANSITION_MODE ? 'scene transition' : 'soak';
+  console.error(`FAIL Protocol v2 external OBS CEF ${modeName} - ${diagnostics.errorText(error)}`);
   process.exitCode = 1;
 } finally {
   await bestEffortCleanup();
