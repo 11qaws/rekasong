@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo } from 'lucide-react';
+import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo, GripVertical } from 'lucide-react';
 import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
 import { readTitleEventStream } from '../lib/titleStream';
+import { normalizeSongDragCandidate, SONG_DRAG_DATA_TYPE } from '../lib/songDragAction';
 import { getAppMessage as t } from '../copy/appMessages';
 
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
@@ -15,7 +16,14 @@ async function readYoutubeTitle(videoId, signal) {
   return title;
 }
 
-export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedState, setSharedState }) {
+export default function SearchPanel({
+  onSelectResult,
+  onLocalFileDrop,
+  onSongDragStart,
+  onSongDragEnd,
+  sharedState,
+  setSharedState,
+}) {
   const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, activeIntegrationTab } = sharedState;
   
   // YouTube search and imported playlists share one top-level source.  Keep the
@@ -289,20 +297,40 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
     runYoutubeSearch(query);
   };
 
-  const selectYoutubeResult = (video) => {
-    if (pendingSongbookMatch) {
-      onSelectResult({
+  const youtubeSelectionPayload = (video) => (
+    pendingSongbookMatch
+      ? {
         ...video,
         title: pendingSongbookMatch.title || video.title,
         source: pendingSongbookMatch.source,
         songbookId: pendingSongbookMatch.songbookId,
         tags: pendingSongbookMatch.tags || [],
         skipAiTitleExtraction: true
-      });
-      setPendingSongbookMatch(null);
+      }
+      : video
+  );
+
+  const selectYoutubeResult = (video) => {
+    onSelectResult(youtubeSelectionPayload(video));
+    if (pendingSongbookMatch) setPendingSongbookMatch(null);
+  };
+
+  const beginSongDrag = (event, value) => {
+    const candidate = normalizeSongDragCandidate(value);
+    if (!candidate || !event.dataTransfer) {
+      event.preventDefault();
       return;
     }
-    onSelectResult(video);
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(SONG_DRAG_DATA_TYPE, candidate.id);
+    onSongDragStart?.(candidate);
+  };
+
+  const endSongDrag = (event, clearPendingMatch = false) => {
+    if (clearPendingMatch && event.dataTransfer?.dropEffect !== 'none') {
+      setPendingSongbookMatch(null);
+    }
+    onSongDragEnd?.();
   };
 
   const stageSongbookMr = (song, platform, mrId, mrVerified = false, cachedTitle = '') => {
@@ -472,7 +500,16 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
 
       <div className="search-results">
         {results.map((v) => (
-          <div key={v.id} className="result-item" style={{position:'relative'}}>
+          <div
+            key={v.id}
+            className="result-item song-drag-source"
+            style={{position:'relative'}}
+            draggable
+            data-song-drag-source={v.id}
+            title={t('songDrag.sourceHint')}
+            onDragStart={(event) => beginSongDrag(event, youtubeSelectionPayload(v))}
+            onDragEnd={(event) => endSongDrag(event, Boolean(pendingSongbookMatch))}
+          >
             <button
               type="button"
               className="result-select-button"
@@ -489,6 +526,9 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                 <div className="result-title">{v.title}</div>
                 <div className="result-meta">{v.channelTitle} • {v.durationText}</div>
               </div>
+              <span className="song-drag-grip" title={t('songDrag.sourceHint')} aria-hidden="true">
+                <GripVertical size={16} />
+              </span>
               <ChevronRight size={18} className="result-select-chevron" aria-hidden="true" />
             </button>
           </div>
@@ -709,8 +749,30 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
               : isCheckingCache
                 ? t('search.songbook.mr.checking')
                 : t('search.songbook.mr.missing');
+            const songbookDragCandidate = isTitleReady && hasMrCandidate
+              ? normalizeSongDragCandidate({
+                  id: cachedMr?.mrId || youtubeId,
+                  title: cachedMr?.title || song.title,
+                  channelTitle: song.artist,
+                  tags: song.tags,
+                  source: platform,
+                  songbookId: song.id,
+                  skipAiTitleExtraction: true,
+                  mrVerified: Boolean(cachedMr?.mrId || platform === 'youtube-playlist' || song.mrVerified),
+                })
+              : null;
             return (
-            <div key={song.id} className="result-item songbook-item">
+            <div
+              key={song.id}
+              className={`result-item songbook-item${songbookDragCandidate ? ' song-drag-source' : ''}`}
+              draggable={Boolean(songbookDragCandidate)}
+              data-song-drag-source={songbookDragCandidate?.id || undefined}
+              title={songbookDragCandidate ? t('songDrag.sourceHint') : undefined}
+              onDragStart={songbookDragCandidate
+                ? (event) => beginSongDrag(event, songbookDragCandidate)
+                : undefined}
+              onDragEnd={songbookDragCandidate ? (event) => endSongDrag(event) : undefined}
+            >
               <button
                 type="button"
                 className="songbook-copy"
@@ -739,6 +801,11 @@ export default function SearchPanel({ onSelectResult, onLocalFileDrop, sharedSta
                   </span>
                 )}
               </button>
+              {songbookDragCandidate && (
+                <span className="song-drag-grip songbook-drag-grip" title={t('songDrag.sourceHint')} aria-hidden="true">
+                  <GripVertical size={16} />
+                </span>
+              )}
               <div className="songbook-actions">
                 {canRetryTitle ? (
                   <button

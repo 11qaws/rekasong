@@ -83,7 +83,13 @@ import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 import PlaybackPanel from '../components/PlaybackPanel';
 import QueuePanel from '../components/QueuePanel';
 import SongComposer from '../components/SongComposer';
+import SongDropTray from '../components/SongDropTray';
 import ErrorBoundary from '../components/ErrorBoundary';
+import {
+  SONG_DROP_ACTIONS,
+  planSongDropAction,
+  stagedItemFromSongDragCandidate,
+} from '../lib/songDragAction';
 import './Dashboard.css';
 
 const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;
@@ -804,6 +810,7 @@ export default function Dashboard() {
   };
 
   const [stagedItem, setStagedItem] = useState(null);
+  const [songDragCandidate, setSongDragCandidate] = useState(null);
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
   stagedItemRef.current = stagedItem;
@@ -1516,27 +1523,18 @@ export default function Dashboard() {
   const handleSelectSearchResult = (video) => {
     const replacedStagedItem = Boolean(stagedItem);
     cancelAiExtraction();
-    const stagingId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setStagedItem({
-      stagingId,
-      type: 'youtube',
-      src: video.id,
-      title: video.title,
-      artist: video.channelTitle,
-      tags: video.tags || [],
-      source: video.source || 'youtube',
-      songbookId: video.songbookId || null,
-      skipAiTitleExtraction: Boolean(video.skipAiTitleExtraction),
-      mrVerified: Boolean(video.mrVerified)
-    });
+    const stagingId = newId();
+    const nextStagedItem = stagedItemFromSongDragCandidate(video, stagingId);
+    if (!nextStagedItem) return;
+    setStagedItem(nextStagedItem);
     showToast(
       t(replacedStagedItem ? 'dashboard.stage.replaced' : 'dashboard.stage.selected'),
       'info'
     );
-    if (video.skipAiTitleExtraction) {
+    if (nextStagedItem.skipAiTitleExtraction) {
       setAiStatus('dashboard.stage.songbookTitle', {}, 3);
-    } else if (video.id) {
-      runAiExtractionStream(apiUrl(`/api/extract-title?id=${video.id}`), {}, stagingId);
+    } else if (nextStagedItem.src) {
+      runAiExtractionStream(apiUrl(`/api/extract-title?id=${nextStagedItem.src}`), {}, stagingId);
     }
   };
 
@@ -1837,43 +1835,47 @@ export default function Dashboard() {
     });
   };
 
-  const handleGoLive = (insertAtTop = false) => {
-    if (!stagedItem) return;
+  const commitStagedItem = (sourceItem, {
+    insertAtTop = false,
+    forceQueue = false,
+    clearStagedItem = false,
+  } = {}) => {
+    if (!sourceItem) return false;
     // 진실성 게이트는 beginPlaybackRun 안에 있다(player 위젯 실제 연결 여부) —
     // 여기서 함수 전체를 막지 않는 이유: 이 함수는 '대기열에 추가'도 담당하므로,
     // OBS를 아직 안 연 상태에서도 setlist 예약은 허용해야 한다(송출만 막는다).
     // 예전의 control 연결 게이트는 대시보드 자신의 서버 연결만 봐서 위젯 없이도
     // 통과시키는 거짓 게이트였다.
-    if (useOnAirPlayer && stagedItem.type === 'local' && !stagedItem.assetId) {
-      showToast(stagedItem.assetError || t('dashboard.localFile.preparing'), 'info');
-      return;
+    if (useOnAirPlayer && sourceItem.type === 'local' && !sourceItem.assetId) {
+      showToast(sourceItem.assetError || t('dashboard.localFile.preparing'), 'info');
+      return false;
     }
     // Stage 6c 게이팅(계약 §5): `ready`가 아닌 YouTube 곡은 방송 출력에 올리지
     // 않는다. 영구 실패(unavailable)·서버 미설정(blocked)은 대기열에 넣어도
     // 소용이 없으므로 가장 이른 지점에서 막는다. 준비 중·일시 실패는 대기열
     // 예약을 허용한다 — 준비는 백그라운드로 계속되고, 실패가 방송 전에
     // 대기열에서 눈에 띄는 것이 이 설계의 존재 이유다. iframe 재생은 없다.
-    const stagedPrepare = stagedItem.type === 'youtube'
-      ? songPrepareState({ type: 'youtube', src: stagedItem.src }, prepareStates)
+    const stagedPrepare = sourceItem.type === 'youtube'
+      ? songPrepareState({ type: 'youtube', src: sourceItem.src }, prepareStates)
       : { kind: 'ready' };
     if (stagedPrepare.kind === 'blocked' || stagedPrepare.kind === 'unavailable') {
       showToast(prepareBlockMessage(stagedPrepare), 'error');
-      return;
+      return false;
     }
 
     // 단일 팩토리 사용(D-09): 모든 신규 곡은 entryId를 가진 QueueEntry로 태어난다.
     const entry = createQueueEntry({
-      type: stagedItem.type,
-      title: stagedItem.title,
-      artist: stagedItem.artist,
-      src: useOnAirPlayer && stagedItem.type === 'local' ? stagedItem.assetId : stagedItem.src,
-      assetId: useOnAirPlayer && stagedItem.type === 'local' ? stagedItem.assetId : undefined,
-      mediaType: stagedItem.mediaType || 'audio',
-      tags: stagedItem.tags || [],
-      source: stagedItem.source || 'youtube',
-      songbookId: stagedItem.songbookId || null,
-      ...(stagedItem.type === 'local' && stagedItem.file
-        ? { localBlobBytes: stagedItem.file.size }
+      type: sourceItem.type,
+      title: sourceItem.title,
+      artist: sourceItem.artist,
+      src: useOnAirPlayer && sourceItem.type === 'local' ? sourceItem.assetId : sourceItem.src,
+      assetId: useOnAirPlayer && sourceItem.type === 'local' ? sourceItem.assetId : undefined,
+      mediaType: sourceItem.mediaType || 'audio',
+      tags: sourceItem.tags || [],
+      source: sourceItem.source || 'youtube',
+      songbookId: sourceItem.songbookId || null,
+      ...(sourceItem.type === 'local' && sourceItem.file
+        ? { localBlobBytes: sourceItem.file.size }
         : {}),
     });
     const newSong = entry.song;
@@ -1890,7 +1892,7 @@ export default function Dashboard() {
         persistent: true
       });
     }
-    if (newSong.type === 'local' && stagedItem.localCacheKey) cacheEntries.push({ kind: 'local', id: stagedItem.localCacheKey });
+    if (newSong.type === 'local' && sourceItem.localCacheKey) cacheEntries.push({ kind: 'local', id: sourceItem.localCacheKey });
     if (cacheEntries.length) {
       fetch(apiUrl('/api/title-cache'), {
         method: 'POST',
@@ -1918,14 +1920,14 @@ export default function Dashboard() {
     // 것과 일어나는 일이 일치하고, 아래 토스트가 다음 행동을 안내한다.
     const hadCurrentEntry = Boolean(stateRef.current?.currentEntry);
     const deferredByPrepare = !hadCurrentEntry && stagedPrepare.kind !== 'ready';
-    const willPlayImmediately = !hadCurrentEntry && !deferredByPrepare;
+    const willPlayImmediately = !forceQueue && !hadCurrentEntry && !deferredByPrepare;
     let nextActive = null;
     if (willPlayImmediately) {
       try {
         nextActive = beginPlaybackRun(entry);
       } catch (error) {
         showToast(error.message || t('dashboard.playback.startFailed'), 'error');
-        return;
+        return false;
       }
     }
 
@@ -1957,16 +1959,92 @@ export default function Dashboard() {
       willPlayImmediately ? 'success' : 'info'
     );
 
-    cancelAiExtraction();
-    setStagedItem((previous) => {
-      // On-Air 송출 항목은 assetId(R2 자산)를 참조하므로 미리보기 blob은 여기서
-      // 회수한다. 직접 재생 모드는 entry가 이 blob src 자체를 쓰므로 유지된다.
-      if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:') &&
-        !isBlobReferenced(previous.src, stateRef.current)) {
-        revokePageBlobSrcs([previous.src]);
-      }
-      return null;
+    if (clearStagedItem) {
+      cancelAiExtraction();
+      setStagedItem((previous) => {
+        // On-Air 송출 항목은 assetId(R2 자산)를 참조하므로 미리보기 blob은 여기서
+        // 회수한다. 직접 재생 모드는 entry가 이 blob src 자체를 쓰므로 유지된다.
+        if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:') &&
+          !isBlobReferenced(previous.src, stateRef.current)) {
+          revokePageBlobSrcs([previous.src]);
+        }
+        return null;
+      });
+    }
+    return true;
+  };
+
+  const handleGoLive = (insertAtTop = false) => commitStagedItem(stagedItem, {
+    insertAtTop,
+    clearStagedItem: true,
+  });
+
+  const addDraggedSongToHistory = (sourceItem) => {
+    const entry = createQueueEntry({
+      type: 'youtube',
+      title: sourceItem.title,
+      artist: sourceItem.artist,
+      src: sourceItem.src,
+      mediaType: 'audio',
+      tags: sourceItem.tags || [],
+      source: sourceItem.source || 'youtube',
+      songbookId: sourceItem.songbookId || null,
     });
+    const completedEntry = { ...entry, phase: 'completed', completionReason: null };
+    const confirmedSongbookMr = entry.song.source !== 'youtube' && entry.song.songbookId
+      ? {
+          [songbookCacheKey(entry.song.source, entry.song.songbookId)]: {
+            title: entry.song.title,
+            mrId: entry.song.src,
+            mrKind: 'youtube',
+            updatedAt: Date.now(),
+            verifiedAt: Date.now(),
+            source: 'streamer-confirmed',
+          },
+        }
+      : null;
+
+    setSharedState((previous) => ({
+      ...previous,
+      history: [...(previous.history || []), completedEntry],
+      songbookMrCache: confirmedSongbookMr
+        ? { ...(previous.songbookMrCache || {}), ...confirmedSongbookMr }
+        : previous.songbookMrCache,
+    }));
+    showToast(t('dashboard.drag.historyAdded', { title: entry.song.title }), 'success');
+  };
+
+  const handleSongDrop = (destination) => {
+    const candidate = songDragCandidate;
+    setSongDragCandidate(null);
+    const sourceItem = stagedItemFromSongDragCandidate(candidate, newId());
+    if (!sourceItem) return;
+
+    const prepareKind = songPrepareState(
+      { type: 'youtube', src: sourceItem.src },
+      prepareStates,
+    ).kind;
+    const action = planSongDropAction({
+      destination,
+      hasCurrentSong: Boolean(stateRef.current?.currentEntry),
+      prepareKind,
+    });
+
+    if (action === SONG_DROP_ACTIONS.HISTORY) {
+      addDraggedSongToHistory(sourceItem);
+      return;
+    }
+    if (action === SONG_DROP_ACTIONS.PLAY_NOW) {
+      commitStagedItem(sourceItem);
+      return;
+    }
+    if (action === SONG_DROP_ACTIONS.QUEUE_FRONT) {
+      commitStagedItem(sourceItem, { insertAtTop: true, forceQueue: true });
+      return;
+    }
+    if (action === SONG_DROP_ACTIONS.QUEUE_END) {
+      commitStagedItem(sourceItem, { forceQueue: true });
+    }
   };
 
   // [과도기 폴백] 다음 곡 직접 로드 + 현재 곡 즉시 completed(skipped) 처리.
@@ -2879,6 +2957,8 @@ export default function Dashboard() {
               searchProps={{
                 onSelectResult: handleSelectSearchResult,
                 onLocalFileDrop: handleLocalFileDrop,
+                onSongDragStart: setSongDragCandidate,
+                onSongDragEnd: () => setSongDragCandidate(null),
                 sharedState: state || {},
                 setSharedState,
                 showToast
@@ -2900,6 +2980,12 @@ export default function Dashboard() {
           </ErrorBoundary>
         </div>
       </div>
+
+      <SongDropTray
+        candidate={songDragCandidate}
+        hasCurrentSong={Boolean(currentEntry)}
+        onDrop={handleSongDrop}
+      />
 
       {/* Toast Notifications Container */}
       <div className="toast-container" aria-live="polite" aria-atomic="false">

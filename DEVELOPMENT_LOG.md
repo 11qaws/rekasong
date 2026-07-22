@@ -1,5 +1,19 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — v0.2.9 곡 클릭·드래그 빠른 배치
+
+- 기존 곡 클릭은 그대로 `곡 정보 확인`으로 들어가며, YouTube 검색 결과와 MR이 실제 연결된 YouTube 플레이리스트·Setlink·멜로밍 곡에 데스크톱 드래그 빠른 경로를 추가했다. MR이 없거나 곡명 정리 중인 노래책 행은 재생 가능한 척하지 않고 기존 클릭→MR 찾기 흐름만 사용한다.
+- 곡을 끄는 동안에만 화면 아래에 `지금/다음 재생`, `대기열 끝`, `이전 재생곡` 세 목적지가 나타난다. drop 전에는 앱 상태·localStorage·Worker를 전혀 바꾸지 않으며, drag 취소는 durable state 변경 0건으로 실측했다.
+- `지금 재생`은 현재 곡이 없고 준비가 끝난 경우 기존 재생 상태기를 그대로 사용한다. 현재 곡이 있으면 문구가 `다음 재생`으로 바뀌고 현재 곡을 강제 절단하지 않은 채 새 항목을 대기열 맨 앞으로 보낸다. 준비 중인 곡도 동일하게 맨 앞에서 준비를 계속한다. `대기열 끝`은 재생 유무와 관계없이 끝에 추가하고, `이전 재생곡`은 미디어·OBS 명령 없이 completed 항목만 만든다.
+- drag payload는 11자 YouTube ID·곡명·가수·태그·source·songbookId만 가진 페이지 메모리 값으로 제한했다. drop마다 새 `entryId`를 발급하며 대기열/이력 내부의 기존 entryId 드래그나 로컬 파일 drop 타입과 섞이지 않는다.
+- 모든 새 문구는 한국어/영어 semantic key를 함께 추가했다. 드래그는 포인터 가속 경로일 뿐이며 모바일·키보드는 기존 클릭→검토→재생/대기열 버튼을 정식 대체 경로로 유지한다.
+- 실제 Chrome 격리 origin에서 클릭→검토, 이력 0→1(재생 0), 대기열 0→1, 준비된 곡의 실제 Speaker 재생을 확인했다. 현재 곡을 일시정지한 뒤 다른 곡을 재생 목적지에 놓았을 때 현재 곡과 위치는 그대로였고 새 곡만 대기열 1번이 됐다.
+- 320px 시각 검증에서 검색 결과의 긴 제목이 문서를 368px로 늘리는 문제를 발견해 결과 flex 항목의 `min-width: 0`, 제목 줄바꿈, 모바일 썸네일 폭을 고정했다. 수정 뒤 문서 폭은 정확히 320px, drop tray는 x=8..312의 304px, 세 목적지는 각각 약 90.7px로 화면 안에 들어왔다.
+- 직전 클릭 토스트가 drop tray를 덮어 목적지가 없는 것처럼 보이는 문제도 캡처로 발견했다. drag 중에는 tray를 최우선 조작면으로 두고 toast를 잠시 숨기며, drag가 끝나면 기존 toast가 다시 나타난다. 평상시 tray DOM은 0개라 상시 UI·레이아웃 비용이 없다.
+- 검증: 654/654 자동 테스트, 그 안의 500회 로컬 Speaker↔OBS 왕복, 새 `dashboard-song-drag-smoke`, 로컬 파일 복구 smoke, 1,000곡 production-browser 성능 smoke, 로컬 production Dashboard smoke, Worker 문법, production build를 통과했다. lint는 기존 `functions/api/gemini.js` escape 경고 2건만 유지한다.
+- 성능: Dashboard JS 356.26kB raw / 97.66kB gzip, CSS 59.79kB raw / 11.32kB gzip, 1,000곡 cold open 34.1ms, warm p95 47.5ms, post-GC heap 증가 210,748B다. OBS 정적 closure는 raw 382,301B / gzip 116,112B / brotli 101,671B로 450KiB/130KiB 예산 안이며 OBS player·Worker media graph는 변경하지 않았다.
+- 실제 청취, 비공개 방송/VOD, 모바일 OS별 백그라운드, 10분 마이크↔MR 상호상관은 이 UI 변경과 별도의 물리 관문으로 계속 남는다.
+
 ## 2026-07-22 (Codex) — v0.2.7 유레카 금발선 영구 요소 승격
 
 - 유레카의 노란 머리를 상징하는 헤더의 3px 노란 선을 CSS 가상 요소에서 `Dashboard`가 항상 렌더하는 실제 장식 요소로 승격했다. 출력 상태 포털이 아직 비어 있거나 연결 UI가 바뀌어도 선의 생명주기는 헤더와 같으며, Speaker/OBS 상태·WebSocket·재생 로직에는 의존하지 않는다.

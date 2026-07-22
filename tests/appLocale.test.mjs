@@ -12,6 +12,7 @@ import {
   normalizeWidgetLocale,
   widgetMessageCatalog,
 } from '../src/copy/widgetMessages.js';
+import { appMessageCatalog } from '../src/copy/appMessages.js';
 
 test('app locale supports persisted Korean and English without accepting arbitrary DOM languages', () => {
   assert.deepEqual(APP_LOCALES, ['ko', 'en']);
@@ -29,6 +30,16 @@ test('display widget copy stays lightweight and keeps Korean-English key parity'
   assert.deepEqual(
     Object.keys(widgetMessageCatalog.en).sort(),
     Object.keys(widgetMessageCatalog.ko).sort(),
+  );
+});
+
+test('song drag actions keep Korean-English key parity', () => {
+  const dragKeys = (catalog) => Object.keys(catalog)
+    .filter((key) => key.startsWith('songDrag.') || key.startsWith('dashboard.drag.'))
+    .sort();
+  assert.deepEqual(
+    dragKeys(appMessageCatalog.en),
+    dragKeys(appMessageCatalog.ko),
   );
 });
 
