@@ -3,6 +3,8 @@
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
+>
+> 최신 공개 v0.2.13 실제 OBS·로컬 녹화·OBS→Speaker 전환 증거: [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)
 
 ## 1. 현재 결론
 

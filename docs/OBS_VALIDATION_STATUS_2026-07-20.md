@@ -6,6 +6,7 @@
 > production app: `https://11qaws.github.io/rekasong/`
 > production Worker: `https://rekasong-session.11qaws.workers.dev`
 > 실제 장비 판정 절차: `OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md`
+> 최신 실제 장비 실행 기록: [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)
 
 ## 1. 현재 결론
 
