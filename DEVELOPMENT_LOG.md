@@ -10,6 +10,9 @@
 - 두 run 전후 OBS UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 최종 로그 `2026-07-23 07-20-44.txt`의 Streaming/Recording Start·Stop은 모두 0건이고 clean shutdown을 확인했다. Browser Source URL은 시험 전 214자 값과 exact match·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`로 복원했으며 임시 credential handoff도 제거했다. 실제 방송과 녹화는 시작하지 않았다.
 - 전체 `717/717` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker·harness 문법, production build와 OBS bundle 예산을 통과했다. Dashboard는 `370.81kB raw / 101.51kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 103,024B brotli`다.
 - production preview는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 모바일 설정, 두 출력 버튼과 금발 선을 통과했다. warm DCL `21.4ms`, warm long task 0, heap `7,926,044B`, HTTP 오류·ntfy 요청 0이었다. Speaker 로컬 재생은 Worker session HTTP·socket·frame `0`, 이력 1,000곡은 warm interaction p95 `26.8ms`, 닫은 뒤 post-GC heap 증가 `0B`였다.
+- v0.2.24 commit `ba92170f46dc6142ea9720cdfa276d2da2625737`을 배포했다. Pages workflow `29962845583`는 clean install·717 tests·lint·Worker 문법·production build·OBS bundle 예산·artifact upload·deploy를 모두 통과했고 deployment `5563857486`도 같은 run에서 success로 끝났다.
+- Actions의 `github-pages` artifact와 공개 URL을 독립적으로 내려받아 비교했다. 공개 `index.html`은 artifact와 SHA-256 `ebe5c7dd0ca571285048f1ffb8a012d3c6dc99c0b6ba9500ddb1936176b2850f`로 같고, v0.2.24 OBS player `OnAirPlayerV2-wxBcfHSA.js`도 `42,343B`·SHA-256 `7da8802df59db5a63969c65977de87aa1ab4e46ee1dcf0b7ed86639fd6c861cb`로 정확히 일치했다. main/Dashboard 파일명이 v0.2.23과 같은 것은 해당 제품 코드가 바뀌지 않아 content hash가 유지된 결과이며 CDN 지연이 아니다.
+- 배포 후 공개 격리 smoke를 다시 실행했다. 기본 Speaker, YouTube 단일 상위 소스와 Search/Playlist, Setlink, Meloming, 한·영 전환·reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼, 금발 선을 통과했고 HTTP 오류·ntfy 요청은 0이었다. cold DCL은 `481.7ms`, warm DCL은 `22.1ms`, warm long task는 0, JS heap은 `7,948,940B`였다. 음악·OBS route·방송·녹화는 시작하지 않았다.
 
 ## 2026-07-23 (Codex) — v0.2.23 OBS 제어 재연결의 활성 곡 소유권 보존
 

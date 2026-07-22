@@ -10,7 +10,7 @@
 >
 > 추가 scene 전환 harness 배포: `0.2.20` / `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb`
 >
-> 추가 활성 곡 control-gap 검증: `0.2.24` 후보 / 실제 OBS 통과
+> 추가 활성 곡 control-gap 검증: `0.2.24` / `ba92170f46dc6142ea9720cdfa276d2da2625737` 공개 배포·실제 OBS 통과
 >
 > Production Worker: `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`
 >
