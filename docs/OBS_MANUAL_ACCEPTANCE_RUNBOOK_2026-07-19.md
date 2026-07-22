@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · G5/G6 미실행
+> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · G6 현재 장치 측정 완료/수용 실패 · G5 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -299,6 +299,16 @@ result: G4 passed for this exact OBS/profile/track configuration
 - 10분 상대 drift: 10ms 이내.
 - marker interval/offset jitter p95: 5ms 이하.
 - 기준을 넘으면 앱이 임의로 OBS sync offset을 자동 변경하지 않고 측정값과 수동 조치만 제시한다.
+
+2026-07-22 현재 장치 실행 결과:
+
+- artifact: `C:\Users\Qumin\Videos\2026-07-22 21-55-45.mkv`
+- MR track 2, FIFINE K670 마이크 track 3, marker 60/60
+- jitter p95 `1.832ms` 통과
+- 중앙 offset `43.25ms`, 10분 drift `15.5–17.32ms`로 실패
+- OBS Browser Sync Offset `+69ms` 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 복원
+- 판정: **측정 완료·수용 실패**. established OBS route와 재생은 유지하며 같은 audio clock 장치 또는 저지연 performer-monitor 경로에서 재실행
+- 상세 설계: [OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md](./OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md)
 
 ## 12. 장애 주입 매트릭스
 

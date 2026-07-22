@@ -3,7 +3,7 @@
 > 기준일: 2026-07-20 KST
 >
 > 원칙: 앱 플레이어가 소리를 재생했다는 증거와 OBS 믹서·녹화·최종 방송에 소리가 들어갔다는 증거를 섞지 않는다.
-> 자동 검증이 통과해도 실제 OBS가 필요한 G3~G6은 완료로 표시하지 않는다.
+> 자동 검증만으로 실제 OBS 관문 G3~G6을 완료로 표시하지 않는다. 실제 장비에서 수행한 항목도 수용 기준을 통과한 경우에만 완료로 표시한다.
 
 ## 0. 2026-07-22 기준선 변경
 
@@ -31,11 +31,14 @@
 
 - production과 같은 player URL을 실제 Rekasong Browser Source에 넣었고 protocol READY와 후보 1개를 확인했다.
 - 앱 점검 신호가 G2 완료로 끝나는 동안 OBS의 Rekasong 믹서 미터가 약 -25 dB까지 움직였다. 이는 G3의 기계 관측 통과이며, 사람이 들은 결과나 최종 방송 트랙 통과를 뜻하지 않는다.
-- 방송과 녹화는 켜지 않은 상태에서 검증했다.
+- 실제 방송은 한 번도 켜지 않았다. 사용자 허용 범위인 로컬 녹화만 사용했고, 최종 상태에서는 녹화도 껐다.
+- G4는 실제 녹화 artifact의 기준 PCM으로 통과했다.
+- G6는 물리 스피커 출력과 FIFINE 마이크 입력을 분리 track으로 10분 기록했다. marker와 jitter는 통과했지만 상대 drift와 offset은 기준을 넘어 수용 실패했다.
 
 아직 확정하지 않은 것:
 
-- OBS 믹서, 실제 녹화 트랙, 비공개 방송, 라이브 마이크↔MR 장시간 싱크는 실제 OBS 증거가 필요하다(G3~G6).
+- G3의 사용자 주관 청취와 monitoring mode 변형, 비공개 방송 G5는 아직 실제 증거가 필요하다.
+- 현재 물리 장치 조합의 G6는 실패했으므로 같은 audio clock 장치 또는 저지연 performer monitoring 경로에서 재검증해야 한다.
 - 모바일 OS별 백그라운드 정책이 로컬 Speaker의 실제 오디오를 얼마나 오래 유지하는지는 기기 수동 검증이 필요하다.
 - 현재 사용자 흐름의 한국어/영어 전환과 locale 선택기는 적용했다. pseudo-locale과 모바일 긴 문자열 시각 검증은 남아 있다.
 
@@ -84,7 +87,7 @@
 | G3 정확한 OBS 믹서 입력 | **기계 관측 통과, 사용자 청취 대기** | test signal 중 Rekasong source meter 약 -25 dB; 사용자 모니터링 청취 기록 추가 필요 | 정확한 source meter와 최종 output meter가 시험 박자대로 움직이고 사용자가 들음을 확인 |
 | G4 녹화 파일 | **현재 장비 구성 통과** | `2026-07-22 09-57-46.mp4`: AAC 48kHz stereo, 880Hz 12개 + 440Hz 4개 | clipping 0, AAC frame 해상도에서 20ms 초과 활성 구간 분할 0, marker 누락·중복 0 |
 | G5 비공개 방송/VOD | 인코더·ingest 이후에도 신호가 남음 | 비공개 스트림 또는 VOD 원본 | 최종 방송 오디오 트랙에서 시험 신호 검출 |
-| G6 보컬↔MR 싱크 | 라이브 마이크와 반주가 장시간 맞음 | 10분 분리 트랙과 상호상관 분석 | 보정 후 offset ±20ms, 시작↔끝 drift 10ms 이내, jitter p95 5ms 이내 |
+| G6 보컬↔MR 싱크 | **현재 장치 구성 측정 완료·수용 실패** | `2026-07-22 21-55-45.mkv`: track 2 MR, track 3 FIFINE 마이크, 60/60 marker | jitter p95 `1.832ms` 통과; offset `43.25ms`, drift `15.5–17.32ms/590초` 실패. 같은 clock 경로로 재검증 |
 
 G3에서 반드시 바꿔 보아야 할 항목:
 
@@ -105,10 +108,10 @@ G3에서 반드시 바꿔 보아야 할 항목:
 ### P1 — 장애·장시간·부하
 
 1. offline/online, WebSocket 1011, PC sleep/resume, background throttle를 실제 브라우저에 주입한다.
-2. [OBS CEF 60분 완료] 실제 OBS에서 단일 player/route, wall/media 오차 150ms, renderer private 14.8MiB·working set 약 33.5~33.6MiB, crash·unsafe route·identity 전환 0을 기록했다. 일반 Chrome 30분 post-GC heap과 물리 mixer 장시간 캡처는 남아 있다.
+2. [OBS CEF 60분 완료] 실제 OBS에서 단일 player/route, wall/media 오차 150ms, renderer private 14.8MiB·working set 약 33.5~33.6MiB, crash·unsafe route·identity 전환 0을 기록했다. 물리 mic/MR 10분 캡처도 수행했지만 장치 간 drift 기준에 실패했다. 일반 Chrome 30분 post-GC heap은 남아 있다.
 3. hint 교체와 곡 전환 100회: stale fetch 0, retained Blob 1개, aggregate Blob 예산 준수.
 4. Speaker↔OBS 전환 500회: OBS 전환 중 local/OBS 동시 audible 0, OBS control socket 1개, 자동 fallback 0. 여러 Speaker 탭의 독립 재생은 허용한다.
-5. [렌더 계약 완료] history 1,000곡: 닫힌 상태 0행, 최초 개방 최근 100행, 100곡씩 점진 확장으로 바꿨다. 실제 브라우저 조작 p95 100ms 이하와 localStorage 1MiB 이하는 배포 전 performance trace로 남긴다.
+5. [완료] history 1,000곡: 닫힌 상태 0행, 최대 mount 100행, warm 조작 p95 `29.7ms`, post-GC heap 증가 `0B`, localStorage 1MiB 이내를 공개 코드에서 확인했다.
 
 ### P1 — 리모컨 사용성
 
@@ -132,9 +135,10 @@ G3에서 반드시 바꿔 보아야 할 항목:
 1. 현재 UI/프리뷰 보완을 전체 테스트·lint·Worker syntax·production build·OBS bundle gate로 다시 검증한다.
 2. GitHub Pages에 배포하고 공개 URL에서 캐시를 우회한 새 프로필 브라우저 검증을 반복한다.
 3. G3의 남은 사용자 청취를 확인하고 source mute·monitoring·scene 전환·refresh·OBS 재시작 변형을 수행한다. source hide/show 중 established route와 16/16 marker 지속은 실제 OBS에서 통과했다.
-4. G4 녹화 artifact는 현재 장비 구성에서 통과했다. 이어서 G5 비공개 방송 결과물의 PCM을 확인한다.
-5. 마지막으로 G6 10분 마이크↔MR 상호상관 검증을 수행한다.
-6. G3~G6 증거가 모두 남기 전에는 UI나 문서에서 `OBS 송출 검증 완료` 또는 `싱크 검증 완료`라고 표시하지 않는다.
+4. G4 녹화 artifact는 현재 장비 구성에서 통과했다.
+5. G6 10분 마이크↔MR 상호상관 측정은 완료했지만 현재 장치 조합이 수용 실패했다. 같은 audio clock 장치 또는 저지연 performer monitoring 경로를 설계하고, 실패를 route 차단 조건으로 쓰지 않는 advisory UX를 고정한 뒤 동일 fixture로 재실행한다.
+6. G5 비공개 방송 결과물은 사용자가 실제 비공개 송출을 명시적으로 승인한 경우에만 PCM을 확인한다.
+7. G3~G6 증거가 모두 수용 기준을 통과하기 전에는 UI나 문서에서 `OBS 송출 검증 완료` 또는 `싱크 검증 완료`라고 표시하지 않는다.
 
 ## 5. 완료 판정에 사용할 명령
 

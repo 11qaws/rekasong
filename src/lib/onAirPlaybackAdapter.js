@@ -46,6 +46,8 @@ export const ON_AIR_PLAYBACK_ADAPTER_CODES = Object.freeze({
   TEST_CONFLICT: 'playback_adapter_test_conflict',
   TEST_INCOMPLETE: 'playback_adapter_test_incomplete',
   TEST_CANCELLED: 'playback_adapter_test_cancelled',
+  TEST_STREAMING_ACTIVE: 'playback_adapter_test_streaming_active',
+  TEST_STREAMING_STATUS_UNKNOWN: 'playback_adapter_test_streaming_status_unknown',
   TEST_IDENTITY_MISMATCH: 'playback_adapter_test_identity_mismatch',
   TEST_MARKER_DELIVERY_FAILED: 'playback_adapter_test_marker_delivery_failed',
   TEST_TIMEOUT: 'playback_adapter_test_timeout',
@@ -66,6 +68,7 @@ const RUNTIME_BOOLEAN_FIELDS = new Set([
   'sourceActive',
   'sourceVisible',
   'streaming',
+  'streamingStatusObserved',
   'recording',
 ]);
 const RUNTIME_STRING_FIELDS = new Set(['obsPluginVersion', 'obsControlLevel']);
@@ -451,7 +454,7 @@ export class OnAirPlaybackAdapter {
    */
   handleRuntimeAttestation(value, { phase = 'runtime_callback' } = {}) {
     if (this.#disposed || !this.#requiresRuntimeSourceAttestation) return Promise.resolve(false);
-    sanitizedRuntime(value);
+    const runtime = sanitizedRuntime(value);
     // Runtime callbacks are observational: promptly mirror them to the
     // dashboard but never turn them into a local stop. Active/visible events
     // often arrive as a pair, so one microtask coalesces them into one
@@ -468,6 +471,19 @@ export class OnAirPlaybackAdapter {
           // the established audio graph stopped.
         }
       });
+    }
+    // A normal song is allowed to continue when OBS starts streaming: that is
+    // the intended broadcast path. A diagnostic fixture is different. It must
+    // never become programme audio, so an explicit OBS streaming event aborts
+    // only the active fixture and strongly detaches its media source.
+    if (runtime.streaming === true && this.#activeTest) {
+      return this.#failActiveTest(
+        this.#activeTest,
+        new OnAirPlaybackAdapterError(
+          ON_AIR_PLAYBACK_ADAPTER_CODES.TEST_STREAMING_ACTIVE,
+          { phase: 'runtime_streaming_started' },
+        ),
+      );
     }
     return Promise.resolve(false);
   }
@@ -548,6 +564,24 @@ export class OnAirPlaybackAdapter {
 
   #isActiveTest(test) {
     return !this.#disposed && this.#activeTest === test;
+  }
+
+  #testStreamingPreflightError(phase) {
+    if (!this.#requiresRuntimeSourceAttestation) return null;
+    const runtime = sanitizedRuntime(this.#runtimeProbe({ phase }));
+    if (runtime.streaming === true) {
+      return new OnAirPlaybackAdapterError(
+        ON_AIR_PLAYBACK_ADAPTER_CODES.TEST_STREAMING_ACTIVE,
+        { phase },
+      );
+    }
+    if (runtime.streamingStatusObserved !== true) {
+      return new OnAirPlaybackAdapterError(
+        ON_AIR_PLAYBACK_ADAPTER_CODES.TEST_STREAMING_STATUS_UNKNOWN,
+        { phase },
+      );
+    }
+    return null;
   }
 
   #clearActiveTest(test = null) {
@@ -1649,6 +1683,16 @@ export class OnAirPlaybackAdapter {
       return;
     }
 
+    const streamingPreflightError = this.#testStreamingPreflightError('test_preflight');
+    if (streamingPreflightError) {
+      this.#sendTestCommandFailure(
+        command,
+        streamingPreflightError.code,
+        streamingPreflightError.detail,
+      );
+      return;
+    }
+
     const payload = isRecord(command.payload) ? command.payload : {};
     const test = {
       commandId: command.commandId,
@@ -1731,6 +1775,11 @@ export class OnAirPlaybackAdapter {
 
   async #beginTestPlayback(test) {
     if (!this.#isActiveTest(test) || test.phase !== 'awaiting_ready') return;
+    const streamingPreflightError = this.#testStreamingPreflightError('test_before_play');
+    if (streamingPreflightError) {
+      await this.#failActiveTest(test, streamingPreflightError);
+      return;
+    }
     test.phase = 'play_pending';
     if (!this.#armTestWatchdog(
       test,

@@ -20,7 +20,7 @@
 - 재실행 중 control transport disconnect 관측은 3건, reconnect 시도는 2건, 최대 gap은 825ms였다. 모두 같은 control/player identity로 복구됐고 route·LOAD·PLAY·STOP 재전송과 media graph 교체는 0건이었다. 따라서 짧은 제어 전송 재접속이 이미 재생 중인 OBS 출력 경로를 끊거나 다시 시작하지 않는다는 연결 우선 계약을 통과했다.
 - 최종 cache refresh 뒤 생성된 실제 Rekasong CEF renderer PID 64028의 private memory는 60분 관측 내내 14.8MiB, working set은 약 33.5~33.6MiB로 유지돼 renderer crash나 시간 비례 메모리 증가가 없었다. 이 결과는 실제 CEF의 장시간 재생·경로·자원 관문이며, 물리 청취 및 ingest 이후 결과물은 여전히 G5/G6에서 별도로 판정한다.
 - 시험 뒤 OBS Browser Source URL은 시험 전 값과 길이·SHA-256이 일치하도록 복원하고 cache refresh 뒤 Properties를 닫았으며 clipboard도 비웠다. credential-bearing URL은 로그와 문서에 남기지 않았다.
-- 실제 OBS CEF 60분 장시간 항목과 G4 녹화 artifact는 통과했다. G5 실제 stream과 G6 마이크↔MR 싱크는 여전히 미실행이다.
+- 실제 OBS CEF 60분 장시간 항목과 G4 녹화 artifact는 통과했다. G6는 2026-07-22에 물리 10분 분리 track으로 실행했지만 현재 온보드 출력+USB 마이크 조합의 drift·offset이 기준을 넘어 수용 실패했다. G5 실제 stream은 미실행이다.
 
 > 작업 범위: `D:\Agents\rekasong\Codex\workspace`만 수정했다.
 > 판정 원칙: 실제 OBS CEF·mixer·녹화·stream artifact가 없는 상태를 “OBS 송출 확인 완료”로 표시하지 않는다.

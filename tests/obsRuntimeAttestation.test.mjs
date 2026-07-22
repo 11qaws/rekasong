@@ -35,6 +35,7 @@ test('a generic browser never claims OBS runtime or invents source state', () =>
   });
   assert.deepEqual(runtime.runtime(), {
     streaming: false,
+    streamingStatusObserved: false,
     recording: false,
   });
   assert.equal(
@@ -61,6 +62,7 @@ test('OBS callbacks and events update only the browser runtime attestation layer
 
   assert.deepEqual(runtime.runtime(), {
     streaming: true,
+    streamingStatusObserved: true,
     recording: false,
     obsPluginVersion: '2.17.0',
     obsControlLevel: 'read_obs',
@@ -75,12 +77,28 @@ test('OBS callbacks and events update only the browser runtime attestation layer
     sourceActive: true,
     sourceVisible: true,
     streaming: false,
+    streamingStatusObserved: true,
     recording: true,
     obsPluginVersion: '2.17.0',
     obsControlLevel: 'read_obs',
   });
   assert.deepEqual(previousActiveCalls, [true]);
   assert.ok(snapshots.length >= 4);
+});
+
+test('an unavailable OBS status stays explicitly unobserved instead of inventing stream safety', () => {
+  const obsstudio = {
+    getControlLevel() {},
+    getStatus(callback) { callback(null); },
+  };
+  const runtime = createObsRuntimeAttestation({ windowObject: createWindow(obsstudio) });
+
+  assert.equal(runtime.runtime().streaming, false);
+  assert.equal(runtime.runtime().streamingStatusObserved, false);
+  assert.equal(
+    runtime.snapshot().lastErrorCode,
+    OBS_RUNTIME_ATTESTATION_CODES.STATUS_UNAVAILABLE,
+  );
 });
 
 test('malformed source events fail closed instead of replaying stale true', () => {

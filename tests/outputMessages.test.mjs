@@ -160,6 +160,7 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
     'stage.completed',
     'stage.cancelled',
     'stage.failed',
+    'stage.streamingSafetyStopped',
     'stage.unknown',
     'block.connection',
     'block.otherController',
@@ -170,6 +171,8 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
     'block.switching',
     'block.activeWork',
     'block.route',
+    'block.streamingActive',
+    'block.streamingUnknown',
     'block.unavailable',
     'block.staleEvidence',
     'evidence.label',
@@ -222,6 +225,37 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
   assert.match(outputMessageCatalog.ko['obs.audioCheck.mixerVerification.userScope'], /사용자.*G3-user/);
   assert.match(outputMessageCatalog.ko['obs.audioCheck.mixerVerification.userScope'], /녹화.*별도/);
   assert.match(outputMessageCatalog.en['obs.audioCheck.mixerVerification.userScope'], /only what you saw/i);
+});
+
+test('karaoke performer-monitor guidance is compact, translated, and explicitly nonblocking', async () => {
+  const panelSource = await readFile(
+    new URL('../src/components/PlaybackPanel.jsx', import.meta.url),
+    'utf8',
+  );
+  const modalStart = panelSource.indexOf('{isObsSetupOpen && (');
+  const obsGate = panelSource.indexOf('{isObsConfigurationVisible && (', modalStart);
+  const monitorStart = panelSource.indexOf('<details className="obs-performer-monitor"', obsGate);
+  const checkStart = panelSource.indexOf('className={`obs-audio-check', monitorStart);
+  assert.ok(obsGate > modalStart && monitorStart > obsGate && checkStart > monitorStart);
+  assert.doesNotMatch(panelSource.slice(0, modalStart), /obs-performer-monitor/);
+  assert.match(panelSource.slice(monitorStart, checkStart), /<details/);
+  assert.match(panelSource.slice(monitorStart, checkStart), /Headphones/);
+
+  const prefix = 'obs.performerMonitor.';
+  const koreanKeys = Object.keys(outputMessageCatalog.ko)
+    .filter((key) => key.startsWith(prefix))
+    .sort();
+  const englishKeys = Object.keys(outputMessageCatalog.en)
+    .filter((key) => key.startsWith(prefix))
+    .sort();
+  assert.deepEqual(englishKeys, koreanKeys);
+  assert.equal(koreanKeys.length, 9);
+  assert.match(outputMessageCatalog.ko[`${prefix}speakerTestOnly`], /물리 스피커.*측정용.*헤드폰/);
+  assert.match(outputMessageCatalog.ko[`${prefix}step.sameClock`], /같은 오디오 인터페이스/);
+  assert.match(outputMessageCatalog.ko[`${prefix}policy`], /연결이나 재생을 끊지 않고/);
+  assert.match(outputMessageCatalog.ko[`${prefix}policy`], /자동 변경하지 않/);
+  assert.match(outputMessageCatalog.en[`${prefix}policy`], /never disconnect/i);
+  assert.match(outputMessageCatalog.en[`${prefix}policy`], /never change Sync Offset automatically/i);
 });
 
 test('local speaker failures tell the listener what to do and never expose engine codes', async () => {

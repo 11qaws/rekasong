@@ -1454,6 +1454,13 @@ OBS stable player URL
 - [ ] sync offset recommendation과 재녹화 workflow
 - [ ] 10분 본시험 + 짧은 반복성 시험
 
+2026-07-22 실행 업데이트:
+
+- 제품 내 analyzer/certificate UI는 아직 미구현이므로 위 체크박스는 완료로 올리지 않는다.
+- 다만 실제 OBS의 분리 track과 외부 분석기로 짧은 기준선 및 60-cycle/10분 본시험을 실행했다. marker·jitter는 통과했지만 현재 온보드 출력+USB 마이크 조합의 offset `43.25ms`, drift `15.5–17.32ms/590초`가 기준을 넘었다.
+- `+69ms` OBS Sync Offset 비교는 상대 지연을 악화시켰고 `0ms`로 복원했다. 연결 검사가 이 실패를 이유로 established route를 끊어서는 안 된다.
+- 후속 제품 설계와 같은-clock 재검 절차는 [OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md](./OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md)를 따른다.
+
 ### Phase 8 — stable pairing과 편의성
 
 목표: 세션마다 OBS source URL을 바꾸는 부담을 없앤다.

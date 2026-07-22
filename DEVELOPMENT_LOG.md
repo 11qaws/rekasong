@@ -594,3 +594,11 @@
 - Blob 생성·해제는 페이지 소유 목록으로 관리하고, 최신 상태에 참조가 없다는 사실이 확인된 뒤에만 해제한다. 느린 탭에서도 고정 시간 추정으로 재생 파일을 먼저 해제하지 않는다. OBS의 `assetId`, Worker, WebSocket 계약은 변경하지 않았다.
 - 500회 로컬 Speaker↔OBS 왕복 테스트에서 출력 잠금, watchdog, 소켓 소유자, LOAD/PLAY/STOP 명령이 누적되지 않았다. 격리 브라우저에서 대기열·이력 파일 복구, 잘못된 파일 거부 뒤 재시도, 저장 Blob URL 0개, Worker 요청 0개, 320px overflow 0, Dashboard 이탈 시 생성 Blob 2/2 해제를 확인했다.
 - 1,000곡 이력 성능은 첫 열기 276.9ms, 반복 상호작용 p95 47.6ms, 닫은 뒤 GC heap 증가 210,564B였다. 전체 650/650 테스트, production build, 로컬 Dashboard 320/375/768/1100px smoke, 유레카의 고정 3px 노란 머리선, OBS 정적 번들 예산(raw 382,301B / gzip 116,109B)을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다.
+
+## 2026-07-22 (Codex) — v0.2.14 OBS 점검음 방송 유입 차단과 노래 방송 모니터 안내
+
+- OBS 오디오 점검 신호가 실제 방송 프로그램 오디오로 들어갈 가능성을 제품 경계에서 제거했다. 정확한 OBS Browser Source가 `streamingStatusObserved=true`와 `streaming=false`를 보고한 경우에만 점검을 시작하며, 방송 중이거나 방송 여부를 확인하지 못하면 사용자가 해야 할 다음 행동을 한국어·영어로 안내한다.
+- 같은 조건을 Dashboard/Coordinator, Durable Object Worker, OBS player의 fixture LOAD 전과 PLAY 직전에 각각 다시 검사한다. 점검 도중 OBS streaming 시작 callback이 오면 점검 fixture만 strong stop한다. 일반 MR은 방송 중 재생하는 것이 본래 목적이므로 streaming·scene telemetry가 정상 곡을 끊거나 media graph를 다시 만들지 않는다.
+- 설정 안에 기본 접힘 상태의 `노래 방송 모니터 경로` 안내를 추가했다. 물리 스피커→마이크 loop는 측정용일 뿐이고 실제 방송에서는 헤드폰을 사용한다는 점, 가능하면 마이크 입력과 헤드폰 출력을 같은 오디오 인터페이스 clock에 두는 점, OBS monitoring 설정과 10분 재측정 순서를 설명한다. 실패 결과는 연결·재생을 막거나 Sync Offset을 자동 변경하지 않는다.
+- 실제 OBS 10분 분리 트랙은 MR 재생 중단·restart·seek 없이 marker 60/60과 jitter p95 1.832ms를 기록했다. 현재 온보드 출력+별도 USB 마이크 조합은 drift 15.5–17.32ms/590초와 중앙 offset 43.25ms로 수용 기준을 넘었으므로, 같은 audio clock 경로에서 재측정하기 전에는 카라오케 sync 통과로 표시하지 않는다.
+- 전체 684/684 테스트, Worker 문법, production build, `git diff --check`, OBS 정적 closure 예산(raw 383,782B / gzip 117,558B / brotli 103,025B)을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다. production Worker는 먼저 version `2b819923-49bb-4002-9407-848321a6c6f7`로 배포했으며 실제 streaming은 시작하지 않았다.

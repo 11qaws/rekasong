@@ -187,7 +187,11 @@ function readyOutputSnapshot(overrides = {}) {
       heartbeatStale: false,
       buildId: 'coordinator-test-build',
       capabilities: { obsRuntime: true },
-      runtime: { sourceActive: true },
+      runtime: {
+        sourceActive: true,
+        streaming: false,
+        streamingStatusObserved: true,
+      },
     }],
     lease: {
       epoch: 4,
@@ -1223,6 +1227,32 @@ test('activating and deactivating observations both permit an exact safety deact
   }
 });
 
+test('startTest refuses an explicitly active OBS stream before creating a command', () => {
+  const snapshot = readyOutputSnapshot();
+  snapshot.players[0].runtime.streaming = true;
+  const { coordinator, connection } = createHarness({ snapshot });
+
+  assertCoordinatorError(
+    () => coordinator.startTest(),
+    ON_AIR_CONTROL_COORDINATOR_CODES.TEST_STREAMING_ACTIVE,
+  );
+  assert.equal(connection.commands.length, 0);
+  assert.equal(coordinator.snapshot().pendingTest, null);
+});
+
+test('startTest refuses an unobserved OBS streaming state before creating a command', () => {
+  const snapshot = readyOutputSnapshot();
+  snapshot.players[0].runtime.streamingStatusObserved = false;
+  const { coordinator, connection } = createHarness({ snapshot });
+
+  assertCoordinatorError(
+    () => coordinator.startTest(),
+    ON_AIR_CONTROL_COORDINATOR_CODES.TEST_STREAMING_STATUS_UNKNOWN,
+  );
+  assert.equal(connection.commands.length, 0);
+  assert.equal(coordinator.snapshot().pendingTest, null);
+});
+
 test('test commands use exact check and lease identities while activeCheck gates ordinary work', () => {
   const { coordinator, connection } = createHarness({ snapshot: readyOutputSnapshot() });
   const start = coordinator.startTest();
@@ -1384,7 +1414,11 @@ test('rejected STOP, reconnect, and route replacement each retire the pre-start 
         heartbeatStale: false,
         buildId: 'replacement-build',
         capabilities: { obsRuntime: true },
-        runtime: { sourceActive: true },
+        runtime: {
+          sourceActive: true,
+          streaming: false,
+          streamingStatusObserved: true,
+        },
       }],
       eligibleCandidates: { obs: ['replacement-player'] },
       lease: {

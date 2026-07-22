@@ -3,6 +3,7 @@
 // dashboard does not import the fixture renderer solely to draw progress.
 export const OBS_AUDIO_CHECK_DURATION_MS = 8_000;
 export const OBS_AUDIO_CHECK_CANCELLED_CODE = 'playback_adapter_test_cancelled';
+export const OBS_AUDIO_CHECK_STREAMING_ACTIVE_CODE = 'playback_adapter_test_streaming_active';
 
 export const OBS_AUDIO_CHECK_STAGES = Object.freeze({
   BLOCKED: 'blocked',
@@ -49,6 +50,16 @@ function currentPlayerConnectionIds(protocol) {
     .map((player) => player.connectionId))];
 }
 
+function currentObsRuntime(protocol) {
+  const leaseTarget = protocol?.lease?.leaseTarget;
+  if (!validCheckId(leaseTarget) || !Array.isArray(protocol?.players)) return null;
+  const matches = protocol.players.filter((player) => isRecord(player)
+    && player.playerInstanceId === leaseTarget
+    && player.clientKind === 'obs-browser-source'
+    && isRecord(player.runtime));
+  return matches.length === 1 ? matches[0].runtime : null;
+}
+
 function eventMatchesCurrentRoute(event, protocol, actualOutputMode, connectionIds) {
   const lease = protocol?.lease;
   if (!isRecord(event)
@@ -84,6 +95,8 @@ function blockedMessageKey({
   obsCandidates,
   exactObsTarget,
   obsSourceInactive,
+  streamingActive,
+  streamingStatusObserved,
   switchStatus,
   transitionStatus,
 }) {
@@ -107,6 +120,8 @@ function blockedMessageKey({
   if (!outputRouteStable || !exactObsTarget || protocol?.lease?.status !== 'ready') {
     return 'obs.audioCheck.block.route';
   }
+  if (streamingActive) return 'obs.audioCheck.block.streamingActive';
+  if (!streamingStatusObserved) return 'obs.audioCheck.block.streamingUnknown';
   return 'obs.audioCheck.block.unavailable';
 }
 
@@ -130,6 +145,9 @@ export function deriveObsAudioCheckView({
   const terminal = isRecord(evidence.lastTerminal) ? evidence.lastTerminal : null;
   const allMarkers = Array.isArray(evidence.markers) ? evidence.markers : [];
   const connectionIds = currentPlayerConnectionIds(protocol);
+  const obsRuntime = currentObsRuntime(protocol);
+  const streamingActive = obsRuntime?.streaming === true;
+  const streamingStatusObserved = obsRuntime?.streamingStatusObserved === true;
   const pendingCheckId = validCheckId(pendingTest?.checkId) ? pendingTest.checkId : null;
   const startedCheckId = validCheckId(started?.checkId) ? started.checkId : null;
   const rawActiveCheckId = validCheckId(protocol?.activeCheckId) ? protocol.activeCheckId : null;
@@ -203,7 +221,9 @@ export function deriveObsAudioCheckView({
     && protocol.activeFamily === null
     && effectiveActiveCheckId === null
     && snapshot.pendingSwitch === null
-    && snapshot.pendingTest === null;
+    && snapshot.pendingTest === null
+    && streamingStatusObserved
+    && !streamingActive;
 
   let stage = OBS_AUDIO_CHECK_STAGES.BLOCKED;
   let messageKey;
@@ -238,7 +258,9 @@ export function deriveObsAudioCheckView({
     messageKey = 'obs.audioCheck.stage.cancelled';
   } else if (terminalCurrent && terminal.event === 'test_failed') {
     stage = OBS_AUDIO_CHECK_STAGES.FAILED;
-    messageKey = 'obs.audioCheck.stage.failed';
+    messageKey = terminal.code === OBS_AUDIO_CHECK_STREAMING_ACTIVE_CODE
+      ? 'obs.audioCheck.stage.streamingSafetyStopped'
+      : 'obs.audioCheck.stage.failed';
   } else if (effectiveActiveCheckId) {
     stage = OBS_AUDIO_CHECK_STAGES.REQUESTED;
     messageKey = 'obs.audioCheck.stage.awaitingPlaying';
@@ -254,6 +276,8 @@ export function deriveObsAudioCheckView({
       obsCandidates,
       exactObsTarget,
       obsSourceInactive,
+      streamingActive,
+      streamingStatusObserved,
       switchStatus,
       transitionStatus,
     });
@@ -281,5 +305,7 @@ export function deriveObsAudioCheckView({
     cancelled: stage === OBS_AUDIO_CHECK_STAGES.CANCELLED,
     failed: stage === OBS_AUDIO_CHECK_STAGES.FAILED,
     unknown: stage === OBS_AUDIO_CHECK_STAGES.UNKNOWN,
+    streamingActive,
+    streamingStatusObserved,
   });
 }

@@ -215,7 +215,9 @@ async function registerPlayer(harness, socket, {
 } = {}) {
   optIntoProtocolV2(socket);
   const resolvedRuntime = runtime ?? (
-    clientKind === 'obs-browser-source' ? { sourceActive: true } : {}
+    clientKind === 'obs-browser-source'
+      ? { sourceActive: true, streaming: false, streamingStatusObserved: true }
+      : {}
   );
   await harness.send(socket, {
     type: 'player_hello',
@@ -2168,6 +2170,48 @@ test('start_test accepts only fixture-renderable safe-integer durations', async 
   assert.equal(harness.storage.puts.length, putsBefore);
   assert.equal(harness.session.protocolV2.activeCheckId, null);
   assert.equal(messagesOfType(player, 'start_test').length, 0);
+});
+
+test('Worker never relays a check signal while streaming is active or unobserved', async () => {
+  const scenarios = [
+    {
+      name: 'active',
+      runtime: { sourceActive: true, streaming: true, streamingStatusObserved: true },
+      code: 'test_blocked_while_streaming',
+    },
+    {
+      name: 'unobserved',
+      runtime: { sourceActive: true, streaming: false, streamingStatusObserved: false },
+      code: 'test_streaming_status_unknown',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const harness = createHarness();
+    const control = harness.socket('control');
+    const player = harness.socket('player');
+    await registerControl(harness, control);
+    await registerPlayer(harness, player, { runtime: scenario.runtime });
+    const leaseEpoch = await activateOutput(harness, control);
+    await confirmOutputReady(harness, player, 'player-a', leaseEpoch);
+    const putsBefore = harness.storage.puts.length;
+    const commandId = `stream-safety-${scenario.name}`;
+
+    await harness.send(control, {
+      type: 'start_test',
+      commandId,
+      checkId: `${commandId}-check`,
+      leaseEpoch,
+      targetPlayerInstanceId: 'player-a',
+      controlEpoch: harness.session.protocolV2.controlEpoch,
+      payload: { fixtureId: 'pcm-pulse-v1', durationMs: 1000 },
+    });
+
+    assert.equal(terminalResults(control, commandId)[0].code, scenario.code, scenario.name);
+    assert.equal(messagesOfType(player, 'start_test').length, 0, scenario.name);
+    assert.equal(harness.session.protocolV2.activeCheckId, null, scenario.name);
+    assert.equal(harness.storage.puts.length, putsBefore, scenario.name);
+  }
 });
 
 test('start_test is mutually exclusive, writes once, and admits a new check after a terminal event', async () => {
@@ -6091,7 +6135,11 @@ test('stale heartbeat keeps a live source commandable while a disconnected targe
   testPlayer.serializeAttachment({
     ...testPlayer.deserializeAttachment(),
     lastSeenAt: Date.now() - 60_000,
-    runtime: { sourceActive: true },
+    runtime: {
+      sourceActive: true,
+      streaming: false,
+      streamingStatusObserved: true,
+    },
   });
   await testHarness.send(testControl, {
     type: 'start_test',

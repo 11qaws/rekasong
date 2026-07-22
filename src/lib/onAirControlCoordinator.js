@@ -56,6 +56,8 @@ export const ON_AIR_CONTROL_COORDINATOR_CODES = Object.freeze({
   TEST_ALREADY_ACTIVE: 'control_coordinator_test_already_active',
   TEST_NOT_ACTIVE: 'control_coordinator_test_not_active',
   TEST_COMMAND_PENDING: 'control_coordinator_test_command_pending',
+  TEST_STREAMING_ACTIVE: 'control_coordinator_test_streaming_active',
+  TEST_STREAMING_STATUS_UNKNOWN: 'control_coordinator_test_streaming_status_unknown',
   TEST_IDENTITY_MISMATCH: 'control_coordinator_test_identity_mismatch',
   TEST_EVENT_INVALID: 'control_coordinator_test_event_invalid',
   TEST_EVENT_STALE: 'control_coordinator_test_event_stale',
@@ -995,6 +997,24 @@ export class OnAirControlCoordinator {
       );
     }
     const lease = this.#playerSnapshot.lease;
+    const targetPlayer = Array.isArray(this.#playerSnapshot.players)
+      ? this.#playerSnapshot.players.find((player) => (
+        player?.playerInstanceId === lease.leaseTarget
+        && player?.clientKind === 'obs-browser-source'
+      ))
+      : null;
+    if (targetPlayer?.runtime?.streaming === true) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.TEST_STREAMING_ACTIVE,
+        { targetPlayerInstanceId: lease.leaseTarget },
+      );
+    }
+    if (targetPlayer?.runtime?.streamingStatusObserved !== true) {
+      throw new OnAirControlCoordinatorError(
+        ON_AIR_CONTROL_COORDINATOR_CODES.TEST_STREAMING_STATUS_UNKNOWN,
+        { targetPlayerInstanceId: lease.leaseTarget },
+      );
+    }
     const checkId = this.#newId('check');
     const command = {
       type: TEST_COMMAND_TYPES.START,

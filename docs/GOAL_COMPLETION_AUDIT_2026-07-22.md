@@ -16,10 +16,10 @@
 | Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | 완료 | 현재 후보 배포됨 | 공개 다중 탭 수동 재확인 |
 | Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | 현재 후보 배포됨 | 설정 화면 수동 재확인 |
 | Speaker 감상 볼륨과 OBS 방송 gain 분리 | 완료 | 현재 후보 배포됨 | 두 모드 값 유지 수동 smoke |
-| Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.11 공개 URL 실측 완료 | 없음 |
-| Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.11 공개 URL 실측 완료 | 실제 OBS 업로드·송출 뒤 Speaker 복귀 청취 |
+| Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.13 공개 URL 재확인 | 없음 |
+| Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.13 공개 코드 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
-| OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5·G6 |
+| OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 자동 검증 + 실제 source hide/show·60분 CEF 완료 | 현재 후보 배포됨 | scene 전환·source refresh·OBS 재시작 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
@@ -28,13 +28,13 @@
 | 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.9 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위) | 현재 후보 배포됨 | 공개 언어 전환 smoke |
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
-| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.11 공개 URL 실측 완료 | 없음 |
+| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.13 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages의 앱 release 기준은 frontend `0.2.11` / `4341403`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없으며 Worker·OBS media graph는 바꾸지 않았다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 664/664와 실제 OBS CEF 60분 재생을 통과했다. 실제 청취·G5·G6은 별도 관문으로 남는다.
+현재 공개 Pages의 앱 release 기준은 frontend `0.2.13` / `a71bf0dca91981040ed14c7e3303fba09dcb6e11`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없으며 Worker·OBS media graph는 바꾸지 않았다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 `674/674`와 실제 OBS CEF 60분 재생을 통과했다. G6는 실제 10분 물리 측정을 완료했지만 현재 장치 조합의 drift와 offset이 기준을 넘어 수용 실패했으며, 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
-- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-DAcPqU7D.js`, Dashboard JS/CSS는 `assets/Dashboard-dZrsGOHE.js` / `assets/Dashboard-CpozUITF.css`다. CDN Last-Modified는 `2026-07-22 09:27:24Z`다.
+- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-BrYVxm8V.js`, Dashboard JS/CSS는 `assets/Dashboard-KuJg5b2H.js` / `assets/Dashboard-CpozUITF.css`다. CDN Last-Modified는 `2026-07-22 12:09:58Z`다.
 - 공개 Worker의 현재 활성 배포는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 이 Worker와 공개 Pages 조합으로 실제 OBS CEF 60분 재생을 통과했다.
 - 공개 Worker 루트의 HTTP 404는 장애가 아니라 루트 라우트를 제공하지 않는 현재 설계다. 세션·WebSocket·미디어 API는 `/v1/...` 아래에서만 제공한다.
 - 공개 첫 화면은 Speaker 기본과 `스피커 송출 중`을 유지하고, OBS 전용 설정은 톱니 안에서 OBS를 선택한 사용자에게 점진적으로 노출한다.
@@ -107,7 +107,9 @@
 - G3 기계 관측: 앱 점검 신호 동안 정확한 `Rekasong` OBS Audio Mixer source meter가 약 -25dB까지 움직였다.
 - G4 녹화 artifact: 33.283초 MP4의 AAC 48kHz stereo track에서 880Hz pulse 12개와 440Hz tone 4개를 모두 검출했다. marker 누락·중복 및 clipping은 0이었다.
 - source hide/show: fixture 재생 중 약 1.4초 숨겼다가 다시 표시해도 established route를 유지하고 16/16 marker로 완료했다.
-- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 라이브 마이크↔MR 10분 싱크(G6), scene 전환·source refresh·OBS 재시작 변형이다.
+- G6 물리 측정: track 2 MR·track 3 FIFINE 마이크로 60/60 marker를 기록했고 jitter p95 `1.832ms`는 통과했다. 그러나 offset `43.25ms`, drift `15.5–17.32ms/590초`로 현재 장치 조합은 수용 실패했다. 재생 중 route 교체·restart·seek·강제 정지는 없었다.
+- `+69ms` OBS Browser Sync Offset 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 되돌렸다. 서로 다른 하드웨어 clock의 drift 보정으로 사용하지 않는다.
+- 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 G6 재검증, scene 전환·source refresh·OBS 재시작 변형이다.
 
 세부 증거와 남은 절차는 `docs/OBS_REMAINING_VALIDATION_PLAN_2026-07-20.md`에 유지한다.
 
@@ -142,22 +144,22 @@
 - v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- 전체 테스트: 664/664 통과.
+- 최신 공개 코드 전체 테스트: 674/674 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
 - Dashboard chunk: 359.94 kB raw / 98.76 kB gzip.
 - Dashboard CSS: 59.79 kB raw / 11.32 kB gzip.
 - 탭별 local Speaker controller lazy chunk: 7.25 kB raw / 2.51 kB gzip. 공용 playback engine은 24.87 kB raw / 6.56 kB gzip이며 둘 다 Speaker 유휴 첫 화면에는 로드하지 않는다.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 382,809B raw / 117,326B gzip / 102,762B brotli.
+- OBS 정적 경로: 382,809B raw / 117,317B gzip / 102,792B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 
 ## 7. 배포 완료와 다음 관문
 
-1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.11` / `4341403` 배포를 완료했다. 앱 배포 workflow는 `29907992528`이다.
-2. GitHub Pages clean install·664개 테스트·build·OBS budget·publish와 production 자산 응답, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
+1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.13` / `a71bf0dca91981040ed14c7e3303fba09dcb6e11` 배포를 완료했다. 앱 배포 workflow는 `29912724691`이며 문서 배포 workflow `29918498251`도 성공했다.
+2. GitHub Pages clean install·674개 테스트·build·OBS budget·publish와 production 자산 응답, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
 3. 실제 OBS G3, G4, source hide/show, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
-5. 최종 송출 관문은 사용자의 실제 청취, 비공개 방송/VOD G5, 10분 마이크↔MR 상호상관 G6다.
+5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 10분 마이크↔MR G6 재검증이다. 현재 장치 G6는 측정 완료·수용 실패다.
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.

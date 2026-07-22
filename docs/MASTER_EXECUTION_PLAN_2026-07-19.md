@@ -57,7 +57,7 @@
   - 공개 Dashboard 냉시작 2회: 289,872B 전송 / 1,018,946B decode, DOM 125~127개, JS heap 약 9.1MiB. 320~1100px 한국어·영어 hairpin/금발 선/설정 dialog와 Speaker 기본값·출력 버튼을 자동 smoke로 확인했다.
   - v0.2.6의 1,000곡 production-browser 측정은 실제 이력 행 최대 100개, 저장 `290,235B`, 최초 개방 `31.9~259.4ms`, warm p95 `30.6~42.8ms`, 320px overflow 0, post-GC heap 증가 약 0.2MiB로 예산을 통과했다. 공개 URL 재측정도 cold `32.3ms`, warm p95 `46.9ms`, post-GC 증가 `219,300B`로 통과했다.
 - 과거 staging smoke 11/11과 10초 blob 재생은 초기 인수 증거로 보존하되 현재 Protocol v2/실제 OBS 증거로 승격하지 않는다.
-- 실제 OBS G3 mixer, G4 녹화 artifact, source hide/show와 CEF 60분 재생은 통과했다. 사용자의 실제 청취, ingest/VOD G5와 마이크↔MR G6는 미검증이다.
+- 실제 OBS G3 mixer, G4 녹화 artifact, source hide/show와 CEF 60분 재생은 통과했다. G6는 물리 10분 분리 track으로 측정했지만 현재 장치 조합의 drift·offset이 기준을 넘어 수용 실패했다. 사용자의 주관 청취, ingest/VOD G5, 같은-clock 경로의 G6 재검증이 남았다.
 
 ### 2.4 Opencode 및 Gemini artifacts
 

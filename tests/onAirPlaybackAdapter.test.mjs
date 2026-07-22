@@ -86,7 +86,7 @@ function testCommand(type = TEST_COMMAND_TYPES.START, overrides = {}) {
 function createHarness({
   execute,
   emitEvent,
-  runtimeProbe = () => ({}),
+  runtimeProbe = null,
   sourceResolver = () => ({ kind: 'url', url: 'https://example.test/audio.mp3' }),
   prefetchSources = null,
   testFixtureFactory = () => ({ kind: 'blob', blob: new Blob(['fixture']) }),
@@ -99,6 +99,11 @@ function createHarness({
   setTimeoutFn,
   clearTimeoutFn,
 } = {}) {
+  const resolvedRuntimeProbe = runtimeProbe ?? (() => (
+    clientKind === 'obs-browser-source'
+      ? { streaming: false, streamingStatusObserved: true }
+      : {}
+  ));
   const events = [];
   const eventRecords = [];
   const abandonedEvents = [];
@@ -271,7 +276,7 @@ function createHarness({
     prefetchSources,
     testFixtureFactory,
     outputPathProbe,
-    runtimeProbe,
+    runtimeProbe: resolvedRuntimeProbe,
     now: (() => {
       let value = 10;
       return () => value++;
@@ -451,7 +456,10 @@ test('OBS heartbeat never derives sourceActive from media attachment or invents 
   const heartbeat = harness.connectionCallbacks.heartbeatPayload({ now: 20 });
 
   assert.equal(Object.hasOwn(harness.connectionCallbacks.runtime, 'sourceActive'), false);
-  assert.equal(Object.hasOwn(heartbeat, 'runtime'), false);
+  assert.deepEqual(heartbeat.runtime, {
+    streaming: false,
+    streamingStatusObserved: true,
+  });
 });
 
 test('speaker heartbeat does not invent an OBS sourceActive attestation', () => {
@@ -511,6 +519,34 @@ test('OBS scene active and visibility changes never tear down an established med
       assert.equal(snapshot.lastError, null);
     });
   }
+});
+
+test('OBS streaming telemetry guards fixtures but never kills a normal backing track', async () => {
+  const runtime = {
+    sourceActive: true,
+    sourceVisible: true,
+    streaming: false,
+    streamingStatusObserved: true,
+  };
+  const harness = createHarness({ runtimeProbe: () => ({ ...runtime }) });
+  await activate(harness);
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY));
+  harness.commands.length = 0;
+  harness.events.length = 0;
+
+  runtime.streaming = true;
+  const stopped = await harness.adapter.handleRuntimeAttestation(runtime, {
+    phase: 'obs_callback',
+  });
+  await flushMicrotasks();
+
+  assert.equal(stopped, false);
+  assert.deepEqual(harness.commands, []);
+  assert.equal(harness.engineState.status, 'playing');
+  assert.equal(harness.engineState.mediaPaused, false);
+  assert.equal(harness.adapter.snapshot().activeRunId, 'run-1');
+  assert.equal(harness.adapter.snapshot().safetyLocked, false);
 });
 
 test('scene telemetry cannot latch the route or block later transport commands', async () => {
@@ -1130,6 +1166,67 @@ test('deactivation failure reports bounded actual safety booleans without claimi
     autoplayCancelled: true,
   });
   assert.equal(harness.adapter.snapshot().routeState, 'unknown');
+});
+
+test('OBS test fixture is rejected locally while streaming is active', async () => {
+  const harness = createHarness({
+    runtimeProbe: () => ({ streaming: true, streamingStatusObserved: true }),
+  });
+  await activate(harness);
+  harness.events.length = 0;
+  harness.commands.length = 0;
+
+  await harness.connectionCallbacks.onPlayerCommand(testCommand());
+
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.events.at(-1).event, TEST_EVENT_TYPES.TEST_FAILED);
+  assert.equal(
+    harness.events.at(-1).code,
+    ON_AIR_PLAYBACK_ADAPTER_CODES.TEST_STREAMING_ACTIVE,
+  );
+  assert.equal(harness.adapter.snapshot().activeTest, null);
+});
+
+test('OBS test fixture fails closed when streaming status was never observed', async () => {
+  const harness = createHarness({
+    runtimeProbe: () => ({ streaming: false, streamingStatusObserved: false }),
+  });
+  await activate(harness);
+  harness.events.length = 0;
+  harness.commands.length = 0;
+
+  await harness.connectionCallbacks.onPlayerCommand(testCommand());
+
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.events.at(-1).event, TEST_EVENT_TYPES.TEST_FAILED);
+  assert.equal(
+    harness.events.at(-1).code,
+    ON_AIR_PLAYBACK_ADAPTER_CODES.TEST_STREAMING_STATUS_UNKNOWN,
+  );
+  assert.equal(harness.adapter.snapshot().activeTest, null);
+});
+
+test('OBS streaming start between fixture load and play strongly stops the check signal', async () => {
+  const runtime = { streaming: false, streamingStatusObserved: true };
+  const harness = createHarness({ runtimeProbe: () => ({ ...runtime }) });
+  await activate(harness);
+  harness.events.length = 0;
+  harness.commands.length = 0;
+
+  await harness.connectionCallbacks.onPlayerCommand(testCommand());
+  assert.deepEqual(harness.commands.map((command) => command.type), [PLAYBACK_COMMAND_TYPES.LOAD]);
+
+  runtime.streaming = true;
+  await harness.adapter.handleRuntimeAttestation({ ...runtime });
+
+  assert.ok(harness.commands.some((command) => command.type === PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP));
+  assert.equal(harness.commands.some((command) => command.type === PLAYBACK_COMMAND_TYPES.PLAY), false);
+  assert.equal(harness.events.at(-1).event, TEST_EVENT_TYPES.TEST_FAILED);
+  assert.equal(
+    harness.events.at(-1).code,
+    ON_AIR_PLAYBACK_ADAPTER_CODES.TEST_STREAMING_ACTIVE,
+  );
+  assert.equal(harness.adapter.snapshot().activeTest, null);
 });
 
 test('same-graph test waits for READY and PLAYING, then emits stable media-time markers', async () => {

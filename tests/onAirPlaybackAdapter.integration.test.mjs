@@ -219,7 +219,12 @@ test('default adapter composes the real connection and engine from route activat
         && engine.mediaPaused === true
         && engine.sourceAttached === false,
     }),
-    runtimeProbe: () => ({ sourceActive: true, sourceVisible: true }),
+    runtimeProbe: () => ({
+      sourceActive: true,
+      sourceVisible: true,
+      streaming: false,
+      streamingStatusObserved: true,
+    }),
     now: () => clock.now(),
   });
   t.after(() => adapter.dispose());

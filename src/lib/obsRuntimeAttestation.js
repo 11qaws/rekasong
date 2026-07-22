@@ -64,6 +64,7 @@ export function createObsRuntimeAttestation({
     sourceActive: null,
     sourceVisible: null,
     streaming: false,
+    streamingStatusObserved: false,
     recording: false,
     obsPluginVersion: detected ? boundedString(obsstudio.pluginVersion) : null,
     obsControlLevel: null,
@@ -169,16 +170,19 @@ export function createObsRuntimeAttestation({
         if (disposed) return;
         if (!isRecord(status)) {
           state.streaming = false;
+          state.streamingStatusObserved = false;
           state.recording = false;
           state.lastErrorCode = OBS_RUNTIME_ATTESTATION_CODES.STATUS_UNAVAILABLE;
         } else {
           state.streaming = status.streaming === true;
+          state.streamingStatusObserved = true;
           state.recording = status.recording === true;
         }
         publish();
       });
       return true;
     } catch {
+      state.streamingStatusObserved = false;
       state.lastErrorCode = OBS_RUNTIME_ATTESTATION_CODES.STATUS_UNAVAILABLE;
       publish();
       return false;
@@ -193,6 +197,7 @@ export function createObsRuntimeAttestation({
     runtime() {
       const runtime = {
         streaming: state.streaming === true,
+        streamingStatusObserved: state.streamingStatusObserved === true,
         recording: state.recording === true,
       };
       if (typeof state.sourceActive === 'boolean') runtime.sourceActive = state.sourceActive;
@@ -239,12 +244,19 @@ export function createObsRuntimeAttestation({
     addListener('obsSourceActiveChanged', activeListener);
     addListener('obsSourceVisibleChanged', visibleListener);
     for (const [type, field, value] of statusEvents) {
-      addListener(type, () => setBoolean(field, value));
+      addListener(type, () => {
+        const observationChanged = field === 'streaming' && !state.streamingStatusObserved;
+        if (field === 'streaming') state.streamingStatusObserved = true;
+        const valueChanged = state[field] !== value;
+        setBoolean(field, value);
+        if (observationChanged && !valueChanged) publish();
+      });
     }
     addListener('obsExit', () => {
       state.sourceActive = false;
       state.sourceVisible = false;
       state.streaming = false;
+      state.streamingStatusObserved = true;
       state.recording = false;
       publish();
     });

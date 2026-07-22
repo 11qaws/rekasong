@@ -26,6 +26,7 @@ function protocolSnapshot(overrides = {}) {
       state: 'ready',
       lastSeenAt: 1_000,
       heartbeatStale: false,
+      runtime: { streaming: false, streamingStatusObserved: true },
     }],
     eligibleCandidates: { speaker: ['speaker-player'], obs: [CURRENT_ROUTE.playerInstanceId] },
     lease: {
@@ -207,6 +208,31 @@ test('OBS audio check starts only from one exact authoritative idle OBS route', 
   });
   assert.equal(hiddenButConnected.canStart, false);
   assert.equal(hiddenButConnected.messageKey, 'obs.audioCheck.block.sourceInactive');
+});
+
+test('OBS audio check exposes a concrete next action and never starts during an active or unknown stream', () => {
+  const snapshotWithRuntime = (runtime) => {
+    const protocol = protocolSnapshot();
+    return coordinatorSnapshot({
+      playerSnapshot: protocolSnapshot({
+        players: [{ ...protocol.players[0], runtime }],
+      }),
+    });
+  };
+
+  const active = derive({
+    snapshot: snapshotWithRuntime({ streaming: true, streamingStatusObserved: true }),
+  });
+  assert.equal(active.canStart, false);
+  assert.equal(active.streamingActive, true);
+  assert.equal(active.messageKey, 'obs.audioCheck.block.streamingActive');
+
+  const unknown = derive({
+    snapshot: snapshotWithRuntime({ streaming: false, streamingStatusObserved: false }),
+  });
+  assert.equal(unknown.canStart, false);
+  assert.equal(unknown.streamingStatusObserved, false);
+  assert.equal(unknown.messageKey, 'obs.audioCheck.block.streamingUnknown');
 });
 
 test('missing connection state is actionable while explicit authority or route uncertainty stays unknown', () => {

@@ -2061,7 +2061,7 @@ export class SessionRoom {
         'audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding'
       ]);
       const runtime = boundedRecord(message.runtime, [
-        'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'recording'
+        'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'streamingStatusObserved', 'recording'
       ]);
       const matchingSockets = this.matchingSocketsWithIdentity(socket, 'playerInstanceId', playerInstanceId);
       const finalAttachment = {
@@ -2828,6 +2828,21 @@ export class SessionRoom {
     if (!['ready', 'audible'].includes(protocol.leaseStatus)) {
       return this.rejectV2Command(socket, command, 'output_not_ready', { status: protocol.leaseStatus });
     }
+    if (command.type === 'start_test') {
+      const targetRecords = this.livePlayerRecords().filter(({ attachment }) => (
+        attachment.playerInstanceId === targetPlayerInstanceId
+        && attachment.clientKind === 'obs-browser-source'
+      ));
+      const targetRuntime = targetRecords.length === 1
+        ? targetRecords[0].attachment.runtime || {}
+        : null;
+      if (targetRuntime?.streaming === true) {
+        return this.rejectV2Command(socket, command, 'test_blocked_while_streaming');
+      }
+      if (targetRuntime?.streamingStatusObserved !== true) {
+        return this.rejectV2Command(socket, command, 'test_streaming_status_unknown');
+      }
+    }
     if (command.type === 'stop_test' && protocol.activeCheckId !== checkId) {
       return this.rejectV2Command(socket, command, 'stale_check_identity', {
         expected: protocol.activeCheckId,
@@ -3079,7 +3094,7 @@ export class SessionRoom {
       let runtimeChanged = false;
       if (message.runtime && typeof message.runtime === 'object' && !Array.isArray(message.runtime)) {
         const runtimePatch = boundedRecord(message.runtime, [
-          'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'recording'
+          'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'streamingStatusObserved', 'recording'
         ]);
         runtimeChanged = Object.entries(runtimePatch).some(
           ([field, value]) => nextAttachment.runtime?.[field] !== value

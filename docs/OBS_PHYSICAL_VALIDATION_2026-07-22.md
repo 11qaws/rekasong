@@ -17,7 +17,8 @@
 - 공개 앱은 정확한 On-Air player 한 개를 찾아 `OBS 송출 중`으로 전환했고, 앱 재생 증거 G2와 OBS mixer 확인 G3-user를 별도로 표시·저장했다.
 - OBS에서 재생 중이던 곡을 Speaker로 바꾸어도 같은 곡과 재생 위치가 이어졌다. 전환 확인을 위해 기존 OBS 출력을 먼저 끊어서 새 Speaker 출력을 막는 문제는 재현되지 않았다.
 - Speaker 최종 상태는 일반 웹 플레이어 모드다. 설정을 닫은 상태에서 `스피커 송출 중`만 표시되며, 곡을 재생하지 않을 때 Worker session 연결을 만들지 않는다.
-- 플랫폼으로 실제 전송된 결과물 G5와 라이브 마이크↔MR 상대 싱크 G6는 의도적으로 검증하지 않았다. 특히 G6는 별도 마이크 경로가 있어야 한다.
+- 플랫폼으로 실제 전송된 결과물 G5는 의도적으로 검증하지 않았다.
+- 라이브 마이크↔MR G6는 전용 분리 track과 물리 스피커·FIFINE 마이크로 10분까지 실행했다. 60/60 marker와 낮은 jitter는 확인했지만, 현재 장치 조합의 상대 drift가 허용치를 넘었으므로 **G6 통과로 판정하지 않는다**.
 
 ## 2. 안전 경계와 방송 OFF 증거
 
@@ -29,8 +30,8 @@
 |---|---:|
 | `Streaming Start` | 0 |
 | `Streaming Stop` | 0 |
-| `Recording Start` | 2 |
-| `Recording Stop` | 2 |
+| `Recording Start` | 8 |
+| `Recording Stop` | 8 |
 
 이번 인수 증거로 사용한 로컬 녹화 구간은 다음과 같다.
 
@@ -110,7 +111,69 @@ SHA-256: 0EF330FD650AAA578649F726652F1B1A2E585D826C706665B03B716FFF3AFB5A
 
 따라서 앱의 기준 PCM이 OBS Browser Source와 OBS audio mixer를 지나 실제 로컬 녹화 트랙까지 도달했다. 이 결과는 G4이며 플랫폼 ingest 결과 G5는 아니다.
 
-## 7. OBS → Speaker 재생 중 전환
+## 7. G6 — 물리 마이크↔MR 10분 분리 track
+
+### 7.1 측정 구성
+
+- OBS monitoring device: `Speakers (High Definition Audio Device)`
+- 마이크: `Microphone (FIFINE K670 Microphone)`
+- Browser Source: track 1·2, `Monitor and Output`, sync offset `0 ms`
+- 마이크 source: track 1·3, `Monitor Off`
+- 녹화: MKV, 48 kHz stereo, track 1=혼합, track 2=MR 직접 신호, track 3=물리 마이크
+- fixture: 600.024초 MP3. 10초마다 880 Hz 짧은 pulse 3개와 440 Hz 400 ms tone 1개, 총 60 cycle
+
+초기에는 OBS monitoring device가 실제 스피커와 일치하지 않거나 물리 스피커가 꺼진 상태의 녹화도 있었다. 이 파일들은 track 2에만 기준 신호가 있고 track 3 마이크에 대응 신호가 없어 지연 증거로 사용하지 않았다. 이후 monitoring device를 명시하고 스피커를 켠 뒤, **OBS가 낸 소리를 실제 FIFINE 마이크가 다시 받은 경로**만 판정에 사용했다.
+
+### 7.2 짧은 물리 루프 기준선
+
+```text
+파일: C:\Users\Qumin\Videos\2026-07-22 21-38-03.mkv
+SHA-256: 02F1DC22810200186E60993261862F1FBFD5A70BDC49FC169626E2C4299ED112
+크기: 4,212,573 bytes
+길이: 11.766 s
+오디오: AAC, 48,000 Hz, stereo, 3 tracks
+```
+
+- 4/4 cycle 검출, 누락 0
+- 440/880 Hz 결합 envelope의 마이크 지연: 전 cycle `68.5 ms`
+- cycle별 correlation: `0.98445–0.98550`
+- 440 Hz rise/fall edge 지연 평균 `68.938 ms`, 표준편차 `0.177 ms`, 범위 `0.5 ms`
+
+이 결과는 물리 스피커→공기→마이크 경로가 실제로 녹화됐고 짧은 구간에서는 반복성이 높다는 기준선이다.
+
+### 7.3 10분 연속 실행 artifact
+
+```text
+파일: C:\Users\Qumin\Videos\2026-07-22 21-55-45.mkv
+SHA-256: FE05D2CBBA26BA0582B95D4FB7D88B013AD98601274BAD69578DC1DCE5554E7C
+크기: 227,973,702 bytes
+길이: 640.666 s
+오디오: AAC, 48,000 Hz, stereo, 3 tracks
+OBS Recording Start: 21:55:45.684
+OBS Recording Stop: 22:06:26.770
+```
+
+앱의 실제 `내 MR 파일 추가`와 `즉시 재생` 흐름을 사용했다. 곡은 10분 fixture 끝에서 자연 종료됐고 재생 중 route 교체·restart·seek·강제 정지는 없었다.
+
+| 항목 | 실측 | 수용 기준 | 판정 |
+|---|---:|---:|---|
+| marker | 60/60, 누락·중복 0 | 60/60 | 통과 |
+| MR 자체 시간축 | 590초 구간에서 `+9.0 ms` | 연속 재생, marker 누락 0 | 통과 |
+| 결합 envelope correlation | 최소 `0.94889`, 중앙값 `0.97760` | marker 식별 가능 | 통과 |
+| detrended jitter p95 | `1.832 ms` | `≤ 5 ms` | 통과 |
+| 440 Hz edge jitter p95 | `1.417 ms` | `≤ 5 ms` | 통과 |
+| 첫 5 cycle↔마지막 5 cycle 중앙값 drift | `15.5 ms` | `≤ 10 ms / 10분` | **실패** |
+| 선형 회귀 drift | `17.32 ms / 590초` (`1.7613 ms/min`) | `≤ 10 ms / 10분` | **실패** |
+| 440 Hz edge 선형 drift | `17.996 ms / 590초` | `≤ 10 ms / 10분` | **실패** |
+| 중앙 offset | `43.25 ms` | 보정 후 `±20 ms` | **실패** |
+
+따라서 G6는 **측정 완료·수용 실패**다. 앱/OBS의 MR 시간축과 established media graph는 안정적이었지만, 현재의 온보드 스피커 출력과 별도 USB 마이크 입력은 서로 다른 하드웨어 clock을 사용한다. 관측된 누적 상대 drift는 이 물리 monitoring chain의 clock 차이와 일치하며, 앱 연결 검사로 해결하거나 route를 끊어야 할 종류의 문제가 아니다.
+
+OBS Browser Source에 `+69 ms` sync offset을 넣은 비교 녹화(`2026-07-22 21-45-35.mkv`)에서는 상대 마이크 지연이 약 `82–84 ms`로 더 커졌다. 이 offset은 MR과 마이크 사이의 물리 clock drift를 고치지 못하므로 `0 ms`로 복원했다. 자동 보정값으로 사용하지 않는다.
+
+다음 G6 재검증은 입력·출력이 같은 audio clock을 공유하는 장치 또는 별도의 저지연 performer monitoring 경로에서 같은 60-cycle fixture로 수행한다. 점검 결과는 설정 안내로만 제공하고, 실패·미측정·일시적인 telemetry 손실을 이유로 이미 연결된 OBS route나 재생을 중단하지 않는다.
+
+## 8. OBS → Speaker 재생 중 전환
 
 120초 저레벨 시험음을 임시 업로드해 OBS에서 실제 재생한 뒤, 재생 중 Speaker로 전환했다.
 
@@ -125,7 +188,7 @@ SHA-256: 0EF330FD650AAA578649F726652F1B1A2E585D826C706665B03B716FFF3AFB5A
 
 이 시험은 “전환 검증이 새 경로를 역으로 막지 않는다”와 “같은 재생 run을 보존한다”를 증명한다. 다만 수동 UI 관측이므로 sample-accurate 전환 지연이나 순간적인 오디오 gap 길이를 측정한 결과는 아니다.
 
-## 8. 자동 회귀·성능 증거
+## 9. 자동 회귀·성능 증거
 
 검증한 공개 코드에서 다음을 다시 실행했다.
 
@@ -145,7 +208,7 @@ SHA-256: 0EF330FD650AAA578649F726652F1B1A2E585D826C706665B03B716FFF3AFB5A
 
 [GitHub Pages workflow `29912724691`](https://github.com/11qaws/rekasong/actions/runs/29912724691)은 commit `a71bf0d`에서 성공했다. 공개 entry asset `assets/index-BrYVxm8V.js`는 workflow artifact와 byte-for-byte 일치했고 SHA-256은 `BBA72C89CA1A653D12351DAE7C8D845E6E38646111807DDC8468360F872775E4`였다.
 
-## 9. 사용자 관점 판정
+## 10. 사용자 관점 판정
 
 ### 지금 확실히 사용할 수 있는 것
 
@@ -160,17 +223,17 @@ SHA-256: 0EF330FD650AAA578649F726652F1B1A2E585D826C706665B03B716FFF3AFB5A
 ### 아직 별도 검증이 필요한 것
 
 - 실제 플랫폼으로 내보낸 비공개 stream/VOD의 오디오 트랙 G5. 이번에는 안전상 의도적으로 실행하지 않았다.
-- 스트리머 마이크와 MR의 초기 offset, 10분 drift, jitter G6. 마이크 경로와 기준 clap/pulse를 함께 녹음해야 한다.
-- 실제 사용자의 헤드폰/monitoring chain에서 들리는 지연. 로컬 녹화의 PCM 존재만으로는 청취 지연을 대신할 수 없다.
+- 현재의 온보드 스피커+USB FIFINE 마이크 조합은 G6 drift 기준을 넘었다. 같은 clock을 공유하는 입력·출력 또는 저지연 performer monitoring 경로로 다시 측정해야 한다.
+- 다른 헤드폰·오디오 인터페이스·monitoring chain의 지연과 drift는 이번 장치 결과로 대신할 수 없다.
 - Android/iOS의 화면 잠금·앱 전환·PiP·블루투스 장치 전환은 지원 기기별 수동 검증이 필요하다.
 
-## 10. 최종 상태
+## 11. 최종 상태
 
 - 공개 앱: Speaker 선택, 설정 닫힘, 재생 곡 없음
 - OBS: 전용 시험 profile·scene 유지, Browser Source 연결 유지
 - OBS 방송: OFF
 - OBS 녹화: OFF
 - 실제 방송 profile·scene: 미변경
-- 임시 120초 시험 음원: 로컬 파일 삭제, 세션 자산은 세션 종료 전까지 서버 정책에 따라 유지
+- 임시 시험 음원: 저장소에는 포함하지 않음. 세션 자산은 세션 종료 전까지 서버 정책에 따라 유지
 
-다음 물리 검증은 실제 방송이 아니라 **마이크와 기준 MR을 분리 track으로 로컬 녹화하는 G6 fixture**가 우선이다. 실제 플랫폼 G5는 사용자가 명시적으로 비공개 송출을 승인할 때만 수행한다.
+G6 fixture 실행 자체는 끝났지만 현재 물리 장치 조합은 수용 기준을 통과하지 못했다. 다음 단계는 같은 audio clock 장치 또는 저지연 performer monitoring 경로를 설계한 뒤 동일 fixture를 재실행하는 것이다. 실제 플랫폼 G5는 사용자가 명시적으로 비공개 송출을 승인할 때만 수행한다.

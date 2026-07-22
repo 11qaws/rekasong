@@ -1249,6 +1249,22 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .speaker-device-failure { padding: 0.48rem 0.55rem; border: 1px solid rgba(220, 38, 38, 0.28); border-radius: 7px; background: rgba(220, 38, 38, 0.06); color: var(--accent-red) !important; }
 .speaker-device-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 .speaker-device-actions .btn-secondary { width: auto; min-height: 36px; }
+.obs-performer-monitor { margin: 0 0 0.85rem; border: 1px solid rgba(242, 217, 141, 0.7); border-radius: 10px; background: var(--bg-deep); }
+.obs-performer-monitor > summary { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.68rem 0.8rem; list-style: none; cursor: pointer; }
+.obs-performer-monitor > summary::-webkit-details-marker { display: none; }
+.obs-performer-monitor > summary::after { content: '›'; flex: 0 0 auto; color: var(--text-muted); font-size: 1rem; font-weight: 900; transform: rotate(90deg); transition: transform 0.15s ease; }
+.obs-performer-monitor[open] > summary::after { transform: rotate(-90deg); }
+.obs-performer-monitor-heading { display: flex; min-width: 0; align-items: flex-start; gap: 0.55rem; color: var(--text-main); }
+.obs-performer-monitor-heading > svg { flex: 0 0 auto; margin-top: 0.08rem; color: #8a6f18; }
+.obs-performer-monitor-heading span { display: grid; min-width: 0; gap: 0.1rem; }
+.obs-performer-monitor-heading strong { font-size: 0.82rem; line-height: 1.35; }
+.obs-performer-monitor-heading small { color: var(--text-muted); font-size: 0.68rem; line-height: 1.35; }
+.obs-performer-monitor-badge { flex: 0 0 auto; padding: 0.22rem 0.4rem; border: 1px solid rgba(138, 111, 24, 0.34); border-radius: 999px; background: rgba(242, 217, 141, 0.2); color: #725b12; font-size: 0.64rem; font-weight: 800; white-space: nowrap; }
+.obs-performer-monitor-body { display: grid; gap: 0.55rem; padding: 0 0.8rem 0.75rem; border-top: 1px solid rgba(242, 217, 141, 0.55); }
+.obs-performer-monitor-body p { margin: 0; font-size: 0.7rem; line-height: 1.45; }
+.obs-performer-monitor-speaker-note { margin-top: 0.65rem !important; padding: 0.48rem 0.55rem; border-radius: 7px; background: rgba(242, 217, 141, 0.18); color: #5f4b0c; }
+.obs-performer-monitor-body ol { display: grid; gap: 0.34rem; margin: 0; padding-left: 1.1rem; color: var(--text-muted); font-size: 0.7rem; line-height: 1.45; }
+.obs-performer-monitor-policy { color: var(--text-muted); }
 .obs-audio-check { display: grid; min-width: 0; gap: 0.55rem; margin: 0 0 0.85rem; padding: 0.75rem 0.8rem; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--bg-deep); }
 .obs-audio-check > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.7rem; }
 .obs-audio-check h3 { margin: 0; color: var(--text-main); font-size: 0.88rem; }
@@ -1482,6 +1498,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   .output-route-details-summary { grid-template-columns: minmax(0, 1fr); }
   .obs-remote-feedback-heading { flex-direction: column; }
   .obs-remote-feedback-badge { white-space: normal; }
+  .obs-performer-monitor-badge { display: none; }
   .obs-audio-check > header { flex-direction: column; }
   .obs-audio-check-status { width: 100%; max-width: 100%; text-align: left; }
   .obs-audio-check-actions,

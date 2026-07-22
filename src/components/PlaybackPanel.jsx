@@ -1009,6 +1009,34 @@ export default function PlaybackPanel({
                 <p className="obs-remote-feedback-scope">{t('obs.remoteFeedback.scope')}</p>
               </section>
             )}
+            <details className="obs-performer-monitor">
+              <summary>
+                <span className="obs-performer-monitor-heading">
+                  <Headphones size={17} aria-hidden="true" />
+                  <span>
+                    <strong>{t('obs.performerMonitor.title')}</strong>
+                    <small>{t('obs.performerMonitor.summary')}</small>
+                  </span>
+                </span>
+                <span className="obs-performer-monitor-badge">
+                  {t('obs.performerMonitor.badge')}
+                </span>
+              </summary>
+              <div className="obs-performer-monitor-body">
+                <p className="obs-performer-monitor-speaker-note" role="note">
+                  {t('obs.performerMonitor.speakerTestOnly')}
+                </p>
+                <ol>
+                  <li>{t('obs.performerMonitor.step.sameClock')}</li>
+                  <li>{t('obs.performerMonitor.step.obsDevice')}</li>
+                  <li>{t('obs.performerMonitor.step.monitoring')}</li>
+                  <li>{t('obs.performerMonitor.step.verify')}</li>
+                </ol>
+                <p className="obs-performer-monitor-policy">
+                  {t('obs.performerMonitor.policy')}
+                </p>
+              </div>
+            </details>
             <section className={`obs-audio-check is-${obsAudioCheckStage}`} aria-labelledby="obs-audio-check-title">
               <header>
                 <div>
