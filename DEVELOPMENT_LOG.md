@@ -9,6 +9,9 @@
 - 첫 화면에서는 `DashboardLocalSpeaker`, `playbackEngine`, 원격 prepare/cache graph를 모두 내려받지 않는다. 로컬 파일을 검토할 때 Speaker controller와 playback engine 두 청크만 지연 로드하고, 원격 resolver/cache 두 청크는 로컬 재생에서 계속 0개였다. 새 Dashboard는 DOM 124개, script 6개, decoded resource 약 0.99MiB를 유지한다.
 - 모든 새 사용자 문구는 locale catalog의 semantic key로 한국어·영어를 함께 추가했다. OBS player·Worker protocol·단일 출력 lease는 수정하지 않았다. 유레카의 금발을 뜻하는 3px 노란 선은 연결·파일 상태와 독립된 영구 UI 계약으로 유지하고 320/375/768/1100px, 한국어·영어 로컬 브라우저에서 다시 확인했다.
 - 검증: 자동 테스트 664/664, lint 신규 경고 0(기존 Gemini escape 경고 2건), Worker 문법, production build, OBS 정적 closure 예산(raw 382,809B / gzip 117,326B / brotli 102,762B), Speaker network/local-file recovery/drag/Dashboard/1,000곡 browser smoke를 통과했다. 업로드 실패→수동 재시도→Blob 보존→Speaker 실제 재생도 격리 브라우저에서 통과했다. 1,000곡은 최대 100행, cold 218.7ms, warm p95 33.2ms, post-GC heap 증가 0B이며 320px overflow가 없다.
+- 앱 커밋 `4341403`을 Pages workflow `29907992528`로 배포했다. clean install, 664개 테스트, lint, Worker 문법, production build, OBS bundle budget, publish가 모두 성공했다.
+- 캐시를 우회한 공개 v0.2.11에서 로컬 WAV가 실제 재생되는 동안 session HTTP 0회 / WebSocket 0개 / frame 0개 / Worker host 요청 0회였고, local Speaker·PlaybackEngine 청크 2개만 수요 로드됐으며 remote media 청크는 0개였다. 공개 Dashboard는 DOM 124개, 초기 script 6개, decoded resource 997,845B, warm DCL 24.0ms였다. 320/375/768/1100px 한국어·영어의 머리핀·금발 선을 모두 통과했다.
+- 공개 1,000곡 이력은 cold 199.9ms, warm p95 38.3ms, post-GC heap 증가 0B, 320px overflow 0이었다. 공개 drag도 취소 저장 변경 0건, 이력 drop 재생 0건, session 요청 1→1을 유지했다.
 - 실제 OBS에서 로컬 파일을 업로드해 송출한 뒤 같은 파일을 Speaker로 다시 듣는 과정, 사용자 청취, 비공개 방송/VOD, 모바일 OS별 백그라운드·장치, 장면/소스 새로고침·OBS 재시작 변형, 10분 마이크↔MR 상호상관은 자동 증거와 구분한 물리 관문으로 남긴다.
 
 ## 2026-07-22 (Codex) — v0.2.10 Speaker 수요 기반 연결 분리
