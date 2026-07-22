@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 앱은 v0.2.15이고 현재 검증 후보는 v0.2.16이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 앱과 현재 검증 후보는 v0.2.16이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -30,7 +30,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 frontend `0.2.15` / commit `15849ea6b9eedcaa58a5ba459d2b861bff2f0891f`까지 성공적으로 배포됐고, 앱 runtime을 마지막으로 바꾼 기준은 `94efd537e34862ca84b30b1f6cdc2e666cc2018f`다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `71c233ad-5e37-4655-8f62-b3ff306e7708`다. 전체 테스트 `689/689`, 실제 OBS CEF 60분 재생, 별도 5분 가상 케이블 녹화를 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 frontend `0.2.16` / release commit `b4e94a066b12d8f80174f6cdc2e6638877afbd9d`까지 성공적으로 배포됐고, 앱 runtime을 마지막으로 바꾼 기준은 `94efd537e34862ca84b30b1f6cdc2e666cc2018f`다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `71c233ad-5e37-4655-8f62-b3ff306e7708`다. 전체 테스트 `689/689`, 실제 OBS CEF 60분 재생, 별도 5분 가상 케이블 녹화를 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 

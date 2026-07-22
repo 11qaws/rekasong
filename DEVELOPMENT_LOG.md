@@ -3,7 +3,7 @@
 ## 2026-07-23 (Codex) — v0.2.16 실제 OBS 5분 격리 검증과 시험 업로드 안전화
 
 - 외부 CEF smoke가 이전 작업 기록의 staging 주소(`rekasong-session.11qaws-test.workers.dev`)를 따라가며 제어 협상에 실패한 것을 확인했다. 현재 production frontend 설정과 Wrangler 배포 대상은 `rekasong-session.11qaws.workers.dev`다. 로컬 Worker+앱 v2 smoke와 production Worker+공개 Pages v2 smoke를 각각 통과시켜 앱 결함과 잘못된 시험 endpoint를 분리했다.
-- 현재 Worker를 production에 다시 배포했고 활성 version은 `71c233ad-5e37-4655-8f62-b3ff306e7708`이다. 공개 Pages의 최신 성공 workflow `29931039444`는 commit `15849ea6b9eedcaa58a5ba459d2b861bff2f0891f`를 게시했다. Worker 루트 404는 기존 설계이며 `/v1/...` 세션·WebSocket·미디어 계약으로 실제 smoke를 판정했다.
+- 현재 Worker를 production에 다시 배포했고 활성 version은 `71c233ad-5e37-4655-8f62-b3ff306e7708`이다. v0.2.16 release commit `b4e94a066b12d8f80174f6cdc2e6638877afbd9d`의 Pages workflow `29935855849`는 clean install, 전체 테스트, lint, Worker 문법, production build, OBS bundle budget과 publish를 모두 통과했다. Worker 루트 404는 기존 설계이며 `/v1/...` 세션·WebSocket·미디어 계약으로 실제 smoke를 판정했다.
 - 실제 OBS 외부 CEF harness는 먼저 동일한 Browser Source 후보 한 개가 75초 동안 안정적으로 유지되는지 확인한 뒤에만 큰 fixture를 R2에 올리도록 순서를 바꿨다. 오타·만료 URL을 고치는 동안 29MiB 시험 파일을 반복 업로드하지 않으며 `uploading_asset`/`asset_uploaded` 상태를 남긴다. 재생·route·제품 앱 코드는 바꾸지 않았다.
 - 전용 OBS test profile/scene에서 방송은 끝까지 끄고 로컬 녹화만 시작했다. 29,040,044바이트/302.5초 fixture는 wall `302,594ms`(오차 `94ms`)로 자연 종료했고, candidate 전이 `0`, 재생 중 control disconnect/reconnect `0`, unsafe route 관측 `0`, 동일 leased player identity와 종료 뒤 410 fence를 통과했다.
 - 녹화 `C:\Users\Qumin\Videos\2026-07-23 00-30-11.mkv`는 `150,015,715바이트`, SHA-256 `4E396C3C22705BC7426A6FD97927757755378AB21F1972F5F1C8A2849D0C0E78`이다. Browser direct track과 VB-Audio Virtual Cable loopback track에서 marker 31/31, 300초 endpoint 전체를 검출했다. edge drift `0.965ms`, linear-fit drift `0.352ms`, jitter p95 `2.015ms`는 통과했고 중앙 고정 offset `85.797ms`는 실패했다.
@@ -11,6 +11,7 @@
 - 가상 케이블 결과는 플레이어가 한 곡 동안 상대 drift를 누적하지 않는다는 경로 격리 증거다. `85.797ms` 고정 offset은 그 loopback의 장치·monitoring 지연이며 실제 가수 마이크/헤드폰 합격을 뜻하지 않는다. 물리 performer 경로는 같은 clock 또는 저지연 monitoring 구성에서 별도 재검증한다.
 - 시험 뒤 OBS Browser URL SHA-256은 원본 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`와 일치했고, Browser monitoring/type·mixers·sync offset, FIFINE 입력 device, Windows monitoring device를 원래 값으로 복원했다. OBS 최종 화면은 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 실제 방송은 시작하지 않았다.
 - 공개 앱을 다시 점검해 기본 Speaker, YouTube 단일 상위 소스+검색/플레이리스트, Setlink→멜로밍, 부제목 부재, 한·영 즉시 전환을 확인했다. Speaker 유휴·검색·로컬 WAV 실제 재생은 session HTTP/WebSocket/frame/Worker 요청이 모두 `0`이었고, 곡 클릭→검토·drag 취소·이력 drop·320px 목적지 배치도 통과했다.
+- 배포 직후 공개 v0.2.16을 다시 읽어 HTTP 200과 CDN Last-Modified `2026-07-22 15:58:46Z`를 확인했다. 공개 Dashboard smoke는 기본 Speaker, 한·영+reload, 320/375/768/1100px, 3px 금발 선, 출력 버튼, ntfy 요청 `0`, HTTP 오류 `0`을 통과했다. warm DCL은 `27.2ms`, long task `0`, JS heap 사용량은 약 `7.9MiB`였다.
 
 ## 2026-07-22 (Codex) — 재현 가능한 5분 G6 fixture와 30초 관측 계약
 
