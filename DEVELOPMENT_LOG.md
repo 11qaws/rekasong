@@ -11,7 +11,7 @@
 - 실제 source refresh와 OBS 재시작을 한 run에서 검증하는 `test:obs:v2:cef-recovery`를 추가했다. 이전 player 소실과 `target_disconnected`를 먼저 관측하고, 새 identity 안정화→사용자 승인 full reset의 terminal inactive/unverified→Speaker 기준 무자동재생→명시적 OBS 재선택 ready·5초 무음을 순서대로 요구한다. 다음 단계에서만 별도 LOAD/PLAY를 허용하며 종료 때 deactivate·session end·410 fence를 확인한다.
 - 실제 OBS 30.2.0에는 방송·녹화를 시작하지 않은 상태로 이 harness URL을 넣으려 했지만 Qt Browser Source URL 입력란이 자동 입력을 저장하지 않아 live-session 물리 run은 실행하지 않았다. 임시 credential handoff와 clipboard를 정리했고 OBS는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`으로 남겼다. 따라서 source refresh·OBS 재시작의 실제 live-session 관문은 계속 미통과로 기록한다.
 - 검증: 전체 `699/699`, lint 신규 오류 0(기존 Gemini escape 경고 2건), Worker 문법, production build, OBS bundle budget과 `git diff --check`를 통과했다. Dashboard `368.34kB raw / 100.91kB gzip`, CSS `61.54kB / 11.63kB`, OBS closure `383,782B raw / 117,547B gzip / 102,918B brotli`다. 1,000곡은 저장 `290,235B`, 최대 100행, cold `216ms`, warm p95 `30.9ms`, 320px overflow 0, post-GC 증가 `0B`였다. 로컬 production Dashboard는 warm DCL `25.5ms`, long task 0, heap 약 `7.9MiB`였다.
-- v0.2.18 공개 배포와 공개 두 탭 재검증은 이 후보 커밋 뒤 수행한다.
+- v0.2.18을 commit `da65b9087079457c4862a1c121e490c478b0d0ed`로 배포했고 Pages workflow `29944366536`의 clean install·699개 테스트·lint·Worker 문법·build·OBS bundle·publish가 모두 성공했다. 공개 A/B 탭에서 A만 `queue 1/auto-next on`, B는 `queue 0/off`였고 두 탭 새로고침 뒤에도 그대로였다. A의 실제 audio는 `paused=false`, `readyState=4`, `0.846→1.827초`로 진행한 반면 B는 source 없음·`paused=true`였다. 검증 재생을 즉시 버린 뒤 새 C는 `queue 0/off/idle`과 공유 이력 5개만 보였다. 공개 전체 smoke도 기본 Speaker, YouTube 단일 소스와 검색/플레이리스트, Setlink, Meloming, 한·영 reload, 320/375/768/1100px, 모바일 설정, 금발 선, HTTP 오류 0을 통과했고 warm DCL `25.0ms`, long task 0, heap 약 `7.9MiB`였다.
 
 ## 2026-07-23 (Codex) — v0.2.17 OBS 새 인스턴스 완전 초기화와 Speaker 안전 복귀
 
