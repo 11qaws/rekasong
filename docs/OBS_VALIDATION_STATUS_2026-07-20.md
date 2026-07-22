@@ -83,6 +83,7 @@
 - Worker의 선택 경로도 비우고 Dashboard는 조용한 Speaker 기본 상태로 돌아간다. 중단된 OBS 곡은 자동 재생하지 않고 실패 상태로 보존해 사용자가 재시도 또는 버리기를 선택하게 한다. 완료 문구는 앱이 사라진 출력의 물리 정지를 증명할 수 없으며 OBS mixer를 직접 확인해야 한다고 한국어·영어로 안내한다.
 - 로컬 실제 브라우저+Worker 통합 smoke는 OBS 페이지를 닫아 `target_disconnected`를 만든 뒤 새 ID의 페이지를 등록했다. 완전 초기화 후 lease inactive·선택 경로 null·desired stopped·미확인 표식을 관측했고, 새 `<audio>`는 paused, `src` 없음, source child 0으로 무음을 유지했다. 그 다음 명시적 OBS 선택만 새 route를 ready로 만들었으며 LOAD·PLAY 자동 재전송은 없었다.
 - 실제 OBS 30.2.0에서는 Browser Source refresh 버튼 실행과 OBS 프로세스 재시작 뒤 test profile·scene·Browser/FIFINE source·mixer 구성이 유지됨을 확인했다. 당시 Browser URL은 이전 세션 값이어서 live route 복구 합격으로 승격하지 않는다. 유효한 새 세션 URL을 넣은 실제 source refresh·OBS 재시작 변형은 남아 있다.
+- production Worker `51f9c6e8-60aa-4f74-962a-98ac55eda0be`와 공개 frontend v0.2.17에서도 같은 recovery smoke를 통과했다. 16/16 marker, wall 오차 `176.3ms`, 최대 sample gap `93.6ms`, media 오류 0이었고 reset 뒤 replacement media의 paused·source 없음·autoplay false와 명시적 재선택만의 ready 전이를 확인했다.
 
 ## 2. 사용자가 지금 믿어도 되는 부분
 
