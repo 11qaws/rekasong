@@ -340,3 +340,4 @@ pseudo-locale는 번역 품질이 아니라 구현 누락과 layout을 검사한
 - Dashboard locale pack은 OBS Protocol v2 정적 closure에 포함되지 않는다. 최신 후보의 OBS gzip은 115,958 bytes로 예산 133,120 bytes 안이며, 번역 추가 전과 실질적으로 동일하다.
 - AI title 진행 상태와 오래된 Dashboard toast는 locale-neutral code로 이관했고, Widget/Display 전용 소형 locale pack을 분리했다.
 - `tests/i18nSourceGuard.test.mjs`가 실제 Dashboard 사용자 화면의 하드코딩 한국어, 정적 title/aria/placeholder, toast/confirm 증가를 배포 전 `npm test`에서 막는다.
+- 참조가 없고 번역되지 않은 구형 `LivePanel.jsx`는 v0.2.5에서 제거했다. 현재 Dashboard 사용자 흐름의 번역 범위와 별개인 죽은 화면을 baseline backlog로 유지하지 않는다.

@@ -487,3 +487,12 @@
 - 최신 로컬 player는 READY에 도달했고 dashboard에서 후보 1개와 OBS route 활성화를 확인했다. 앱 점검 신호가 G2 완료로 끝나는 동안 실제 Rekasong mixer meter가 약 -25 dB까지 움직여 G3 기계 관측을 통과했다.
 - 사용자 청취, mute/monitoring/scene 변형, 녹화 파일, 비공개 방송 결과물, 10분 mic↔MR offset/drift는 아직 남았다. 이 증거 전에는 `OBS 송출 확인 완료`나 `카라오케 싱크 확인 완료`로 판정하지 않는다.
 - 최종 review candidate 검증: 자동 테스트 624/624, Worker syntax, production build, whitespace, OBS 정적 closure 예산을 통과했다. OBS closure는 raw 381,225B / gzip 115,968B / brotli 101,564B이며 raw 450KiB / gzip 130KiB 예산 안이다. lint는 신규 오류 없이 기존 `functions/api/gemini.js`의 escape 경고 2건만 남는다. `tools/obs-runtime-probe.html`은 production `dist`에 포함되지 않는다.
+
+## 2026-07-22 (Codex) — v0.2.5 공개 Dashboard UX·성능 스모크와 의존성 정리
+
+- 공개 Pages와 로컬 배포를 같은 조건으로 확인하는 `scripts/dashboard-production-smoke.mjs`를 추가했다. 새 격리 브라우저에서 Speaker 기본값, 잠기지 않은 Speaker/OBS 선택 버튼, YouTube 단일 상위 소스와 Search/Playlist 내부 모드, 한국어→영어 즉시 전환과 새로고침 지속성을 검증한다.
+- 320/375/768/1100px에서 한국어와 긴 영어 상태 문구를 각각 확인한다. 흰 머리핀 컨트롤이 viewport를 벗어나지 않고 가로 overflow가 없으며, 유레카의 3px 금발 선이 모든 폭에서 불투명하게 남는지 자동으로 실패시킨다. 320px 영어 설정 대화상자도 별도 검증한다.
+- 공개 냉시작 실측은 HTML DCL 약 499ms, 초기 자원 289,872B 전송/1,018,946B decode, DOM 125개, 72ms long task 1개였다. 캐시 재방문은 DCL 약 28ms, long task 0개였고 전체 상호작용 뒤 JS heap은 약 9.2MiB였다. 네트워크 속도를 합격 조건으로 삼지 않고 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB의 넉넉한 회귀 상한만 둔다.
+- 소스 참조가 0개인 구형 `LivePanel.jsx`를 제거했다. 이 화면에 남아 있던 하드코딩 문구와 사용하지 않는 애니메이션 유지보수 표면도 함께 사라졌다.
+- 소스 import가 0개인 `firebase` 직접 의존성을 제거해 설치 트리에서 84개 패키지를 줄였다. 공개 Dashboard/OBS 번들은 원래 Firebase를 포함하지 않아 런타임 동작과 OBS bundle byte 수는 변하지 않는다.
+- 검증: 자동 테스트 634/634, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, whitespace, 공개·로컬 Dashboard smoke, OBS 정적 closure budget(raw 382,301B / gzip 116,110B / brotli 101,713B)을 통과했다.

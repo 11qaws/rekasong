@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,10 +16,10 @@
     "test:obs:v2:continuity:soak": "node scripts/obs-v2-continuity-soak.mjs",
     "test:obs:v2:safety": "node scripts/obs-v2-safety-smoke.mjs",
     "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs",
-    "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs"
+    "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs",
+    "test:dashboard:smoke": "node scripts/dashboard-production-smoke.mjs"
   },
   "dependencies": {
-    "firebase": "^12.16.0",
     "framer-motion": "^12.42.2",
     "jsmediatags": "^3.9.7",
     "lucide-react": "^1.24.0",

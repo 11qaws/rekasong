@@ -464,7 +464,7 @@ audio_check_cancel {checkId}
 ### P2-02. 코드 부채
 
 - `Dashboard.jsx` 약 70KB, Worker 약 38KB를 state machine/protocol/media/cache/UI 모듈로 분리.
-- unused `LivePanel`, Firebase dependency, 오래된 assets와 scratch script를 실제 참조 확인 뒤 정리.
+- [x] 실제 참조 0개를 확인한 unused `LivePanel`과 Firebase 직접 의존성을 v0.2.5에서 제거했다. 오래된 assets와 scratch script는 각각 production 포함 여부와 진단 재현성을 확인한 뒤 정리한다.
 - 기존 lint warning 6건 제거.
 - 완료: route/dynamic import 분리로 OBS v2 경로에서 heavy module을 제외했고 production build의 500KiB chunk warning을 제거했다. Dashboard/Worker 자체 모듈 분리는 계속 진행한다.
 
