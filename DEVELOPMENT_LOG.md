@@ -7,6 +7,7 @@
 - 노래 방송의 운영 싱크 단위를 무한한 단일 시간축이 아니라 한 곡으로 확정했다. OBS route와 player lease는 곡 사이에도 유지하고, 각 곡은 새 `runId`와 `position: 0`으로 시작한다. 기존 곡의 exact strong-stop proof 뒤에만 다음 LOAD→PLAY를 진행하며, 곡 중간에는 analyzer나 telemetry를 이유로 자동 seek·restart·playback-rate 보정을 하지 않는다.
 - 최대 곡 길이 5분의 시작 offset·relative drift를 제품 관문으로 사용하고, 기존 10분 fixture는 장치 drift 속도와 장시간 연속성을 보는 stress 진단으로 낮췄다. 10분 결과는 route나 재생을 차단하지 않는다. 모든 새 안내는 한국어·영어 semantic key로 함께 추가했다.
 - 검증: 전체 686/686 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2건), Worker·브라우저 스크립트 문법, production build, OBS 정적 closure 예산(raw `383,818B` / gzip `117,569B` / brotli `103,056B`)을 통과했다. Dashboard JS는 `365.15kB` raw / `100.07kB` gzip이다. 로컬 drag는 HTTP 오류 0·Worker 요청 0, Speaker 유휴/검색/로컬 재생은 session HTTP 0·WebSocket 0·frame 0을 유지했다. 1,000곡 이력은 최대 100행, cold `273.3ms`, warm p95 `37ms`, 320px overflow 0, post-GC heap 증가 0B였다.
+- frontend commit `94efd537e34862ca84b30b1f6cdc2e666cc2018f`는 Pages workflow `29927571438`로 배포됐다. 공개 v0.2.15는 ntfy 요청 0건·HTTP 오류 0건, Speaker idle/검색/로컬 재생의 Worker host 요청 0건을 확인했다. 공개 1,000곡은 cold `41.7ms`, warm p95 `46.8ms`, post-GC 증가 0B였고 CI 조건으로 다시 빌드한 main/CSS/Dashboard/OnAirPlayerV2 자산 SHA-256이 공개 파일과 4/4 일치했다.
 
 ## 2026-07-22 (Codex) — v0.2.13 OBS → Speaker 원자적 재생권 이관과 방송 시작 금지
 

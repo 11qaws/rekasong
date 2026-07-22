@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 v0.2.13 실제 OBS·로컬 녹화·OBS→Speaker 전환 증거: [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)
+> 최신 공개 앱은 v0.2.15다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 v0.2.13 시점의 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -16,8 +16,8 @@
 | Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | 완료 | 현재 후보 배포됨 | 공개 다중 탭 수동 재확인 |
 | Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | 현재 후보 배포됨 | 설정 화면 수동 재확인 |
 | Speaker 감상 볼륨과 OBS 방송 gain 분리 | 완료 | 현재 후보 배포됨 | 두 모드 값 유지 수동 smoke |
-| Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.13 공개 URL 재확인 | 없음 |
-| Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.13 공개 코드 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
+| Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 없음 |
+| Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택 | 완료 | 현재 후보 배포됨 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 자동 검증 + 실제 source hide/show·60분 CEF 완료 | 현재 후보 배포됨 | scene 전환·source refresh·OBS 재시작 |
@@ -25,17 +25,17 @@
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
-| 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.9 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
+| 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위) | 현재 후보 배포됨 | 공개 언어 전환 smoke |
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
-| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.13 공개 코드 재확인 | 없음 |
+| 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages의 앱 release 기준은 frontend `0.2.13` / `a71bf0dca91981040ed14c7e3303fba09dcb6e11`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없으며 Worker·OBS media graph는 바꾸지 않았다. production Worker는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 전체 테스트 `674/674`와 실제 OBS CEF 60분 재생을 통과했다. G6는 실제 10분 물리 stress를 측정했고 현재 장치 조합의 시작 offset은 실패, 5분 곡 단위 drift는 재판정 대기다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages의 앱 release 기준은 frontend `0.2.15` / `94efd537e34862ca84b30b1f6cdc2e666cc2018f`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `2b819923-49bb-4002-9407-848321a6c6f7`다. 전체 테스트 `686/686`와 실제 OBS CEF 60분 재생을 통과했다. G6는 실제 10분 물리 stress를 측정했고 현재 장치 조합의 시작 offset은 실패, 5분 곡 단위 drift는 재판정 대기다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
-- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-BrYVxm8V.js`, Dashboard JS/CSS는 `assets/Dashboard-KuJg5b2H.js` / `assets/Dashboard-CpozUITF.css`다. CDN Last-Modified는 `2026-07-22 12:09:58Z`다.
-- 공개 Worker의 현재 활성 배포는 version `7a725d35-6372-4422-b45b-2809c118ff73`다. 이 Worker와 공개 Pages 조합으로 실제 OBS CEF 60분 재생을 통과했다.
+- 공개 Pages `https://11qaws.github.io/rekasong/`는 HTTP 200이며 메인 자산은 `assets/index-Cw7hwxQB.js`, Dashboard JS/CSS는 `assets/Dashboard-DP9bJW4p.js` / `assets/Dashboard-CNzH05Ka.css`다. CDN Last-Modified는 `2026-07-22 14:14:33Z`다.
+- 공개 Worker의 현재 활성 배포는 version `2b819923-49bb-4002-9407-848321a6c6f7`다. 기존 CEF 60분 증거의 Worker 이후 점검음 방송 유입 차단을 추가했으며, 일반 MR media graph는 변경하지 않았다.
 - 공개 Worker 루트의 HTTP 404는 장애가 아니라 루트 라우트를 제공하지 않는 현재 설계다. 세션·WebSocket·미디어 API는 `/v1/...` 아래에서만 제공한다.
 - 공개 첫 화면은 Speaker 기본과 `스피커 송출 중`을 유지하고, OBS 전용 설정은 톱니 안에서 OBS를 선택한 사용자에게 점진적으로 노출한다.
 - 헤더의 얇은 노란 선은 유레카의 금발을 나타내는 영구 브랜드 요소다. production 390px viewport에서 실제 노란 픽셀 212개가 x=1..367, y=80..81에 존재했고 흰색 hairpin 묶음 뒤로 이어졌다. CSS는 3px, `rgb(242, 217, 141)`, `isolation:isolate`로 확인했다.
@@ -43,6 +43,10 @@
 - 공개 v0.2.9에서 검색 결과 클릭→검토와 drag 취소·이력 drop을 반복했다. 취소는 저장 변경 0건, 이력 drop은 현재 곡·대기열·재생 0건이며, 320px에서도 세 목적지가 모두 화면 안에 있다. 이력 drop 직전과 직후의 media-session 요청 수는 2→2로 같아 drop이 별도 Worker 세션을 열지 않았다.
 - 공개 v0.2.10 격리 탭에서 Speaker idle 1.5초와 검색 결과 표시까지 session HTTP 0회, control WebSocket 0개, 전송 frame 0개, Worker host 요청 0회를 확인했다. 곡 drag 검증에서도 검색은 session 0회이고 클릭 검토로 필요한 media session 1회가 생긴 뒤 이력 drop 전후 1→1로 유지됐다.
 - 공개 v0.2.11 격리 탭에서 로컬 WAV를 선택·검토·즉시 재생해 media time이 0.088초 이상 증가하는 동안 session HTTP 0회, control WebSocket 0개, 전송 frame 0개, Worker host 요청 0회였다. local Speaker·PlaybackEngine 청크 2개만 수요 로드됐고 원격 prepare/cache 청크는 0개였으며 durable Blob URL도 0개였다.
+- 공개 v0.2.15의 격리 Chrome에서 Speaker 기본값, 한·영 전환·reload 지속성, 320/375/768/1100px hairpin·3px 노란 선, 출력 버튼 사용 가능 상태를 통과했다. production legacy ntfy 요청은 0건이고 HTTP 4xx/5xx도 0건이었다.
+- 같은 공개본에서 Speaker idle·검색·로컬 파일 실제 재생은 session HTTP 0회, WebSocket 0개, 전송 frame 0개, Worker host 요청 0회였다. drag 취소는 durable 변경 0, 이력 drop은 재생 0이며 drop 전후 media-session 요청은 1→1이었다.
+- 공개 v0.2.15의 1,000곡 이력은 최대 mount 100행, cold open `41.7ms`, warm p95 `46.8ms`, 320px overflow 0, 닫은 뒤 post-GC heap 증가 0B였다.
+- 공개 main/CSS/Dashboard/OnAirPlayerV2 자산의 SHA-256은 같은 commit을 GitHub Actions 조건으로 다시 빌드한 로컬 산출물과 4/4 바이트 단위로 일치했다.
 
 ## 2. Speaker 사용자 흐름
 
@@ -145,21 +149,21 @@
 - v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- 최신 공개 코드 전체 테스트: 674/674 통과.
+- 최신 공개 코드 전체 테스트: 686/686 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 359.94 kB raw / 98.76 kB gzip.
-- Dashboard CSS: 59.79 kB raw / 11.32 kB gzip.
+- Dashboard chunk: 365.15 kB raw / 100.07 kB gzip.
+- Dashboard CSS: 61.55 kB raw / 11.63 kB gzip.
 - 탭별 local Speaker controller lazy chunk: 7.25 kB raw / 2.51 kB gzip. 공용 playback engine은 24.87 kB raw / 6.56 kB gzip이며 둘 다 Speaker 유휴 첫 화면에는 로드하지 않는다.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 382,809B raw / 117,317B gzip / 102,792B brotli.
+- OBS 정적 경로: 383,818B raw / 117,569B gzip / 103,056B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 
 ## 7. 배포 완료와 다음 관문
 
-1. Worker `7a725d35-6372-4422-b45b-2809c118ff73`와 frontend `0.2.13` / `a71bf0dca91981040ed14c7e3303fba09dcb6e11` 배포를 완료했다. 앱 배포 workflow는 `29912724691`이며 문서 배포 workflow `29918498251`도 성공했다.
-2. GitHub Pages clean install·674개 테스트·build·OBS budget·publish와 production 자산 응답, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
+1. Worker `2b819923-49bb-4002-9407-848321a6c6f7`와 frontend `0.2.15` / `94efd537e34862ca84b30b1f6cdc2e666cc2018f` 배포를 완료했다. 앱 배포 workflow `29927571438`은 성공했다.
+2. GitHub Pages clean install·686개 테스트·build·OBS budget·publish, production 자산 hash, ntfy 요청 0·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선을 확인했다.
 3. 실제 OBS G3, G4, source hide/show, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했다. 다음 수동 관문은 모바일 Speaker 백그라운드 조작, 공개 다중 탭과 실제 출력 장치 전환이다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 재판정 대기다.
