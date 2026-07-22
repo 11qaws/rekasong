@@ -6,6 +6,8 @@
 >
 > 검증한 프런트엔드: `0.2.13` / `a71bf0dca91981040ed14c7e3303fba09dcb6e11`
 >
+> 추가 source refresh·OBS 재시작 복구: `0.2.19` / `187224c0a77f28a33b3a2024e0914773a66386f0`
+>
 > Production Worker: `7a725d35-6372-4422-b45b-2809c118ff73`
 >
 > OBS: `30.2.0`, 전용 profile·scene collection `Rekasong_Local_Record_Test_20260722`
@@ -264,3 +266,15 @@ OBS Browser Source에 `+69 ms` sync offset을 넣은 비교 녹화(`2026-07-22 2
 - 임시 시험 음원: 저장소에는 포함하지 않음. 세션 자산은 세션 종료 전까지 서버 정책에 따라 유지
 
 G6 fixture 실행 자체는 끝났지만 현재 물리 장치 조합은 수용 기준을 통과하지 못했다. 다음 단계는 같은 audio clock 장치 또는 저지연 performer monitoring 경로를 설계한 뒤 동일 fixture를 재실행하는 것이다. 실제 플랫폼 G5는 사용자가 명시적으로 비공개 송출을 승인할 때만 수행한다.
+
+## 12. v0.2.19 source refresh·OBS 재시작 복구 추가 검증 — 2026-07-23
+
+- 환경: 공개 v0.2.19, production Worker, OBS 30.2.0 / obs-browser 2.23.5 / Chromium 103, 전용 `Rekasong_Local_Record_Test_20260722` profile·collection.
+- 최초·source refresh 후·OBS 정상 재실행 후 player 후보는 각각 하나였고 75초 안정화 동안 candidate transition은 0이었다.
+- source refresh와 OBS 재시작 모두 기존 player가 사라진 뒤 서로 다른 새 identity를 만들었다. old run과 desired playing은 `target_disconnected`로 보존됐지만 새 player는 `standby`였고 자동 takeover·LOAD·PLAY하지 않았다.
+- 각 변형에서 명시적 full reset ACK 뒤 active run 없음·selected route null·desired stopped로 수렴했다. connected replacement를 명시적으로 다시 선택한 뒤 `output_ready_no_playback`과 5초 무음을 확인했다.
+- 최종 evidence: `sourceRefreshCreatedNewPlayer=true`, `obsRestartCreatedNewPlayer=true`, `candidateTransitions=0`, `finalAutomaticPlayback=false`, `finalDesiredTransport=stopped`, session status HTTP 410.
+- OBS runtime은 `streaming=false`, `recording=false`였고 UI는 시작 전·재시작 전·종료 후 모두 `Start Streaming`·`Start Recording`, 타이머 `00:00:00`이었다. 해당 구간의 OBS 로그에는 Streaming/Recording Start·Stop이 모두 0건이었다.
+- 시험 URL은 실행 전 백업과 exact match로 복원했다. credential handoff는 harness 정리에서 제거했고 OBS는 원래 URL·전용 test profile/scene·방송/녹화 OFF 상태로 다시 열어 두었다.
+
+이 추가 검증은 새 CEF identity가 생기는 refresh·재시작 사고에서 연결 상태를 보존하되 자동 재생하지 않고 사용자의 명시적 복구로 안전하게 돌아오는 것을 증명한다. 플랫폼 ingest G5와 다른 장치의 performer monitoring G6를 대신하지 않는다.

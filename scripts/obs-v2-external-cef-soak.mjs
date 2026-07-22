@@ -461,8 +461,15 @@ async function waitForStableReplacementObsCandidate(previousPlayerInstanceId, ac
       const stableForMs = now - stableSince;
       if (sawTargetDisconnected && stableForMs >= CANDIDATE_STABLE_MS) {
         invariant(
-          disconnectedSnapshot?.activeFamily === null,
-          `${actionName} clears the vanished run family instead of resuming it`,
+          typeof disconnectedSnapshot?.activeFamily?.entryId === 'string'
+            && typeof disconnectedSnapshot.activeFamily.runId === 'string'
+            && disconnectedSnapshot.desiredTransport?.status === 'playing',
+          `${actionName} preserves the interrupted run until explicit recovery`,
+        );
+        invariant(
+          candidate.state === 'standby',
+          `${actionName} does not automatically move the replacement onto the old route`,
+          `state=${candidate.state ?? 'missing'}`,
         );
         return { candidate, disconnectedSnapshot, stableForMs };
       }
@@ -505,9 +512,12 @@ async function activateRecoveryCandidate(candidate, actionName) {
   }, COMMAND_TIMEOUT_MS, `${actionName} explicit OBS output_ready`, {
     commandId: activation.command.commandId,
   });
+  const desiredStatus = ready.playerSnapshot.desiredTransport?.status;
+  const safeInitialIdle = actionName === 'initial' && desiredStatus === 'idle';
   invariant(
-    ready.playerSnapshot.desiredTransport?.status === 'stopped',
+    desiredStatus === 'stopped' || safeInitialIdle,
     `${actionName} OBS selection does not start playback`,
+    `desired=${desiredStatus ?? 'missing'}`,
   );
   return ready;
 }

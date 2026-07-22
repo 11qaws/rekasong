@@ -86,10 +86,14 @@ test('external CEF recovery requires explicit source refresh and OBS restart act
   assert.match(source, /console\.log\('ACTION_RESTART_OBS'\)/);
   assert.match(source, /candidate\.playerInstanceId === previousPlayerInstanceId/);
   assert.match(source, /protocol\.confirmedPlayback\?\.reasonCode === 'target_disconnected'/);
+  assert.match(source, /disconnectedSnapshot\.desiredTransport\?\.status === 'playing'/);
+  assert.match(source, /candidate\.state === 'standby'/);
   assert.match(source, /coordinator\.emergencyStop\(\{ forceReset: true \}\)/);
   assert.match(source, /protocol\.confirmedPlayback\.reasonCode === 'output_inactive'/);
   assert.match(source, /protocol\.confirmedPlayback\.recoveryOverride === true/);
   assert.match(source, /protocol\.confirmedPlayback\.missingTargetUnverified === true/);
+  assert.match(source, /actionName === 'initial' && desiredStatus === 'idle'/);
+  assert.match(source, /desiredStatus === 'stopped' \|\| safeInitialIdle/);
   assert.match(source, /silent\.activeFamily === null/);
   assert.match(source, /silent\.desiredTransport\?\.status === 'stopped'/);
   assert.match(source, /silent\.confirmedPlayback\?\.reasonCode === 'output_ready_no_playback'/);

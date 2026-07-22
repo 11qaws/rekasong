@@ -1,10 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
-## 2026-07-23 (Codex) — v0.2.19 OBS Chromium 103 호환 빌드와 안전한 실기 준비
+## 2026-07-23 (Codex) — v0.2.19 OBS Chromium 103 호환과 실제 refresh·재시작 복구
 
 - 실제 OBS 30.2.0의 `obs-browser 2.23.5`가 Chromium `103.0.5060.134`를 사용하지만 Vite 8 기본 production target은 Chrome 111 이상이라는 호환 공백을 확인했다. 현재 브라우저에서는 정상이어도 OBS CEF가 player 등록 전에 멈출 수 있으므로 JS와 CSS target을 모두 `chrome103`으로 고정했다. 이 차이가 이전 실제 등록 실패의 원인이었다고 단정하지 않고, 새 빌드의 실제 CEF 등록으로 별도 판정한다.
 - Qt Properties 입력 자동화가 비공개 URL을 끝까지 저장하지 못한 문제를 우회하기 위해 `prepare:obs:test-source`를 추가했다. OBS가 완전히 종료된 상태에서만 지정된 test collection·현재/program scene·정확히 한 개의 visible Browser source·`Control audio via OBS=true`·승인된 앱/Worker/Protocol v2 URL을 모두 검사한다. 모든 조건이 맞을 때만 원본을 별도 파일로 먼저 백업하고 같은 경로에 원자적으로 교체하며, stdout에는 token을 남기지 않는다.
-- 새 회귀 6개를 포함한 전체 `705/705` 테스트, Worker 문법, production build, `git diff --check`를 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다. OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`로 기존 예산 안이다. 실제 source refresh·OBS 재시작의 live-session 관문은 새 release 배포 후 전용 시험 scene에서 방송·녹화 OFF로 실행하기 전까지 미통과다.
+- v0.2.19를 commit `187224c0a77f28a33b3a2024e0914773a66386f0`로 배포했다. Pages workflow `29947296396`의 clean install·705개 테스트·lint·Worker 문법·build·OBS bundle·publish가 모두 성공했고, 공개 entry `assets/index-Dhdct1g2.js`는 같은 GitHub Actions 환경의 로컬 build와 SHA-256 `fbb26f52aa7dec817039e5a9a22d9203b20125ce459373116b9dd91c2f5505c3`으로 정확히 일치했다.
+- 실제 OBS 30.2.0에서 v0.2.18은 정확한 production URL을 저장해도 300초 동안 `players: []`였지만, v0.2.19는 새 CEF player를 즉시 등록하고 최초·source refresh 후·OBS 재시작 후마다 후보 하나를 75초 전환 없이 유지했다. Chromium target 차이가 이전 등록 실패와 일치하는 강한 증거지만, 브라우저 엔진 로그의 JS 예외를 직접 확보한 것은 아니므로 단독 원인으로 과장하지 않는다.
+- 첫 두 물리 run은 제품이 아니라 harness의 과도한 전제 때문에 중단됐다. 최초 무재생 상태는 정상 `idle`인데 `stopped`만 허용했고, 연결 우선 설계가 `target_disconnected`에서 active run·desired playing을 보존하는데 즉시 null을 요구했다. 최초 연결만 `idle|stopped`, refresh·재시작 뒤에는 old run 보존과 replacement `standby`를 요구하고, 명시적 full reset 이후에만 `stopped`를 요구하도록 실제 상태 계약과 맞췄다.
+- 최종 실제 recovery run은 source refresh와 OBS 정상 종료·재실행 모두 서로 다른 새 player identity를 만들고, old route 자동 takeover·LOAD·PLAY 0, replacement `standby`, 명시적 full reset ACK, connected replacement 보존, OBS 재선택 뒤 active run 없음·desired stopped·5초 무음을 통과했다. 마지막 evidence는 `sourceRefreshCreatedNewPlayer=true`, `obsRestartCreatedNewPlayer=true`, `candidateTransitions=0`, `finalAutomaticPlayback=false`, HTTP 410 session fence였다. OBS runtime은 `streaming=false`, `recording=false`였고 해당 시각의 OBS 로그 5개 모두 Streaming/Recording Start·Stop 0건이다.
+- 시험 뒤 임시 handoff와 세션을 제거하고 Browser URL을 시험 전 백업과 exact match로 복원했다. 복원도 OBS 종료·test collection/source/audio-route/app/Worker 검증·복원 직전 백업·원자 교체를 거치며 credential을 출력하지 않는다. OBS를 다시 열어 전용 profile/scene, `Start Streaming`, `Start Recording`, 두 타이머 `00:00:00`을 확인했다.
+- 새 회귀를 포함한 전체 `706/706` 테스트, Worker 문법, production build, `git diff --check`를 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남았다. OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`로 예산 안이다.
 
 ## 2026-07-23 (Codex) — v0.2.18 Speaker 탭별 재생 세션과 OBS 복구 실기 절차
 

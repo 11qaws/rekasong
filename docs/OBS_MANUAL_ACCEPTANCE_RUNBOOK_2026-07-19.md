@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · 물리 G6 시작 offset 실패/5분 drift 경계 · 가상 케이블 격리 G6 5분 drift 통과/고정 offset 실패 · G5 미실행
+> 상태: 실행 절차 확정 · 실제 OBS G4·CEF 60분·source refresh·OBS 재시작 복구 통과 · 물리 G6 시작 offset 실패/5분 drift 경계 · 가상 케이블 격리 G6 5분 drift 통과/고정 offset 실패 · G5 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -192,7 +192,7 @@ npm run test:obs:v2:cef-recovery
 운영 순서와 합격 기준:
 
 1. 임시 handoff의 비공개 player URL을 시험용 Browser Source에 저장하고 source를 정확히 하나만 연결한다.
-2. harness가 `awaiting_source_refresh`를 기록한 뒤에만 Properties의 `Refresh cache of current page`→즉시 `OK`를 실행한다.
+2. harness가 `awaiting_source_refresh`를 기록한 뒤에만 선택한 Browser Source 상단 도구의 `Refresh`를 한 번 실행한다. Properties를 쓰는 경우에만 `Refresh cache of current page`→즉시 `OK`를 사용하며 URL 입력란은 건드리지 않는다.
 3. 기존 player가 사라져 `target_disconnected`가 되고 서로 다른 새 identity가 안정화돼야 한다. 자동 takeover·LOAD·PLAY는 없어야 한다.
 4. 명시적 full reset은 현재 연결된 새 player의 정지 ACK를 받고 terminal `inactive`, 선택 경로 null, desired stopped로 수렴해야 한다. 사라진 이전 target은 `recoveryOverride + missingTargetUnverified`로 남기며 정지 성공을 조작하지 않는다.
 5. Dashboard가 Speaker 기준으로 돌아간 뒤 새 OBS를 명시적으로 다시 선택한다. route는 ready지만 active run과 source가 없고 최소 5초간 무음이어야 한다.
@@ -200,10 +200,14 @@ npm run test:obs:v2:cef-recovery
 7. 재시작 후에도 3~5의 새 identity·full reset·무자동재생·명시적 재선택 절차가 다시 성립해야 한다.
 8. 끝에는 output deactivate, session end, HTTP 410 fence와 임시 파일·clipboard·시험 URL 정리를 확인한다.
 
-2026-07-23 실제 실행 시도에서는 Qt Browser Source URL 입력이 자동화 입력을 저장하지
-않아 비공개 live-session URL을 넣지 못했다. 방송·녹화는 시작하지 않았고 임시
-handoff와 clipboard는 정리했다. 따라서 이 subsection의 실제 OBS 합격 증거는 아직
-`not-run`이며 자동·production-browser 새-ID 복구 통과와 구분한다.
+2026-07-23 v0.2.19 실제 실행 기록:
+
+- OBS 30.2.0 / obs-browser 2.23.5 / Chromium 103, 전용 `Rekasong_Local_Record_Test_20260722` profile·collection에서 실행했다. v0.2.19는 JS·CSS를 `chrome103` target으로 빌드한다.
+- 최초·source refresh 후·OBS 정상 재실행 후의 CEF 후보는 각각 하나였고 75초 안정화 동안 candidate 전이는 0이었다. refresh와 재시작은 모두 서로 다른 새 player identity를 만들었다.
+- old route 손실 시 active run과 desired playing은 `target_disconnected`로 보존됐고, 새 player는 `standby`로 남아 자동 takeover·LOAD·PLAY하지 않았다. 명시적 full reset ACK 뒤에만 active run을 비우고 desired stopped로 만들었다.
+- source refresh와 OBS 재시작 각각에서 connected replacement를 명시적으로 OBS에 다시 연결한 뒤 5초 동안 active run 없음·`output_ready_no_playback`·무음을 확인했다. 최종 `finalAutomaticPlayback=false`, session end와 HTTP 410 fence를 통과했다.
+- OBS runtime telemetry는 `streaming=false`, `recording=false`였고 실행 전후 UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 이 실행 구간의 OBS 로그에는 Streaming/Recording Start·Stop이 모두 0건이었다.
+- 시험 URL은 원래 URL과 exact match로 복원했고, 임시 handoff와 session credential은 제거했다. 따라서 이 subsection의 실제 OBS source refresh·재시작 복구 관문은 **통과**다.
 
 Qt Properties 입력 대신 전용 test collection 파일을 준비할 때만 다음 절차를 쓸 수
 있다. OBS가 실행 중이면 도구가 거부하며, collection/scene/source/visible/
@@ -223,7 +227,9 @@ npm run prepare:obs:test-source -- `
 ```
 
 교체 뒤 OBS를 정상 실행해 test profile/collection과 방송·녹화 OFF를 다시 확인한다.
-시험 종료 뒤에는 백업 URL을 같은 안전 조건으로 복원하고 cache refresh를 적용한다.
+시험 종료 뒤에는 OBS를 다시 종료하고 `--handoff-file` 대신
+`--restore-scene-file '<original backup>'`을 지정해 같은 검증·백업·원자 교체
+조건으로 URL을 복원한다. 복원 뒤 OBS를 열어 exact URL과 방송·녹화 OFF를 확인한다.
 사용자의 방송용 profile/collection에는 이 절차를 사용하지 않는다.
 
 ## 6. G1 — 출력 선택과 단일 lease

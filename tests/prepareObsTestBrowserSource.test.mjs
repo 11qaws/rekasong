@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import {
   prepareObsTestSceneDocument,
   replaceObsTestBrowserSource,
+  restoreObsTestBrowserSource,
   validateObsPlayerUrl,
 } from '../scripts/prepare-obs-test-browser-source.mjs'
 
@@ -160,4 +161,39 @@ test('a failed OBS-stopped precondition leaves the scene and backup untouched', 
   )
   assert.equal(await readFile(sceneFile, 'utf8'), original)
   await assert.rejects(readFile(backupFile, 'utf8'), /ENOENT/)
+})
+
+test('restore takes only the validated original URL, backs up the test result, and exposes no credential', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'rekasong-obs-scene-restore-test-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const sceneFile = join(directory, 'scene.json')
+  const restoreSceneFile = join(directory, 'original.json')
+  const backupFile = join(directory, 'before-restore.json')
+  const currentUrl = PLAYER_URL.replace('session-1234', 'session-5678')
+    .replace('private-player-token-1234', 'private-player-token-5678')
+  const current = sceneFixture()
+  current.sources.find((source) => source.name === 'Browser').settings.url = currentUrl
+  const original = sceneFixture()
+  original.sources.find((source) => source.name === 'Browser').settings.url = PLAYER_URL
+  const currentText = `${JSON.stringify(current, null, 2)}\n`
+  await writeFile(sceneFile, currentText)
+  await writeFile(restoreSceneFile, JSON.stringify(original))
+
+  const report = await restoreObsTestBrowserSource({
+    sceneFile,
+    restoreSceneFile,
+    backupFile,
+    collectionName: preparation.collectionName,
+    sceneName: preparation.sceneName,
+    sourceName: preparation.sourceName,
+    expectedAppBaseUrl: APP,
+    expectedWorkerBaseUrl: WORKER,
+    confirmObsStopped: async () => {},
+  })
+
+  assert.equal(await readFile(backupFile, 'utf8'), currentText)
+  const saved = JSON.parse(await readFile(sceneFile, 'utf8'))
+  assert.equal(saved.sources.find((source) => source.name === 'Browser').settings.url, PLAYER_URL)
+  assert.equal(report.restored, true)
+  assert.equal(JSON.stringify(report).includes('private-player-token'), false)
 })

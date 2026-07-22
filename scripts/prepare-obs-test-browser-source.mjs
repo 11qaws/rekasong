@@ -165,13 +165,27 @@ export async function replaceObsTestBrowserSource({
     expectedWorkerBaseUrl,
   })
 
+  await writeSceneCollectionWithBackup({
+    sceneFile,
+    backupFile,
+    sceneDocument: prepared.document,
+  })
+
+  return {
+    ...prepared.report,
+    sceneFile,
+    backupFile,
+  }
+}
+
+async function writeSceneCollectionWithBackup({ sceneFile, backupFile, sceneDocument }) {
   await mkdir(dirname(backupFile), { recursive: true })
   await copyFile(sceneFile, backupFile, fsConstants.COPYFILE_EXCL)
 
   const suffix = `.rekasong-${process.pid}-${Date.now()}`
   const nextFile = `${sceneFile}${suffix}.next`
   const rollbackFile = `${sceneFile}${suffix}.rollback`
-  const nextText = `${JSON.stringify(prepared.document, null, 4)}\n`
+  const nextText = `${JSON.stringify(sceneDocument, null, 4)}\n`
 
   try {
     await writeFile(nextFile, nextText, { encoding: 'utf8', flag: 'wx' })
@@ -186,11 +200,71 @@ export async function replaceObsTestBrowserSource({
   } finally {
     await rm(nextFile, { force: true }).catch(() => {})
   }
+}
+
+export async function restoreObsTestBrowserSource({
+  sceneFile,
+  restoreSceneFile,
+  backupFile,
+  collectionName,
+  sceneName,
+  sourceName,
+  expectedAppBaseUrl,
+  expectedWorkerBaseUrl,
+  confirmObsStopped = assertObsIsStopped,
+}) {
+  for (const [label, value] of Object.entries({ sceneFile, restoreSceneFile, backupFile })) {
+    invariant(typeof value === 'string' && isAbsolute(value), `${label} must be an absolute path`)
+  }
+  invariant(resolve(sceneFile) !== resolve(restoreSceneFile), 'restore scene file must differ from the active scene file')
+  invariant(resolve(sceneFile) !== resolve(backupFile), 'backup file must differ from the scene file')
+
+  await confirmObsStopped()
+
+  const [sceneText, restoreText] = await Promise.all([
+    readFile(sceneFile, 'utf8'),
+    readFile(restoreSceneFile, 'utf8'),
+  ])
+  const sceneDocument = JSON.parse(sceneText)
+  const restoreDocument = JSON.parse(restoreText)
+  const restoreSources = Array.isArray(restoreDocument.sources) ? restoreDocument.sources : []
+  const restoreCandidates = restoreSources.filter(
+    (source) => source?.id === 'browser_source' && source?.name === sourceName,
+  )
+  invariant(restoreCandidates.length === 1, 'restore file must contain the approved Browser source exactly once')
+  const restoredUrl = restoreCandidates[0].settings?.url
+
+  // Validate the restore artifact as a complete approved test collection before
+  // using even its URL. The active document is validated independently below.
+  prepareObsTestSceneDocument(restoreDocument, {
+    collectionName,
+    sceneName,
+    sourceName,
+    playerUrl: restoredUrl,
+    expectedAppBaseUrl,
+    expectedWorkerBaseUrl,
+  })
+  const prepared = prepareObsTestSceneDocument(sceneDocument, {
+    collectionName,
+    sceneName,
+    sourceName,
+    playerUrl: restoredUrl,
+    expectedAppBaseUrl,
+    expectedWorkerBaseUrl,
+  })
+
+  await writeSceneCollectionWithBackup({
+    sceneFile,
+    backupFile,
+    sceneDocument: prepared.document,
+  })
 
   return {
     ...prepared.report,
     sceneFile,
+    restoreSceneFile,
     backupFile,
+    restored: true,
   }
 }
 
@@ -208,16 +282,27 @@ function parseArguments(argv) {
 
 async function main() {
   const args = parseArguments(process.argv.slice(2))
-  const report = await replaceObsTestBrowserSource({
+  const common = {
     sceneFile: args['--scene-file'],
-    handoffFile: args['--handoff-file'],
     backupFile: args['--backup-file'],
     collectionName: args['--collection'],
     sceneName: args['--scene'],
     sourceName: args['--source'],
     expectedAppBaseUrl: args['--app'],
     expectedWorkerBaseUrl: args['--worker'],
-  })
+  }
+  const hasHandoff = typeof args['--handoff-file'] === 'string'
+  const hasRestore = typeof args['--restore-scene-file'] === 'string'
+  invariant(hasHandoff !== hasRestore, 'provide exactly one of --handoff-file or --restore-scene-file')
+  const report = hasRestore
+    ? await restoreObsTestBrowserSource({
+      ...common,
+      restoreSceneFile: args['--restore-scene-file'],
+    })
+    : await replaceObsTestBrowserSource({
+      ...common,
+      handoffFile: args['--handoff-file'],
+    })
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
 }
 
