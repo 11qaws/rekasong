@@ -45,6 +45,15 @@ const CONTROL_RECONNECT_GRACE_MS = positiveIntegerEnvironment(
   60_000,
 );
 const EXTERNAL_STATUS_FILE = process.env.REKASONG_CEF_SOAK_STATUS_FILE || '';
+const RECOVERY_MODE = process.argv.includes('--recovery');
+const RECOVERY_ACTION_TIMEOUT_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_RECOVERY_ACTION_TIMEOUT_MS',
+  600_000,
+);
+const RECOVERY_SILENCE_OBSERVATION_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_RECOVERY_SILENCE_MS',
+  5_000,
+);
 const MAX_ASSET_BYTES = 64 * 1024 * 1024;
 
 let coordinator = null;
@@ -414,6 +423,270 @@ function stopProgress() {
   progressTimer = null;
 }
 
+async function waitForStableReplacementObsCandidate(previousPlayerInstanceId, actionName) {
+  const deadline = Date.now() + RECOVERY_ACTION_TIMEOUT_MS;
+  let candidateId = null;
+  let stableSince = 0;
+  let lastStatusAt = 0;
+  let sawTargetDisconnected = false;
+  let disconnectedSnapshot = null;
+
+  while (Date.now() < deadline) {
+    assertHealthy();
+    const protocol = coordinator.snapshot().playerSnapshot;
+    const oldPlayerMissing = !protocol?.players?.some((player) => (
+      player.playerInstanceId === previousPlayerInstanceId
+    ));
+    const routeIsDisconnected = protocol?.lease?.status === 'unknown'
+      && protocol.lease.leaseTarget === previousPlayerInstanceId
+      && protocol.confirmedPlayback?.reasonCode === 'target_disconnected'
+      && oldPlayerMissing;
+    if (routeIsDisconnected) {
+      sawTargetDisconnected = true;
+      disconnectedSnapshot = protocol;
+    }
+
+    const candidate = currentObsCandidate();
+    const now = Date.now();
+    if (!candidate || candidate.playerInstanceId === previousPlayerInstanceId) {
+      candidateId = null;
+      stableSince = 0;
+    } else if (candidate.playerInstanceId !== candidateId) {
+      candidateId = candidate.playerInstanceId;
+      stableSince = now;
+      lastStatusAt = 0;
+    }
+
+    if (candidate && candidate.playerInstanceId === candidateId) {
+      const stableForMs = now - stableSince;
+      if (sawTargetDisconnected && stableForMs >= CANDIDATE_STABLE_MS) {
+        invariant(
+          disconnectedSnapshot?.activeFamily === null,
+          `${actionName} clears the vanished run family instead of resuming it`,
+        );
+        return { candidate, disconnectedSnapshot, stableForMs };
+      }
+      if (now - lastStatusAt >= 1_000) {
+        await writeStatus(`${actionName}_candidate_stabilizing`, {
+          sawTargetDisconnected,
+          stableForMs,
+          requiredStableMs: CANDIDATE_STABLE_MS,
+        });
+        lastStatusAt = now;
+      }
+    }
+    await sleep(100);
+  }
+
+  const snapshot = coordinator?.snapshot?.();
+  throw new Error(`${actionName} replacement candidate timed out after ${RECOVERY_ACTION_TIMEOUT_MS}ms: ${diagnostics.json({
+    previousPlayerInstanceId,
+    sawTargetDisconnected,
+    players: snapshot?.playerSnapshot?.players,
+    eligibleCandidates: snapshot?.playerSnapshot?.eligibleCandidates,
+    lease: snapshot?.playerSnapshot?.lease,
+    confirmedPlayback: snapshot?.playerSnapshot?.confirmedPlayback,
+  })}`);
+}
+
+async function activateRecoveryCandidate(candidate, actionName) {
+  const activation = coordinator.activateOutput('obs');
+  const ready = await waitFor(() => {
+    const snapshot = coordinator.snapshot();
+    const protocol = snapshot.playerSnapshot;
+    return protocol?.selectedOutputMode === 'obs'
+      && protocol.lease?.status === 'ready'
+      && protocol.lease.leaseTarget === candidate.playerInstanceId
+      && protocol.activeFamily === null
+      && protocol.confirmedPlayback?.reasonCode === 'output_ready_no_playback'
+      && snapshot.pendingSwitch === null
+      ? snapshot
+      : null;
+  }, COMMAND_TIMEOUT_MS, `${actionName} explicit OBS output_ready`, {
+    commandId: activation.command.commandId,
+  });
+  invariant(
+    ready.playerSnapshot.desiredTransport?.status === 'stopped',
+    `${actionName} OBS selection does not start playback`,
+  );
+  return ready;
+}
+
+async function startRecoveryPlayback(candidate, assetId, actionName) {
+  const entryId = `external-cef-${actionName}-entry`;
+  const runId = `external-cef-${actionName}-run`;
+  const load = coordinator.load({
+    entryId,
+    runId,
+    song: {
+      type: 'local',
+      assetId,
+      title: 'OBS CEF recovery fixture',
+      artist: 'Rekasong',
+    },
+    position: 0,
+    volume: 20,
+  });
+  await waitFor(() => {
+    const protocol = coordinator.snapshot().playerSnapshot;
+    return protocol?.activeFamily?.entryId === entryId
+      && protocol.activeFamily.runId === runId
+      && protocol.confirmedPlayback?.status === 'ready'
+      && protocol.confirmedPlayback.playerInstanceId === candidate.playerInstanceId
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, `${actionName} recovery media ready`, {
+    commandId: load.command.commandId,
+  });
+
+  const play = coordinator.play();
+  const playing = await waitFor(() => {
+    const protocol = coordinator.snapshot().playerSnapshot;
+    return protocol?.confirmedPlayback?.status === 'playing'
+      && protocol.confirmedPlayback.entryId === entryId
+      && protocol.confirmedPlayback.runId === runId
+      && protocol.confirmedPlayback.playerInstanceId === candidate.playerInstanceId
+      && protocol.lease?.status === 'audible'
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, `${actionName} recovery media playing`, {
+    commandId: play.command.commandId,
+  });
+  await writeStatus(`${actionName}_playing`, {
+    playerCount: playing.players.length,
+    obsCandidateCount: playing.eligibleCandidates.obs.length,
+    leaseStatus: playing.lease.status,
+  });
+  return { entryId, runId };
+}
+
+async function recoverReplacementCandidate(previousCandidate, actionName) {
+  const replacement = await waitForStableReplacementObsCandidate(
+    previousCandidate.playerInstanceId,
+    actionName,
+  );
+  pass(`${actionName} creates a different stable OBS player identity`);
+
+  const emergency = coordinator.emergencyStop({ forceReset: true });
+  const commandResult = await coordinator.waitForCommandResult(
+    emergency.command.commandId,
+    { timeoutMs: COMMAND_TIMEOUT_MS },
+  );
+  invariant(
+    commandResult?.status === 'acknowledged',
+    `${actionName} full reset command is acknowledged`,
+    diagnostics.json(commandResult),
+  );
+  const reset = await waitFor(() => {
+    const snapshot = coordinator.snapshot();
+    const protocol = snapshot.playerSnapshot;
+    return snapshot.ready === true
+      && snapshot.unknownLock === null
+      && protocol?.lease?.status === 'inactive'
+      && protocol.lease.leaseTarget === null
+      && protocol.selectedOutputMode === null
+      && protocol.activeFamily === null
+      && protocol.confirmedPlayback?.status === 'unknown'
+      && protocol.confirmedPlayback.reasonCode === 'output_inactive'
+      && protocol.confirmedPlayback.recoveryOverride === true
+      && protocol.confirmedPlayback.missingTargetUnverified === true
+      && protocol.desiredTransport?.status === 'stopped'
+      ? snapshot
+      : null;
+  }, COMMAND_TIMEOUT_MS, `${actionName} full reset terminal inactive snapshot`, {
+    commandId: emergency.command.commandId,
+  });
+  invariant(
+    reset.playerSnapshot.players.some((player) => (
+      player.playerInstanceId === replacement.candidate.playerInstanceId
+    )),
+    `${actionName} keeps the connected replacement available after reset`,
+  );
+  await writeStatus(`${actionName}_reset_complete`, {
+    recoveryOverride: true,
+    missingTargetUnverified: true,
+    selectedOutputMode: null,
+  });
+
+  await activateRecoveryCandidate(replacement.candidate, actionName);
+  await sleep(RECOVERY_SILENCE_OBSERVATION_MS);
+  const silent = coordinator.snapshot().playerSnapshot;
+  invariant(
+    silent?.lease?.status === 'ready'
+      && silent.lease.leaseTarget === replacement.candidate.playerInstanceId
+      && silent.activeFamily === null
+      && silent.desiredTransport?.status === 'stopped'
+      && silent.confirmedPlayback?.reasonCode === 'output_ready_no_playback',
+    `${actionName} stays silent after explicit OBS re-selection`,
+    diagnostics.json(silent),
+  );
+  await writeStatus(`${actionName}_reselected_silent`, {
+    silenceObservationMs: RECOVERY_SILENCE_OBSERVATION_MS,
+    activeRun: false,
+    desiredTransport: 'stopped',
+  });
+  return replacement.candidate;
+}
+
+async function finishRecoverySession() {
+  const deactivation = coordinator.deactivateOutput();
+  await waitFor(() => {
+    const snapshot = coordinator.snapshot();
+    return snapshot.playerSnapshot?.lease?.status === 'inactive'
+      && snapshot.playerSnapshot?.lease?.leaseTarget === null
+      && snapshot.pendingSwitch === null
+      ? snapshot
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'external OBS CEF recovery output deactivation', {
+    commandId: deactivation.command.commandId,
+  });
+  coordinator.endSession();
+  await waitFor(
+    () => coordinator.snapshot().unknownLock?.code
+      === ON_AIR_CONTROL_COORDINATOR_CODES.SESSION_ENDED,
+    COMMAND_TIMEOUT_MS,
+    'external OBS CEF recovery session_ended',
+    { allowSessionEnded: true },
+  );
+  sessionEnded = true;
+  await verifyEndedStatus();
+}
+
+async function runRecoveryScenario({ candidate, assetId, candidateTransitions }) {
+  await activateRecoveryCandidate(candidate, 'initial');
+  await startRecoveryPlayback(candidate, assetId, 'before-source-refresh');
+  await writeStatus('awaiting_source_refresh', {
+    action: 'refresh_browser_source_cache_then_close_properties',
+  });
+  console.log('ACTION_REFRESH_SOURCE');
+
+  const sourceRefreshCandidate = await recoverReplacementCandidate(candidate, 'source_refresh');
+  await startRecoveryPlayback(sourceRefreshCandidate, assetId, 'before-obs-restart');
+  await writeStatus('awaiting_obs_restart', {
+    action: 'exit_and_reopen_obs_without_starting_stream_or_recording',
+  });
+  console.log('ACTION_RESTART_OBS');
+
+  const restartCandidate = await recoverReplacementCandidate(
+    sourceRefreshCandidate,
+    'obs_restart',
+  );
+  await finishRecoverySession();
+  console.log(diagnostics.text(`EVIDENCE ${diagnostics.json({
+    mode: 'recovery',
+    sourceRefreshCreatedNewPlayer: sourceRefreshCandidate.playerInstanceId
+      !== candidate.playerInstanceId,
+    obsRestartCreatedNewPlayer: restartCandidate.playerInstanceId
+      !== sourceRefreshCandidate.playerInstanceId,
+    candidateTransitions,
+    finalAutomaticPlayback: false,
+    finalDesiredTransport: 'stopped',
+    controlDisconnectCount,
+    controlReconnectAttemptCount,
+    maxControlGapMs,
+  })}`));
+}
+
 async function verifyEndedStatus() {
   const response = await fetch(
     `${WORKER.replace(/\/$/, '')}/v1/sessions/${encodeURIComponent(session.room)}/status`,
@@ -543,6 +816,11 @@ async function run() {
   await writeStatus('asset_uploaded', {
     bytes: assetBytes.byteLength,
   });
+
+  if (RECOVERY_MODE) {
+    await runRecoveryScenario({ candidate, assetId, candidateTransitions });
+    return;
+  }
 
   const activation = coordinator.activateOutput('obs');
   await waitFor(() => {
@@ -711,12 +989,12 @@ process.once('SIGTERM', requestStop);
 try {
   await run();
   await writeStatus('passed');
-  console.log('RESULT Protocol v2 external OBS CEF soak passed');
+  console.log(`RESULT Protocol v2 external OBS CEF ${RECOVERY_MODE ? 'recovery' : 'soak'} passed`);
 } catch (error) {
   await writeStatus('failed', {
     error: diagnostics.errorText(error),
   }).catch(() => {});
-  console.error(`FAIL Protocol v2 external OBS CEF soak - ${diagnostics.errorText(error)}`);
+  console.error(`FAIL Protocol v2 external OBS CEF ${RECOVERY_MODE ? 'recovery' : 'soak'} - ${diagnostics.errorText(error)}`);
   process.exitCode = 1;
 } finally {
   await bestEffortCleanup();

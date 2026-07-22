@@ -10,6 +10,7 @@ const LIVE_USER_SURFACES = [
   '../src/components/SongComposer.jsx',
   '../src/components/StagingPanel.jsx',
   '../src/components/ErrorBoundary.jsx',
+  '../src/components/OnAirPlayer.jsx',
   '../src/pages/DisplayWidget.jsx',
 ];
 

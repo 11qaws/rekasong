@@ -6,6 +6,11 @@ import { createServer } from 'node:net';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import {
+  LEGACY_SYNC_STORAGE_KEY,
+  SHARED_SYNC_STORAGE_KEY,
+  TAB_SYNC_STORAGE_KEY,
+} from '../src/lib/syncStorageKeys.js';
 
 const VIDEO_ID = 'cv7zqJhKoVE';
 const FIXTURE_TITLE = 'Drag placement fixture';
@@ -104,13 +109,19 @@ try {
   if (vite) await waitForServer(appUrl, vite, viteLogs);
   browser = await chromium.launch({ executablePath, headless: true });
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
-  await context.addInitScript(() => {
+  await context.addInitScript(({ legacyKey, sharedKey, tabKey }) => {
     try {
       localStorage.setItem('rekasong.locale', 'en');
-      localStorage.removeItem('karaoke_app_state');
+      localStorage.removeItem(legacyKey);
+      localStorage.removeItem(sharedKey);
+      sessionStorage.removeItem(tabKey);
     } catch {
       // about:blank has no storage origin; this runs again for the app document.
     }
+  }, {
+    legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
   });
   const page = await context.newPage();
   const pageErrors = [];
@@ -175,7 +186,13 @@ try {
   await source.waitFor({ state: 'visible' });
   await page.waitForTimeout(250);
 
-  const stateBeforeCancel = await page.evaluate(() => localStorage.getItem('karaoke_app_state'));
+  const stateBeforeCancel = await page.evaluate(({ sharedKey, tabKey }) => ({
+    shared: localStorage.getItem(sharedKey),
+    tab: sessionStorage.getItem(tabKey),
+  }), {
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
+  });
   const cancelTransfer = await beginDrag(page, source);
   assert.deepEqual(
     await page.locator('[data-song-drop-destination]').allTextContents(),
@@ -188,8 +205,17 @@ try {
   await source.dispatchEvent('dragend', { dataTransfer: cancelTransfer });
   await cancelTransfer.dispose();
   await page.locator('[data-song-drop-tray="visible"]').waitFor({ state: 'detached' });
-  assert.equal(await page.evaluate(() => localStorage.getItem('karaoke_app_state')), stateBeforeCancel,
-    'Cancelling a drag must not mutate durable state.');
+  assert.deepEqual(
+    await page.evaluate(({ sharedKey, tabKey }) => ({
+      shared: localStorage.getItem(sharedKey),
+      tab: sessionStorage.getItem(tabKey),
+    }), {
+      sharedKey: SHARED_SYNC_STORAGE_KEY,
+      tabKey: TAB_SYNC_STORAGE_KEY,
+    }),
+    stateBeforeCancel,
+    'Cancelling a drag must not mutate shared or tab state.',
+  );
   const sessionRequestsBeforeHistoryDrop = sessionWorkerRequests.length;
 
   await page.setViewportSize({ width: 320, height: 900 });
@@ -220,16 +246,26 @@ try {
 
   const historyTarget = page.locator('[data-song-drop-destination="history"]');
   await dropOn(source, historyTarget, historyTransfer);
-  await page.waitForFunction(() => {
-    const stored = JSON.parse(localStorage.getItem('karaoke_app_state') || '{}');
+  await page.waitForFunction((sharedKey) => {
+    const stored = JSON.parse(localStorage.getItem(sharedKey) || '{}');
     return stored.history?.length === 1;
+  }, SHARED_SYNC_STORAGE_KEY);
+  const stored = await page.evaluate(({ legacyKey, sharedKey, tabKey }) => ({
+    legacy: localStorage.getItem(legacyKey),
+    shared: JSON.parse(localStorage.getItem(sharedKey) || '{}'),
+    tab: JSON.parse(sessionStorage.getItem(tabKey) || '{}'),
+  }), {
+    legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
   });
-  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('karaoke_app_state') || '{}'));
-  assert.equal(stored.queue?.length || 0, 0);
-  assert.equal(stored.history.length, 1);
-  assert.equal(stored.history[0].song.title, FIXTURE_TITLE);
-  assert.equal(stored.history[0].song.src, VIDEO_ID);
-  assert.equal(stored.currentEntry, null);
+  assert.equal(stored.legacy, null);
+  assert.equal(stored.shared.queue?.length || 0, 0);
+  assert.equal(stored.tab.queue?.length || 0, 0);
+  assert.equal(stored.shared.history.length, 1);
+  assert.equal(stored.shared.history[0].song.title, FIXTURE_TITLE);
+  assert.equal(stored.shared.history[0].song.src, VIDEO_ID);
+  assert.equal(stored.shared.currentEntry, null);
   assert.equal(await page.locator('[data-song-drop-tray="visible"]').count(), 0);
   await page.waitForTimeout(100);
   assert.equal(

@@ -16,6 +16,15 @@ const eventId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().to
 
 const LEGACY_PREFETCH_MAX_HINTS = 2;
 const LEGACY_PREFETCH_MAX_BLOB_BYTES = 64 * 1024 * 1024;
+const LEGACY_PLAYER_ERROR_CODES = Object.freeze({
+  autoplayBlocked: 'legacy_player_autoplay_blocked',
+  preparedAudioTimeout: 'legacy_player_prepared_audio_timeout',
+  mediaAborted: 'legacy_player_media_aborted',
+  mediaNetwork: 'legacy_player_media_network',
+  mediaDecode: 'legacy_player_media_decode',
+  mediaUnsupported: 'legacy_player_media_unsupported',
+  mediaUnknown: 'legacy_player_media_unknown',
+});
 
 const contentLengthExceedsPrefetchBudget = (response) => {
   const contentLength = Number(response.headers.get('content-length'));
@@ -95,6 +104,13 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     }
   };
 
+  // Wire payloads carry locale-neutral diagnostics. Dashboard translates the
+  // stable code at its UI boundary; a legacy consumer that still reads
+  // `message` receives the same code instead of a frozen Korean sentence.
+  const sendPlayerError = (code, detail = {}) => {
+    sendEvent({ type: 'error', code, message: code, ...detail });
+  };
+
   const applyCommand = (command) => {
     if (command.sessionId && transportRef.current.sessionId && command.sessionId !== transportRef.current.sessionId && command.type !== 'load') return;
     if (command.type === 'prefetch') {
@@ -159,7 +175,9 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
       return;
     }
     if (command.type === 'play') {
-      mediaRef.current?.play?.().catch(() => sendEvent({ type: 'error', message: '브라우저가 재생을 차단했습니다.' }));
+      mediaRef.current?.play?.().catch(() => sendPlayerError(
+        LEGACY_PLAYER_ERROR_CODES.autoplayBlocked,
+      ));
       return;
     }
     if (command.type === 'pause') {
@@ -288,7 +306,7 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     const sessionId = transport.sessionId;
     const timer = window.setTimeout(() => {
       if (mediaReadySessionRef.current === sessionId) return;
-      sendEvent({ type: 'error', message: '준비된 오디오를 열지 못했습니다(응답 없음).' });
+      sendPlayerError(LEGACY_PLAYER_ERROR_CODES.preparedAudioTimeout);
     }, 12000);
     return () => window.clearTimeout(timer);
     // eslint 참고: sendEvent는 socketRef 기반이라 재생성돼도 동작이 같다.
@@ -323,7 +341,9 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
       if (transport.position) media.currentTime = transport.position;
     }
     if (['loading', 'playing', 'buffering'].includes(transport.status)) {
-      media.play().catch(() => sendEvent({ type: 'error', message: '브라우저가 재생을 차단했습니다.' }));
+      media.play().catch(() => sendPlayerError(
+        LEGACY_PLAYER_ERROR_CODES.autoplayBlocked,
+      ));
     }
     sendEvent({ type: 'ready', duration: media.duration || 0 });
   };
@@ -336,20 +356,24 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     sendEvent({ type, position, duration: Number.isFinite(duration) ? duration : undefined });
   };
 
-  // 실패 문구는 광고가 아니라 '준비된 오디오'의 언어로(계약 §5).
+  // 오류 원문을 wire에 굳히지 않는다. 현재 locale의 사용자 문장은 Dashboard의
+  // semantic catalog가 만들고, 이 legacy player는 안정적인 진단 코드만 보낸다.
   const onPreparedAudioError = () => {
-    const errorCode = mediaRef.current?.error?.code;
-    const details = {
-      1: '가져오기가 중단됨',
-      2: '방송 출력 서버에 연결할 수 없음',
-      3: '준비된 오디오가 손상되었거나 지원되지 않음',
-      4: '준비된 오디오를 열 수 없음(만료·권한 확인 필요)'
+    const browserMediaErrorCode = mediaRef.current?.error?.code;
+    const codes = {
+      1: LEGACY_PLAYER_ERROR_CODES.mediaAborted,
+      2: LEGACY_PLAYER_ERROR_CODES.mediaNetwork,
+      3: LEGACY_PLAYER_ERROR_CODES.mediaDecode,
+      4: LEGACY_PLAYER_ERROR_CODES.mediaUnsupported,
     };
     setTransport((previous) => ({ ...previous, status: 'error' }));
-    sendEvent({ type: 'error', message: `준비된 오디오 재생 오류: ${details[errorCode] || '알 수 없는 오류'}` });
+    sendPlayerError(
+      codes[browserMediaErrorCode] || LEGACY_PLAYER_ERROR_CODES.mediaUnknown,
+      { browserMediaErrorCode: Number(browserMediaErrorCode) || 0 },
+    );
   };
 
-  if (!transport.song) return <div className="on-air-player-idle" aria-label="On-Air player waiting" />;
+  if (!transport.song) return <div className="on-air-player-idle" aria-hidden="true" />;
 
   if (transport.song.type === 'youtube') {
     // 프리버퍼 적용: 이 곡의 재생 src는 곡(sessionId)당 1회, 첫 렌더에서

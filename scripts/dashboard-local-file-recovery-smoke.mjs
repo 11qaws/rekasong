@@ -4,6 +4,11 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import {
+  LEGACY_SYNC_STORAGE_KEY,
+  SHARED_SYNC_STORAGE_KEY,
+  TAB_SYNC_STORAGE_KEY,
+} from '../src/lib/syncStorageKeys.js';
 
 const executableCandidates = [
   process.env.REKASONG_CHROMIUM_PATH,
@@ -123,7 +128,25 @@ try {
   await waitForServer(appUrl, vite, viteLogs);
   browser = await chromium.launch({ executablePath, headless: true });
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
-  await context.addInitScript((serializedState) => {
+  const sharedFixtureJson = JSON.stringify({
+    ...fixtureState,
+    queue: [],
+    currentEntry: null,
+    active: null,
+    autoPlayNext: false,
+  });
+  const tabFixtureJson = JSON.stringify({
+    version: 1,
+    queue: fixtureState.queue,
+    autoPlayNext: false,
+  });
+  await context.addInitScript(({
+    sharedState,
+    tabState,
+    legacyKey,
+    sharedKey,
+    tabKey,
+  }) => {
     window.__rekasongBlobLifecycle = { created: [], revoked: [] };
     const createObjectURL = URL.createObjectURL.bind(URL);
     const revokeObjectURL = URL.revokeObjectURL.bind(URL);
@@ -137,11 +160,19 @@ try {
       return revokeObjectURL(src);
     };
     try {
-      localStorage.setItem('karaoke_app_state', serializedState);
+      localStorage.removeItem(legacyKey);
+      localStorage.setItem(sharedKey, sharedState);
+      sessionStorage.setItem(tabKey, tabState);
     } catch {
       // about:blank has no storage origin; this runs again for the app document.
     }
-  }, JSON.stringify(fixtureState));
+  }, {
+    sharedState: sharedFixtureJson,
+    tabState: tabFixtureJson,
+    legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
+  });
   const page = await context.newPage();
   const pageErrors = [];
   const workerRequests = [];
@@ -202,10 +233,29 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.queue-row').length === 2);
   assert.equal(await historyRestore.isVisible(), true, 'History remains a record after adding a restored copy.');
 
-  const persisted = await page.evaluate(() => localStorage.getItem('karaoke_app_state'));
-  assert.ok(persisted, 'The recovered queue must still persist metadata.');
-  assert.equal(persisted.includes('blob:'), false, 'Page-owned Blob URLs must never enter localStorage.');
-  assert.equal(JSON.parse(persisted).queue.every((entry) => entry.song.localSourceExpired === true), true);
+  const persisted = await page.evaluate(({ legacyKey, sharedKey, tabKey }) => ({
+    legacy: localStorage.getItem(legacyKey),
+    shared: localStorage.getItem(sharedKey),
+    tab: sessionStorage.getItem(tabKey),
+  }), {
+    legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
+  });
+  assert.equal(persisted.legacy, null, 'The read-only legacy key must not be recreated.');
+  assert.ok(persisted.shared, 'Recovered history metadata must remain shared.');
+  assert.ok(persisted.tab, 'The recovered queue must persist in this tab session.');
+  assert.equal(
+    `${persisted.shared}${persisted.tab}`.includes('blob:'),
+    false,
+    'Page-owned Blob URLs must never enter durable or tab storage.',
+  );
+  const persistedTab = JSON.parse(persisted.tab);
+  assert.equal(persistedTab.queue.length, 2);
+  assert.equal(
+    persistedTab.queue.every((entry) => entry.song.localSourceExpired === true),
+    true,
+  );
 
   await page.setViewportSize({ width: 320, height: 900 });
   await page.waitForTimeout(100);

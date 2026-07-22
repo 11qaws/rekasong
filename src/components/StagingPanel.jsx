@@ -112,7 +112,7 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             <label style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
               {t('staging.field.title')}
               {!isAiLoading && aiStatusMessage ? (
-                <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--eureka-emerald)'}}>
+                <span className="ai-status-done" style={{fontSize:'0.75rem', fontWeight:'normal', color:'var(--chr-vest)'}}>
                   <Sparkles size={12} className="sparkles-anim" /> {aiStatusMessage}
                 </span>
               ) : null}

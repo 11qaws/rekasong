@@ -422,7 +422,7 @@
 .songbook-action-primary { padding: 0.45rem 0.72rem; font-size: 0.8rem; }
 .songbook-action-secondary { padding: 0.38rem 0.6rem; font-size: 0.74rem; }
 .songbook-file-action { padding: 0.38rem 0.58rem; border: 1px solid var(--glass-border); background: transparent; color: var(--text-muted); font-size: 0.74rem; cursor: pointer; transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease; }
-.songbook-file-action:hover, .songbook-file-action:focus-visible { border-color: var(--eureka-emerald); background: rgba(16,255,203,0.08); color: var(--eureka-emerald); }
+.songbook-file-action:hover, .songbook-file-action:focus-visible { border-color: var(--eureka-emerald); background: rgba(16,255,203,0.08); color: var(--chr-vest); }
 .songbook-retry-action { display: inline-flex; align-items: center; justify-content: center; gap: 0.32rem; width: 100%; min-height: 30px; padding: 0.3rem 0.5rem; border: 1px solid rgba(109, 154, 189, 0.5); border-radius: 8px; background: transparent; color: var(--eureka-azure); font: inherit; font-size: 0.72rem; white-space: nowrap; cursor: pointer; transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease; }
 .songbook-retry-action:hover, .songbook-retry-action:focus-visible { border-color: var(--eureka-azure); background: rgba(109, 154, 189, 0.12); }
 .songbook-retry-action:disabled { cursor: wait; opacity: 0.62; }
@@ -1096,7 +1096,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .ai-analysis-badge i:nth-of-type(3) { animation-delay: 0.3s; }
 @keyframes aiAnalysisDot { 0%, 100% { opacity: 0.24; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .ai-retry-button { flex: 0 0 auto; border: 1px solid var(--glass-border); border-radius: 6px; padding: 0.4rem 0.55rem; background: var(--bg-mid); color: var(--text-main); font: inherit; font-size: 0.72rem; cursor: pointer; }
-.ai-retry-button:hover, .ai-retry-button:focus-visible { border-color: var(--eureka-emerald); color: var(--eureka-emerald); }
+.ai-retry-button:hover, .ai-retry-button:focus-visible { border-color: var(--eureka-emerald); color: var(--chr-vest); }
 .staging-media-info { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr); align-items: start; gap: 0.8rem; }
 .staging-song-info { display: grid; gap: 0.8rem; min-width: 0; }
 .preview-player-priority { position: relative; margin: 0; }

@@ -1,8 +1,17 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { isPlayableSongDef, toQueueEntry } from '../lib/queueEntry.js';
 import { expireLocalBlobEntry, isLocalBlobSong } from '../lib/blobLifecycle.js';
+import {
+  LEGACY_SYNC_STORAGE_KEY,
+  SHARED_SYNC_STORAGE_KEY,
+  TAB_SYNC_STORAGE_KEY,
+} from '../lib/syncStorageKeys.js';
 
-const STORAGE_KEY = 'karaoke_app_state';
+export {
+  LEGACY_SYNC_STORAGE_KEY,
+  SHARED_SYNC_STORAGE_KEY,
+  TAB_SYNC_STORAGE_KEY,
+};
 const DEV_HISTORY_FIXTURE_QUERY = '__rekasong_history_fixture';
 const DEV_HISTORY_FIXTURE_MAX = 2000;
 
@@ -10,6 +19,8 @@ const DEV_HISTORY_FIXTURE_MAX = 2000;
 //  - queue / history 는 QueueEntry[] (history는 completed 항목만 담는다, INV-3)
 //  - currentEntry 는 지금 활성인 QueueEntry (구 스키마의 currentSong 대체)
 //  - active 는 재생 런타임 { entryId, runId, phase } — 한 세션 최대 1개(INV-1)
+// 수명은 별도다: history/노래책/환경설정은 공유 localStorage, queue/auto-next는
+// 탭 sessionStorage, currentEntry/active/실제 Blob URL은 탭 메모리에만 둔다.
 // 구(v1) localStorage의 평면 song 객체는 로드 시 QueueEntry로 승격 래핑한다.
 const defaultState = {
   queue: [],
@@ -151,23 +162,103 @@ const readDevelopmentHistoryFixture = () => {
   };
 };
 
+const readStorageRecord = (storage, key, label) => {
+  try {
+    const raw = storage?.getItem?.(key);
+    if (!raw) return { candidate: null, raw: null, valid: false };
+    return { candidate: JSON.parse(raw), raw, valid: true };
+  } catch (error) {
+    console.warn(`Error reading ${label}`, error);
+    return { candidate: null, raw: null, valid: false };
+  }
+};
+
+/**
+ * Rebuild one tab from the durable library plus its own playback session.
+ *
+ * A missing tab record is the one-time legacy migration path: the old shared
+ * queue is adopted by the first load of each already-open tab. Once a tab
+ * record exists, even an intentionally empty queue is authoritative and an
+ * old/shared queue can no longer leak back into it.
+ */
+export const mergeStoredSyncState = (
+  sharedCandidate,
+  tabCandidate,
+  { onExpiredLocalSong } = {},
+) => {
+  const hasTabRecord = Boolean(
+    tabCandidate && typeof tabCandidate === 'object' && !Array.isArray(tabCandidate),
+  );
+  const sharedSource = hasTabRecord
+    ? { ...(sharedCandidate || {}), queue: [] }
+    : sharedCandidate;
+  const shared = normaliseState(sharedSource, {
+    fromStorage: true,
+    resetCurrentSong: true,
+    onExpiredLocalSong,
+  });
+  if (!hasTabRecord) return shared;
+
+  const tab = normaliseState({
+    queue: Array.isArray(tabCandidate.queue) ? tabCandidate.queue : [],
+    autoPlayNext: Boolean(tabCandidate.autoPlayNext),
+  }, {
+    fromStorage: true,
+    resetCurrentSong: true,
+    onExpiredLocalSong,
+  });
+  return normaliseState({
+    ...shared,
+    queue: tab.queue,
+    currentEntry: null,
+    active: null,
+    autoPlayNext: tab.autoPlayNext,
+  });
+};
+
 const readStoredState = () => {
   let localFilesNeedReselection = 0;
   const developmentFixture = readDevelopmentHistoryFixture();
-  if (developmentFixture) return { state: normaliseState(developmentFixture), localFilesNeedReselection };
-  try {
-    const item = window.localStorage.getItem(STORAGE_KEY);
-    if (!item) return { state: defaultState, localFilesNeedReselection };
-    const state = normaliseState(JSON.parse(item), {
-      fromStorage: true,
-      resetCurrentSong: true,
-      onExpiredLocalSong: () => { localFilesNeedReselection += 1; }
-    });
-    return { state, localFilesNeedReselection };
-  } catch (error) {
-    console.warn('Error reading localStorage', error);
-    return { state: defaultState, localFilesNeedReselection };
+  if (developmentFixture) {
+    return {
+      state: normaliseState(developmentFixture),
+      localFilesNeedReselection,
+      storageEnabled: false,
+      sharedRaw: null,
+      tabRaw: null,
+    };
   }
+
+  const sharedRecord = readStorageRecord(
+    window.localStorage,
+    SHARED_SYNC_STORAGE_KEY,
+    'shared localStorage state',
+  );
+  const legacyRecord = sharedRecord.valid
+    ? { candidate: null, raw: null, valid: false }
+    : readStorageRecord(
+        window.localStorage,
+        LEGACY_SYNC_STORAGE_KEY,
+        'legacy localStorage state',
+      );
+  const tabRecord = readStorageRecord(
+    window.sessionStorage,
+    TAB_SYNC_STORAGE_KEY,
+    'tab sessionStorage state',
+  );
+  const selectedSharedRecord = sharedRecord.valid ? sharedRecord : legacyRecord;
+  const state = mergeStoredSyncState(
+    selectedSharedRecord.candidate,
+    tabRecord.valid ? tabRecord.candidate : null,
+    { onExpiredLocalSong: () => { localFilesNeedReselection += 1; } },
+  );
+  return {
+    state,
+    localFilesNeedReselection,
+    storageEnabled: true,
+    sharedRaw: sharedRecord.valid ? sharedRecord.raw : null,
+    tabRaw: tabRecord.valid ? tabRecord.raw : null,
+  };
 };
 
 /**
@@ -183,10 +274,26 @@ export const createPersistedSyncState = (candidate) => {
     : entry;
   return {
     ...normalized,
-    queue: normalized.queue.map(durableEntry),
+    // Playback order belongs to one browser tab. The shared library keeps
+    // history/songbooks/preferences only; publishing a queue recreates the
+    // same track in unrelated Speaker tabs with different preparation state.
+    queue: [],
     history: normalized.history.map(durableEntry),
     currentEntry: null,
     active: null,
+    autoPlayNext: false,
+  };
+};
+
+export const createPersistedTabState = (candidate) => {
+  const normalized = normaliseState(candidate);
+  const durableEntry = (entry) => isLocalBlobSong(entry?.song)
+    ? expireLocalBlobEntry(entry)
+    : entry;
+  return {
+    version: 1,
+    queue: normalized.queue.map(durableEntry),
+    autoPlayNext: normalized.autoPlayNext,
   };
 };
 
@@ -208,9 +315,9 @@ const mergeTabOwnedBlobEntries = (localList, incomingList) => {
 };
 
 /**
- * Apply durable changes from another tab without importing that tab's player
- * runtime. Queue, history, songbooks and preferences may remain shared, while
- * each Speaker tab keeps its own current song and run identity.
+ * Apply durable library changes from another tab without importing that tab's
+ * player runtime or playback order. History and songbooks remain shared; each
+ * Speaker tab keeps its own queue, auto-next choice, current song and run.
  */
 export const mergeCrossTabSyncState = (localState, incomingState) => {
   const shared = normaliseState(incomingState, {
@@ -220,23 +327,58 @@ export const mergeCrossTabSyncState = (localState, incomingState) => {
   const localRuntime = normaliseState(localState);
   return normaliseState({
     ...shared,
-    queue: mergeTabOwnedBlobEntries(localRuntime.queue, shared.queue),
+    queue: localRuntime.queue,
     history: mergeTabOwnedBlobEntries(localRuntime.history, shared.history),
     currentEntry: localRuntime.currentEntry,
     active: localRuntime.active,
+    autoPlayNext: localRuntime.autoPlayNext,
   });
 };
 
 export function useSyncState() {
   const [initial] = useState(readStoredState);
   const [state, setState] = useState(initial.state);
+  const lastSharedPayloadRef = useRef(initial.sharedRaw);
+  const lastTabPayloadRef = useRef(initial.tabRaw);
+
+  const persistState = (nextState) => {
+    if (!initial.storageEnabled) return;
+    const sharedPayload = JSON.stringify(createPersistedSyncState(nextState));
+    const tabPayload = JSON.stringify(createPersistedTabState(nextState));
+    if (sharedPayload !== lastSharedPayloadRef.current) {
+      try {
+        window.localStorage.setItem(SHARED_SYNC_STORAGE_KEY, sharedPayload);
+        lastSharedPayloadRef.current = sharedPayload;
+      } catch (error) {
+        console.warn('Error writing shared localStorage state', error);
+      }
+    }
+    if (tabPayload !== lastTabPayloadRef.current) {
+      try {
+        window.sessionStorage.setItem(TAB_SYNC_STORAGE_KEY, tabPayload);
+        lastTabPayloadRef.current = tabPayload;
+      } catch (error) {
+        console.warn('Error writing tab sessionStorage state', error);
+      }
+    }
+  };
+
+  // Materialize the split schema immediately. This copies a legacy queue into
+  // this tab's session record without modifying the legacy key, so an older
+  // already-open app version cannot have its queue erased during deployment.
+  useEffect(() => {
+    persistState(initial.state);
+    // The initializer is immutable for this hook lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Sync from other tabs
   useEffect(() => {
     const handleStorageChange = (e) => {
-      if (e.key === STORAGE_KEY && e.newValue) {
+      if (e.key === SHARED_SYNC_STORAGE_KEY && e.newValue) {
         try {
           const incoming = JSON.parse(e.newValue);
+          lastSharedPayloadRef.current = e.newValue;
           setState((localState) => mergeCrossTabSyncState(localState, incoming));
         } catch (error) {
           console.warn('Error reading synced localStorage state', error);
@@ -252,7 +394,7 @@ export function useSyncState() {
     setState((prevState) => {
       const candidate = typeof newStateOrUpdater === 'function' ? newStateOrUpdater(prevState) : newStateOrUpdater;
       const nextState = normaliseState(candidate);
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(createPersistedSyncState(nextState)));
+      persistState(nextState);
       return nextState;
     });
   };

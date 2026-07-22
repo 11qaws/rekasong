@@ -4,6 +4,11 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import {
+  LEGACY_SYNC_STORAGE_KEY,
+  SHARED_SYNC_STORAGE_KEY,
+  TAB_SYNC_STORAGE_KEY,
+} from '../src/lib/syncStorageKeys.js';
 
 const HISTORY_COUNT = 1_000;
 const HISTORY_BATCH_SIZE = 100;
@@ -128,13 +133,20 @@ try {
   await waitForServer(appUrl, vite, viteLogs);
   browser = await chromium.launch({ executablePath, headless: true });
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
-  await context.addInitScript((serializedState) => {
+  await context.addInitScript(({ serializedState, legacyKey, sharedKey, tabKey }) => {
     try {
-      localStorage.setItem('karaoke_app_state', serializedState);
+      localStorage.removeItem(legacyKey);
+      localStorage.setItem(sharedKey, serializedState);
+      sessionStorage.removeItem(tabKey);
     } catch {
       // about:blank has no storage origin; the script runs again for the app document.
     }
-  }, fixtureJson);
+  }, {
+    serializedState: fixtureJson,
+    legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
+  });
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send('Performance.enable');
@@ -157,7 +169,10 @@ try {
   const baseline = await readMetrics();
   assert.equal(await page.locator('.history-item').count(), 0, 'Closed history must mount zero rows.');
   assert.equal(await page.evaluate(() => document.querySelectorAll('*').length) < 500, true);
-  assert.equal(await page.evaluate(() => localStorage.getItem('karaoke_app_state')?.length > 0), true);
+  assert.equal(
+    await page.evaluate((sharedKey) => localStorage.getItem(sharedKey)?.length > 0, SHARED_SYNC_STORAGE_KEY),
+    true,
+  );
 
   const interactionDurations = [];
   const openDuration = await page.evaluate(async (expectedRows) => {

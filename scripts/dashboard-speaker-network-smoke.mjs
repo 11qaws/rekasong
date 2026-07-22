@@ -4,6 +4,11 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import {
+  LEGACY_SYNC_STORAGE_KEY,
+  SHARED_SYNC_STORAGE_KEY,
+  TAB_SYNC_STORAGE_KEY,
+} from '../src/lib/syncStorageKeys.js';
 
 const VIDEO_ID = 'cv7zqJhKoVE';
 const SESSION_PATH = /^\/v1\/sessions(?:\/|$)/;
@@ -109,13 +114,19 @@ try {
   await waitForServer(appUrl, vite, viteLogs);
   browser = await chromium.launch({ executablePath, headless: true });
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
-  await context.addInitScript(() => {
+  await context.addInitScript(({ legacyKey, sharedKey, tabKey }) => {
     if (sessionStorage.getItem('rekasong-speaker-demand-smoke-initialized') !== '1') {
       localStorage.removeItem('rekasong-on-air-session-v1');
-      localStorage.removeItem('karaoke_app_state');
+      localStorage.removeItem(legacyKey);
+      localStorage.removeItem(sharedKey);
+      sessionStorage.removeItem(tabKey);
       sessionStorage.setItem('rekasong-speaker-demand-smoke-initialized', '1');
     }
     localStorage.setItem('rekasong.locale', 'en');
+  }, {
+    legacyKey: LEGACY_SYNC_STORAGE_KEY,
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
   });
   const page = await context.newPage();
   const pageErrors = [];
@@ -247,7 +258,12 @@ try {
     const audio = document.querySelector('[data-local-speaker-state="ready"] audio');
     return audio && audio.paused === false && audio.currentTime > 0.05;
   });
-  const persistedAfterLocalPlay = await page.evaluate(() => localStorage.getItem('karaoke_app_state') || '');
+  const persistedAfterLocalPlay = await page.evaluate(({ sharedKey, tabKey }) => (
+    `${localStorage.getItem(sharedKey) || ''}${sessionStorage.getItem(tabKey) || ''}`
+  ), {
+    sharedKey: SHARED_SYNC_STORAGE_KEY,
+    tabKey: TAB_SYNC_STORAGE_KEY,
+  });
   const localPlayResources = await resourceUrls();
   const localFileEvidence = {
     sessionHttpRequests: sessionHttpRequests.length,

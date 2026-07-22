@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 앱과 현재 검증 후보는 v0.2.17이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 앱은 v0.2.17이고 현재 로컬 검증 후보는 v0.2.18이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -13,7 +13,7 @@
 | 앱을 열면 스피커로 바로 시작 | 완료 | 현재 후보 배포됨 | 모바일 OS별 백그라운드 수동 확인 |
 | Speaker를 일반 웹 플레이어처럼 사용 | 완료 | 현재 후보 배포됨 | 모바일 OS별 백그라운드 수동 확인 |
 | 잠금 화면·알림·헤드셋의 Speaker 제어 | 자동 계약 완료 | 현재 후보 배포됨 | 실제 지원 모바일에서 수동 확인 |
-| Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | 완료 | 현재 후보 배포됨 | 공개 다중 탭 수동 재확인 |
+| Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | v0.2.18 실제 3탭 통과 | v0.2.17 대기열 누출 확인 | v0.2.18 배포 뒤 공개 다중 탭 재확인 |
 | Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | 현재 후보 배포됨 | 설정 화면 수동 재확인 |
 | Speaker 감상 볼륨과 OBS 방송 gain 분리 | 완료 | 현재 후보 배포됨 | 두 모드 값 유지 수동 smoke |
 | Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 없음 |
@@ -30,7 +30,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 frontend `0.2.17` / release commit `1ca0555a161526614a82e9a5c1ab8a221afca2b6`까지 성공적으로 배포됐다. source refresh·OBS 재시작으로 새 player ID가 생겼을 때의 영구 reset 대기를 없애고, 완전 초기화가 실제 inactive snapshot까지 기다린 뒤 Speaker로 돌아가도록 보강했다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결은 계속 분리되어 유휴·검색·로컬 파일 Speaker 재생에 불필요한 Worker 연결이 없다. production Worker는 version `51f9c6e8-60aa-4f74-962a-98ac55eda0be`다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화는 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 frontend `0.2.17` / release commit `1ca0555a161526614a82e9a5c1ab8a221afca2b6`까지 성공적으로 배포됐다. 다만 공개 두 탭에서 대기열이 A→B로 누출되고 서로 다른 준비 상태가 생기는 결함을 새로 확인했으므로, Speaker 다중 창 항목의 이전 완료 판정을 철회했다. v0.2.18 후보는 대기열·자동 다음 곡을 탭 session으로 분리했고 실제 세 탭과 새 저장 경계를 쓰는 smoke를 통과했다. source refresh·OBS 재시작의 새-ID 복구는 자동 계약과 외부 CEF 절차까지 준비됐지만 실제 live-session 물리 run은 아직 남는다. production Worker는 version `51f9c6e8-60aa-4f74-962a-98ac55eda0be`다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화는 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### v0.2.17 공개 배포 실측 — 2026-07-23
 
@@ -62,8 +62,8 @@
 
 - 새 탭의 기본 출력은 항상 Speaker다. 이전 OBS 선택을 복원해 사용자를 연결 대기 상태에 넣지 않는다.
 - Speaker의 재생·일시정지·탐색·볼륨·스킵·재시도·버리기는 OBS control owner, output lease, player 후보 수, heartbeat, 재연결 상태를 보지 않는다.
-- 탭마다 현재 곡과 재생 run을 따로 가진다. 대기열·이력·노래책·언어 같은 지속 데이터만 탭 사이에 공유한다.
-- `localStorage`에는 현재 곡과 active run을 쓰지 않는다. 다른 탭의 storage event가 현재 곡을 만들거나 덮어쓰지 못한다.
+- 탭마다 현재 곡·재생 run·대기열·자동 다음 곡을 따로 가진다. 완료 이력·노래책·MR 연결·언어 같은 사용자 라이브러리와 환경설정만 탭 사이에 공유한다.
+- `localStorage`에는 현재 곡·active run·대기열·자동 다음 곡을 쓰지 않는다. 탭 대기열과 auto-next는 `sessionStorage`에 두며, 다른 탭의 storage event가 이 탭의 재생 순서나 run을 만들거나 덮어쓰지 못한다.
 - Worker의 과거 Speaker 후보가 여러 개 남아 있어도 exact-one gate로 Speaker를 차단하지 않는다.
 - Speaker와 OBS는 서로 다른 지속 볼륨 값을 사용한다. 기존 단일 볼륨은 두 값으로 무손실 승계하고, 현재 재생 중인 run의 실제 출력 모드만 조절한다.
 - `selectAudioOutput`과 `setSinkId`를 모두 지원하는 브라우저에서만 Speaker 출력 장치 선택을 보여 준다. 장치 선택·복원 실패는 playback run이나 OBS 상태를 바꾸지 않고 기존/기본 출력으로 계속 재생한다.
@@ -88,6 +88,7 @@
 - 현재 로컬 브라우저는 `setSinkId` 미지원이었다. 장치 선택 UI와 기술 경고는 노출되지 않았고 가로 overflow도 없었다. 같은 상태에서 `Best Friend`는 `readyState=4`, `paused=false`, 13.49초까지 진행됐으며 버리기 뒤 pause와 source 분리를 확인했다. 지원 환경의 실제 물리 장치 전환 청취는 별도 수동 증거로 남긴다.
 - OBS 리모컨 적용 확인 후보를 포함한 최신 화면에서도 Speaker의 `Best Friend`가 `readyState=4`, `paused=false`로 진행됐고 헤더·Speaker 설정의 OBS 확인 카드는 0개였다. 버리기 뒤에는 media가 `paused=true`였으며 페이지 가로 overflow도 없었다.
 - 공개 v0.2.11에서 48kHz 로컬 WAV를 실제 Speaker `<audio>`로 재생했고, 브라우저 media time 증가와 Worker 요청 0회를 함께 관측했다. 격리된 로컬 production-browser에서는 OBS 업로드를 첫 시도 503으로 실패시킨 뒤 번역된 재시도 버튼을 눌러 두 번째 시도만 성공시켰고, Speaker로 돌아와 보존된 같은 Blob을 실제로 다시 재생했다.
+- v0.2.18 로컬 production build의 세 탭에서 A만 YouTube audio가 진행되고 B는 source 없는 idle임을 확인했다. 완료 이력은 공유됐지만 A의 `queue 1/auto-next on`은 새로고침 뒤에도 A에만 남았고 B와 새 C는 `queue 0/off/idle`을 유지했다.
 
 ### 의도적으로 남긴 경계
 
@@ -148,6 +149,7 @@
 - Display Widget은 큰 대시보드 catalog를 가져오지 않는 작은 전용 catalog를 쓴다. 복사하는 Widget URL에 `lang`을 포함한다.
 - 곡명·가수명·태그·사용자 입력·외부 고유명사는 번역 대상이 아니다.
 - 서버 원문 오류를 그대로 사용자 문구로 쓰지 않고 앱의 안정적인 오류 key로 바꾼다.
+- 구 On-Air player의 오류 frame도 번역 문장 대신 안정적인 code를 보내며, hardcoded Korean/accessibility copy 가드에 포함한다.
 
 ## 6. 성능과 자동 검증
 
@@ -160,14 +162,14 @@
 - v0.2.9 공개 캐시 우회 실측은 DCL `681.7ms`, 초기 자원 `281,590B` 전송 / `994,170B` decode, 69ms long task 1개였다. 캐시 재방문은 DCL `19.8ms`, long task 0개였다.
 - 전체 조작 뒤 JS heap은 약 9.6MiB였다. 회귀 상한은 DOM 2,000개, decoded resource 6MiB, JS heap 64MiB로 두어 네트워크 속도 변동과 제품 비대화를 구분한다.
 - 사용되지 않던 `LivePanel.jsx`와 import 0개인 `firebase` 직접 의존성을 제거했다. 설치 트리는 84개 패키지가 줄었고 실제 Dashboard/OBS runtime bundle은 변하지 않았다.
-- v0.2.17 현재 후보와 공개 배포 CI 전체 테스트: 696/696 통과.
+- v0.2.18 현재 후보 전체 테스트: 699/699 통과.
 - lint: 변경 코드 오류 0. 기존 `functions/api/gemini.js`의 `no-useless-escape` 경고 2개만 유지.
 - production build 통과.
-- Dashboard chunk: 366.87 kB raw / 100.52 kB gzip.
+- Dashboard chunk: 368.34 kB raw / 100.91 kB gzip.
 - Dashboard CSS: 61.55 kB raw / 11.63 kB gzip.
 - 탭별 local Speaker controller lazy chunk: 7.25 kB raw / 2.51 kB gzip. 공용 playback engine은 24.87 kB raw / 6.56 kB gzip이며 둘 다 Speaker 유휴 첫 화면에는 로드하지 않는다.
 - Display Widget chunk: 6.11 kB raw / 2.33 kB gzip.
-- OBS 정적 경로: 383,782B raw / 117,547B gzip / 102,913B brotli.
+- OBS 정적 경로: 383,782B raw / 117,547B gzip / 102,918B brotli.
 - OBS 예산: 460,800B raw / 133,120B gzip 이내 통과.
 - Worker 문법 검사와 `git diff --check` 통과.
 
@@ -180,3 +182,4 @@
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.
 7. v0.2.17의 새-ID 완전 초기화는 로컬과 production 실제 브라우저+Worker에서 무자동재생까지 통과했다.
+8. v0.2.18 후보의 탭별 대기열·auto-next는 로컬 실제 세 탭을 통과했으며, 공개 배포와 공개 다중 탭 재검증 전까지 최종 완료로 판정하지 않는다.

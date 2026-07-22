@@ -1308,8 +1308,9 @@ export default function Dashboard() {
   ]);
 
   // Stage 4 (INV-8, D-31): 창 닫힘 시 참조 중인 blob을 revoke해 메모리 누수를
-  // 막는다. 상태는 localStorage에 남으므로 다음 로드에서 Stage 1의 로컬 곡
-  // 소실 안내(D-04)로 이어진다 — revoke는 멱등이라 이중 정리에도 안전하다.
+  // 막는다. 이 탭의 대기열은 sessionStorage에 메타데이터만 남으므로 같은 탭을
+  // 다시 열면 Stage 1의 로컬 곡 소실 안내(D-04)로 이어진다. 완료 이력은 공유
+  // localStorage에 남는다 — revoke는 멱등이라 이중 정리에도 안전하다.
   // bfcache 보존(event.persisted)일 때는 페이지가 되살아날 수 있어 회수하지 않는다.
   useEffect(() => {
     const ownedBlobSrcs = pageOwnedBlobSrcsRef.current;

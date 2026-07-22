@@ -1,5 +1,18 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.18 Speaker 탭별 재생 세션과 OBS 복구 실기 절차
+
+- 공개 v0.2.17을 두 탭에서 직접 재현해, 현재 곡은 각 탭에 남지만 A에서 `대기열 맨 위에 다시 추가`한 곡이 B에도 나타나는 결함을 확인했다. A는 `준비됨`, B는 같은 항목을 `준비 중`으로 표시해 서로 다른 미디어 준비 수명과 공유 대기열이 충돌했다. 이것은 “여러 Speaker 창이 서로 막지 않는 일반 웹 플레이어”라는 기존 완료 판정을 반박하는 실제 증거였다.
+- 상태 수명을 분리했다. 이전 재생곡·노래책·MR 연결·공유 환경설정은 versioned `localStorage`, 대기열·자동 다음 곡은 탭 `sessionStorage`, 현재 곡·active run·실제 media element와 Blob URL은 탭 메모리만 사용한다. storage event는 라이브러리만 병합하며 이 탭의 queue/current/active/auto-next를 보존한다.
+- 구 `karaoke_app_state`는 읽기 전용 이관 원본으로 남겼다. 새 공유 key가 없고 이 탭 record도 없을 때만 구 대기열을 한 번 가져오며, 빈 탭 대기열도 이후에는 명시적인 값이다. 새 앱은 구 key를 쓰지 않아 배포 중 이미 열린 구버전 탭을 지우지 않는다. 로컬 Blob은 공유·탭 저장 어디에도 URL을 남기지 않고 재선택 가능한 메타데이터로 바뀐다.
+- 최신 production build의 실제 세 탭 검증에서 A만 `Me at the zoo`를 재생하는 동안 A audio는 `paused=false`·시간 증가·source 있음, B는 idle·`paused=true`·source 없음이었다. 자연 종료 이력 1곡은 A/B에 공유됐다. A에서만 다시 대기열에 넣고 자동 다음 곡을 켠 뒤 A/B를 새로고침해 A=`queue 1/on`, B=`queue 0/off`, 둘 다 current idle·history 1을 확인했다. 새 C는 `queue 0/off/idle/history 1`이었다.
+- 기존 drag·로컬 파일·Speaker network·1,000곡 브라우저 smoke가 구 key만 읽어 새 저장 경계를 실질적으로 검증하지 못하는 약점을 발견했다. 공용 storage key 모듈을 사용하도록 고치고 shared/tab/legacy를 각각 검사했다. 실제 재실행에서 drag 취소는 두 저장 영역 변경 0, history drop은 shared history만 1, queue는 shared/tab 모두 0이었다. 로컬 파일 복구 queue 2곡은 tab metadata로만 남고 Blob URL 0, Worker 요청 0을 통과했다.
+- 노래책 가져오기 완료·스테이징 완료·노래책 파일 버튼·AI 재시도처럼 흰 배경에서 읽는 텍스트는 `--chr-vest` 진한 녹색으로 통일했다. 에메랄드는 테두리·배경·포커스 같은 장식으로만 남긴다. legacy On-Air player도 한국어 오류 문장을 wire에 넣지 않고 안정적인 error code를 보내며 Dashboard가 현재 locale에서 번역하도록 바꿨고, i18n source guard 범위에 포함했다.
+- 실제 source refresh와 OBS 재시작을 한 run에서 검증하는 `test:obs:v2:cef-recovery`를 추가했다. 이전 player 소실과 `target_disconnected`를 먼저 관측하고, 새 identity 안정화→사용자 승인 full reset의 terminal inactive/unverified→Speaker 기준 무자동재생→명시적 OBS 재선택 ready·5초 무음을 순서대로 요구한다. 다음 단계에서만 별도 LOAD/PLAY를 허용하며 종료 때 deactivate·session end·410 fence를 확인한다.
+- 실제 OBS 30.2.0에는 방송·녹화를 시작하지 않은 상태로 이 harness URL을 넣으려 했지만 Qt Browser Source URL 입력란이 자동 입력을 저장하지 않아 live-session 물리 run은 실행하지 않았다. 임시 credential handoff와 clipboard를 정리했고 OBS는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`으로 남겼다. 따라서 source refresh·OBS 재시작의 실제 live-session 관문은 계속 미통과로 기록한다.
+- 검증: 전체 `699/699`, lint 신규 오류 0(기존 Gemini escape 경고 2건), Worker 문법, production build, OBS bundle budget과 `git diff --check`를 통과했다. Dashboard `368.34kB raw / 100.91kB gzip`, CSS `61.54kB / 11.63kB`, OBS closure `383,782B raw / 117,547B gzip / 102,918B brotli`다. 1,000곡은 저장 `290,235B`, 최대 100행, cold `216ms`, warm p95 `30.9ms`, 320px overflow 0, post-GC 증가 `0B`였다. 로컬 production Dashboard는 warm DCL `25.5ms`, long task 0, heap 약 `7.9MiB`였다.
+- v0.2.18 공개 배포와 공개 두 탭 재검증은 이 후보 커밋 뒤 수행한다.
+
 ## 2026-07-23 (Codex) — v0.2.17 OBS 새 인스턴스 완전 초기화와 Speaker 안전 복귀
 
 - `source refresh`·OBS 재시작의 복구 경로를 상태 단위로 다시 감사했다. 같은 페이지의 WebSocket 재접속은 같은 `playerInstanceId`라 hello에서 route를 복원하지만, 페이지가 다시 만들어지면 새 ID가 등록된다. 기존 일반 emergency stop은 사라진 이전 lease target의 정확한 ACK를 영원히 기다렸고, Dashboard의 완전 초기화는 dispatch ACK만 받은 뒤 coordinator를 재생성해 실제 inactive 수렴을 확인하지 않았다. 이것이 `송출 경로 확인 필요`가 reset 뒤 다시 나타나는 직접 원인이었다.

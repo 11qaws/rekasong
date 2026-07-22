@@ -169,6 +169,37 @@ npm run test:obs:v2:cef-soak
 - 시험 URL은 원래 URL과 길이·SHA-256을 대조해 복원하고 cache refresh를 적용했다. clipboard와 credential-bearing 임시 파일은 제거했다.
 - 이 결과는 실제 OBS CEF 재생 경로와 자원 안정성 증거다. 사용자의 물리 모니터링 청취, ingest/VOD(G5), 라이브 마이크↔MR 상대 싱크(G6)는 대체하지 않는다.
 
+### 5.3 실제 OBS source refresh·재시작 복구 run
+
+장시간 재생과 섞지 않고 짧은 별도 세션에서 실행한다. 실제 방송·녹화를 시작하는
+권한은 이 절차에 없으며, 시작 전후 OBS 버튼은 `Start Streaming`·`Start Recording`,
+두 타이머는 `00:00:00`이어야 한다.
+
+```powershell
+$env:REKASONG_WORKER='https://<worker-host>'
+$env:REKASONG_APP='https://<frontend-host>'
+$env:REKASONG_CEF_SOAK_ASSET='C:\path\to\short-fixture.wav'
+$env:REKASONG_CEF_SOAK_MIME='audio/wav'
+$env:REKASONG_CEF_SOAK_STATUS_FILE='C:\path\to\cef-recovery-status.json'
+npm run test:obs:v2:cef-recovery
+```
+
+운영 순서와 합격 기준:
+
+1. 임시 handoff의 비공개 player URL을 시험용 Browser Source에 저장하고 source를 정확히 하나만 연결한다.
+2. harness가 `awaiting_source_refresh`를 기록한 뒤에만 Properties의 `Refresh cache of current page`→즉시 `OK`를 실행한다.
+3. 기존 player가 사라져 `target_disconnected`가 되고 서로 다른 새 identity가 안정화돼야 한다. 자동 takeover·LOAD·PLAY는 없어야 한다.
+4. 명시적 full reset은 현재 연결된 새 player의 정지 ACK를 받고 terminal `inactive`, 선택 경로 null, desired stopped로 수렴해야 한다. 사라진 이전 target은 `recoveryOverride + missingTargetUnverified`로 남기며 정지 성공을 조작하지 않는다.
+5. Dashboard가 Speaker 기준으로 돌아간 뒤 새 OBS를 명시적으로 다시 선택한다. route는 ready지만 active run과 source가 없고 최소 5초간 무음이어야 한다.
+6. harness가 별도 짧은 곡을 재생하고 `awaiting_obs_restart`를 기록한 뒤 OBS를 정상 종료·재실행한다. 방송·녹화 버튼은 누르지 않는다.
+7. 재시작 후에도 3~5의 새 identity·full reset·무자동재생·명시적 재선택 절차가 다시 성립해야 한다.
+8. 끝에는 output deactivate, session end, HTTP 410 fence와 임시 파일·clipboard·시험 URL 정리를 확인한다.
+
+2026-07-23 실제 실행 시도에서는 Qt Browser Source URL 입력이 자동화 입력을 저장하지
+않아 비공개 live-session URL을 넣지 못했다. 방송·녹화는 시작하지 않았고 임시
+handoff와 clipboard는 정리했다. 따라서 이 subsection의 실제 OBS 합격 증거는 아직
+`not-run`이며 자동·production-browser 새-ID 복구 통과와 구분한다.
+
 ## 6. G1 — 출력 선택과 단일 lease
 
 ### 6.1 스피커

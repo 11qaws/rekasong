@@ -85,10 +85,30 @@ test('search, review, and language surfaces use Korean-English semantic keys', a
 });
 
 test('songbook text uses a readable dark green while emerald remains available for decoration', async () => {
-  const css = await readFile(new URL('../src/pages/Dashboard.css', import.meta.url), 'utf8');
+  const [css, searchPanel, stagingPanel] = await Promise.all([
+    readFile(new URL('../src/pages/Dashboard.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/SearchPanel.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/StagingPanel.jsx', import.meta.url), 'utf8'),
+  ]);
   assert.match(css, /\.songbook-summary\[data-source='meloming'\] \{ color: var\(--chr-vest\); \}/);
   assert.match(css, /\.songbook-mr-state\.is-linked \{ color: var\(--chr-vest\);/);
   assert.match(css, /\.songbook-copy:focus-visible/);
+  assert.match(
+    css,
+    /\.songbook-file-action:hover[^}]+color: var\(--chr-vest\);/,
+    'songbook action text must stay readable while emerald decorates its border',
+  );
+  assert.match(
+    searchPanel,
+    /playlistTitleProgress\.active \? 'var\(--eureka-azure\)' : 'var\(--chr-vest\)'/,
+    'completed import progress is readable dark green',
+  );
+  assert.match(stagingPanel, /className="ai-status-done"[^>]+color:'var\(--chr-vest\)'/);
+  assert.doesNotMatch(
+    `${searchPanel}\n${stagingPanel}`,
+    /color:\s*'var\(--eureka-emerald\)'/,
+    'emerald may remain decorative but must not be used for inline body text',
+  );
 });
 
 test('import APIs persist locale-neutral default source metadata', async () => {

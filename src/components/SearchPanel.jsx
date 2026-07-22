@@ -673,7 +673,7 @@ export default function SearchPanel({
           <div className="songbook-summary" data-source={platform}>
             ✅ {t('search.songbook.summary', { name: catalogName, count: songs.length })}
             {platform === 'youtube-playlist' && playlistTitleProgress.total > 0 && (
-              <span style={{marginLeft:'0.5rem', color: playlistTitleProgress.active ? 'var(--eureka-azure)' : 'var(--eureka-emerald)'}}>
+              <span style={{marginLeft:'0.5rem', color: playlistTitleProgress.active ? 'var(--eureka-azure)' : 'var(--chr-vest)'}}>
                 · {t('search.songbook.aiProgress', { completed: playlistTitleProgress.completed, total: playlistTitleProgress.total })}
               </span>
             )}

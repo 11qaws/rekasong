@@ -74,3 +74,27 @@ test('package exposes the external CEF soak as an explicit opt-in command', asyn
     'node scripts/obs-v2-external-cef-soak.mjs',
   );
 });
+
+test('external CEF recovery requires explicit source refresh and OBS restart actions', async () => {
+  const source = await readFile(scriptUrl, 'utf8');
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
+  assert.match(source, /const RECOVERY_MODE = process\.argv\.includes\('--recovery'\)/);
+  assert.match(source, /await writeStatus\('awaiting_source_refresh'/);
+  assert.match(source, /console\.log\('ACTION_REFRESH_SOURCE'\)/);
+  assert.match(source, /await writeStatus\('awaiting_obs_restart'/);
+  assert.match(source, /console\.log\('ACTION_RESTART_OBS'\)/);
+  assert.match(source, /candidate\.playerInstanceId === previousPlayerInstanceId/);
+  assert.match(source, /protocol\.confirmedPlayback\?\.reasonCode === 'target_disconnected'/);
+  assert.match(source, /coordinator\.emergencyStop\(\{ forceReset: true \}\)/);
+  assert.match(source, /protocol\.confirmedPlayback\.reasonCode === 'output_inactive'/);
+  assert.match(source, /protocol\.confirmedPlayback\.recoveryOverride === true/);
+  assert.match(source, /protocol\.confirmedPlayback\.missingTargetUnverified === true/);
+  assert.match(source, /silent\.activeFamily === null/);
+  assert.match(source, /silent\.desiredTransport\?\.status === 'stopped'/);
+  assert.match(source, /silent\.confirmedPlayback\?\.reasonCode === 'output_ready_no_playback'/);
+  assert.equal(
+    packageJson.scripts['test:obs:v2:cef-recovery'],
+    'node scripts/obs-v2-external-cef-soak.mjs --recovery',
+  );
+});
