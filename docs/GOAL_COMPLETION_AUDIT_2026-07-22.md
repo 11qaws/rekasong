@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 앱은 v0.2.15다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 v0.2.13 시점의 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)에 보존한다.
+> 최신 공개 앱은 v0.2.15이고 현재 검증 후보는 v0.2.16이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -30,7 +30,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages의 앱 release 기준은 frontend `0.2.15` / `94efd537e34862ca84b30b1f6cdc2e666cc2018f`이다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `2b819923-49bb-4002-9407-848321a6c6f7`다. 전체 테스트 `686/686`와 실제 OBS CEF 60분 재생을 통과했다. G6는 실제 10분 물리 stress와 endpoint-inclusive 5분 창을 측정했고 현재 장치 조합의 시작 offset은 실패, 5분 drift는 edge 통과·linear-fit 약 `0.4ms` 초과로 경계/재검 필요다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 frontend `0.2.15` / commit `15849ea6b9eedcaa58a5ba459d2b861bff2f0891f`까지 성공적으로 배포됐고, 앱 runtime을 마지막으로 바꾼 기준은 `94efd537e34862ca84b30b1f6cdc2e666cc2018f`다. Speaker 출력, 미디어 HTTP 자격, OBS 제어 연결을 분리하고 로컬 파일을 OBS 선택 전까지 page Blob으로만 재생한다. 유휴·검색·로컬 파일 Speaker 재생에서는 불필요한 Worker 연결이 없다. production On-Air는 인증된 Worker display WebSocket만 사용하며 구형 공개 ntfy relay는 휴면한다. production Worker는 version `71c233ad-5e37-4655-8f62-b3ff306e7708`다. 전체 테스트 `689/689`, 실제 OBS CEF 60분 재생, 별도 5분 가상 케이블 녹화를 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### 공개 배포 실측 — 2026-07-22
 
@@ -44,7 +44,8 @@
 - 공개 v0.2.10 격리 탭에서 Speaker idle 1.5초와 검색 결과 표시까지 session HTTP 0회, control WebSocket 0개, 전송 frame 0개, Worker host 요청 0회를 확인했다. 곡 drag 검증에서도 검색은 session 0회이고 클릭 검토로 필요한 media session 1회가 생긴 뒤 이력 drop 전후 1→1로 유지됐다.
 - 공개 v0.2.11 격리 탭에서 로컬 WAV를 선택·검토·즉시 재생해 media time이 0.088초 이상 증가하는 동안 session HTTP 0회, control WebSocket 0개, 전송 frame 0개, Worker host 요청 0회였다. local Speaker·PlaybackEngine 청크 2개만 수요 로드됐고 원격 prepare/cache 청크는 0개였으며 durable Blob URL도 0개였다.
 - 공개 v0.2.15의 격리 Chrome에서 Speaker 기본값, 한·영 전환·reload 지속성, 320/375/768/1100px hairpin·3px 노란 선, 출력 버튼 사용 가능 상태를 통과했다. production legacy ntfy 요청은 0건이고 HTTP 4xx/5xx도 0건이었다.
-- 같은 공개본에서 Speaker idle·검색·로컬 파일 실제 재생은 session HTTP 0회, WebSocket 0개, 전송 frame 0개, Worker host 요청 0회였다. drag 취소는 durable 변경 0, 이력 drop은 재생 0이며 drop 전후 media-session 요청은 1→1이었다.
+- 2026-07-23 공개 URL을 다시 열어 기본 `스피커 송출 중`, YouTube 단일 상위 소스와 내부 `검색/플레이리스트`, Setlink→멜로밍 순서, Rekasong 부제목 부재를 확인했다. 설정에서 한국어→영어 전환 시 현재 출력·소스·OBS 설명이 즉시 영어로 바뀌고 한국어 작성 문구가 남지 않았으며, 검증 뒤 한국어로 원복했다.
+- 같은 공개본에서 Speaker 유휴·로컬 WAV 실제 재생·검색은 session HTTP `0`, control WebSocket `0`, 전송 frame `0`, Worker host 요청 `0`이었다. 검색 결과 클릭→검토, drag 취소 durable 변경 `0`, 이력 drop 재생 `0`, drop 전후 media-session 요청 `1→1`, 320px 세 목적지와 가로 overflow도 통과했다.
 - 공개 v0.2.15의 1,000곡 이력은 최대 mount 100행, cold open `41.7ms`, warm p95 `46.8ms`, 320px overflow 0, 닫은 뒤 post-GC heap 증가 0B였다.
 - 공개 main/CSS/Dashboard/OnAirPlayerV2 자산의 SHA-256은 같은 commit을 GitHub Actions 조건으로 다시 빌드한 로컬 산출물과 4/4 바이트 단위로 일치했다.
 
@@ -112,6 +113,7 @@
 - G4 녹화 artifact: 33.283초 MP4의 AAC 48kHz stereo track에서 880Hz pulse 12개와 440Hz tone 4개를 모두 검출했다. marker 누락·중복 및 clipping은 0이었다.
 - source hide/show: fixture 재생 중 약 1.4초 숨겼다가 다시 표시해도 established route를 유지하고 16/16 marker로 완료했다.
 - G6 물리 측정: track 2 MR·track 3 FIFINE 마이크로 60/60 marker를 기록했고 jitter p95 `1.832ms`는 통과했다. offset은 `43.25ms`, 10분 stress drift는 `15.5–17.32ms/590초`였다. endpoint-inclusive 31-marker/300초 재분석은 edge 최악 `9.753ms` 통과, linear-fit 최악 `10.408ms` 경계 초과였다. 30초 변화 p95는 `2.486ms`였으며 관찰만 하고 재생을 보정하지 않는다. 재생 중 route 교체·restart·seek·강제 정지는 없었다.
+- G6 가상 케이블 격리 측정: 실제 OBS CEF Browser direct track과 VB-Audio Virtual Cable loopback track의 31/31 marker를 300초 전체에서 기록했다. edge drift `0.965ms`, linear-fit `0.352ms`, jitter p95 `2.015ms`는 통과했고 고정 offset `85.797ms`는 실패했다. 30초 변화 p95 `3.224ms`는 실제 누적 drift보다 커서 30초마다 강제 보정하지 않고 관찰만 한다. 이 run은 플레이어의 누적 drift 격리 증거이며 실제 가수 monitoring path 합격을 대신하지 않는다.
 - `+69ms` OBS Browser Sync Offset 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 되돌렸다. 서로 다른 하드웨어 clock의 drift 보정으로 사용하지 않는다.
 - 각 곡은 새 run과 `position: 0`으로 기준점을 다시 잡되 OBS route와 lease는 유지한다. 정확한 이전 run stop proof 뒤에만 다음 media run을 load/play하며, 곡 중간에는 자동 seek·restart·속도 보정을 하지 않는다.
 - 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증, scene 전환·source refresh·OBS 재시작 변형이다.

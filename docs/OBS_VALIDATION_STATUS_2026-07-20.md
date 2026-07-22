@@ -1,6 +1,6 @@
 # WEB ↔ OBS 검증 현황과 잔여 작업
 
-> 기준일: 2026-07-20 KST
+> 기준일: 2026-07-23 KST
 > 검증 시작 frontend: `74afc4e0bf0f2a6126abfc079856506382a85cab`
 > 현재 검증 후보: 이 문서와 같은 commit의 코드
 > production app: `https://11qaws.github.io/rekasong/`
@@ -10,7 +10,7 @@
 
 ## 1. 현재 결론
 
-현재 실제 장비 증거는 G4를 통과했고 G6 장시간 stress와 endpoint-inclusive 5분 창까지 측정했다. 현재의 온보드 스피커 출력+USB FIFINE 마이크 입력 조합은 시작 offset 기준에 실패했고, 5분 drift는 edge 통계 통과·linear-fit 약 `0.4ms` 초과로 경계/재검 필요다. 10분 drift는 진단값이며 비공개 방송 결과 G5와 실제 monitoring 장치 조합은 별도 관문이다.
+현재 실제 장비 증거는 G4를 통과했고 G6 장시간 stress와 endpoint-inclusive 5분 창까지 측정했다. 현재의 온보드 스피커 출력+USB FIFINE 마이크 입력 조합은 시작 offset 기준에 실패했고, 5분 drift는 edge 통계 통과·linear-fit 약 `0.4ms` 초과로 경계/재검 필요다. 별도의 실제 OBS CEF→가상 케이블 격리 run은 5분 상대 drift를 통과했지만 고정 offset은 실패했다. 10분 drift는 진단값이며 비공개 방송 결과 G5와 실제 performer monitoring 장치 조합은 별도 관문이다.
 
 - 앱·Worker의 출력 단일화, 전환 실패 복구, 다중 탭 제어권, stale 명령 차단은 자동 테스트로 강하게 고정돼 있다.
 - 최신 Protocol v2는 로컬 Durable Object와 실제 Chrome에서 OBS runtime 후보 1개, `output_ready`, 8초 재생, 16개 marker, 강한 정지, 세션 종료까지 통과했다.
@@ -66,6 +66,15 @@
 - Browser Source의 `+69 ms` OBS sync offset은 상대 지연을 약 `82–84 ms`로 악화시켰고 drift를 해결하지 못해 `0 ms`로 복원했다.
 - 판정은 **G6 장시간 측정 완료·시작 offset 실패·5분 drift 경계/재검 필요**다. 결과는 route를 차단하거나 재생을 끊는 조건이 아니다. 같은 audio clock 장치 또는 저지연 performer monitoring 경로에서 endpoint-inclusive 5분+짧은 반복 fixture로 재검증한다.
 
+### 1.5 2026-07-23 실제 OBS 가상 케이블 5분 격리 G6
+
+- production Worker `71c233ad-5e37-4655-8f62-b3ff306e7708`와 공개 Pages의 v2 경로를 사용했다. 전용 test profile/scene에서 방송은 꺼 둔 채 로컬 녹화만 실행했다.
+- 외부 CEF harness는 실제 OBS 후보 한 개가 75초 동안 안정된 뒤 29,040,044바이트 fixture를 업로드했다. 302.5초 자연 종료 wall 오차는 `94ms`, candidate 전이·재생 중 control disconnect/reconnect·unsafe route 관측은 모두 `0`이었다.
+- 녹화 `C:\Users\Qumin\Videos\2026-07-23 00-30-11.mkv`의 Browser direct track과 VB-Audio Virtual Cable loopback track에서 31/31 marker와 `0..300초` endpoint 전체를 검출했다.
+- edge drift `0.965ms`, linear-fit `0.352ms`, jitter p95 `2.015ms`는 통과했다. 고정 offset `85.797ms`는 실패했으며 한 곡 동안 커지는 값이 아니라 loopback 경로가 처음부터 가지는 일정한 지연이다.
+- 30초 변화 p95 `3.224ms`는 실제 5분 linear drift보다 크다. 따라서 30초마다 강제 seek·restart·속도 보정을 하지 않고 관찰만 하며, 다음 곡을 새 run/0초 기준으로 시작한다.
+- 이 격리 run은 플레이어와 OBS CEF 경로의 누적 drift가 제품 기준 안임을 증명한다. 실제 가수의 마이크·헤드폰 경로 합격이나 G5를 대신하지 않는다.
+
 ## 2. 사용자가 지금 믿어도 되는 부분
 
 | 사용자 행동·상황 | 현재 판정 | 근거 |
@@ -83,7 +92,8 @@
 | 그 PCM이 실제 OBS mixer로 들어감 | 기계 관측 확인 | 실제 OBS의 Rekasong source meter가 점검 신호 동안 약 -25 dB까지 움직임 |
 | 그 PCM이 OBS 녹화 트랙에 기록됨 | 실제 G4 확인 | 33.283초 MP4에서 880Hz 12개 + 440Hz 4개, marker 누락·중복 0, clipping 0 |
 | 그 PCM을 사용자가 듣고 방송 결과물에서도 확인 | **미확인** | 사용자 모니터링 확인과 실제 OBS G5 필요 |
-| 스트리머 마이크와 반주 싱크가 한 곡 동안 유지 | **시작 offset 실패·5분 drift 경계/재검 필요** | 31-marker/300초 edge `9.753ms`, linear-fit `10.408ms`; 현재 물리 경로 offset `43.25ms` |
+| OBS CEF 자체가 한 곡 동안 상대 drift를 누적하지 않음 | 격리 경로 확인 | 가상 케이블 31-marker/300초 edge `0.965ms`, linear-fit `0.352ms`; 고정 loopback offset은 별도 실패 |
+| 스트리머 마이크와 반주 싱크가 한 곡 동안 유지 | **시작 offset 실패·5분 drift 경계/재검 필요** | 물리 경로 31-marker/300초 edge `9.753ms`, linear-fit `10.408ms`; offset `43.25ms` |
 
 ## 3. 2026-07-20에 실행한 자동 검증
 

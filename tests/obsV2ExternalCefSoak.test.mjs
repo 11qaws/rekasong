@@ -23,6 +23,8 @@ test('external CEF soak keeps the player credential in a short-lived handoff fil
   assert.match(source, /stableForMs >= CANDIDATE_STABLE_MS/);
   assert.match(source, /candidateTransitions \+= 1/);
   assert.match(source, /await writeStatus\('candidate_connected'/);
+  assert.match(source, /await writeStatus\('uploading_asset'/);
+  assert.match(source, /await writeStatus\('asset_uploaded'/);
   assert.match(source, /console\.log\('CEF_CANDIDATE_CONNECTED'\)/);
   assert.match(source, /await writeStatus\('soak_playing'/);
   assert.match(source, /await writeStatus\('natural_end'/);
@@ -40,6 +42,11 @@ test('external CEF soak enforces bounded media and exact route cleanup', async (
   const source = await readFile(scriptUrl, 'utf8');
 
   assert.match(source, /const MAX_ASSET_BYTES = 64 \* 1024 \* 1024;/);
+  assert.ok(
+    source.indexOf('const stableCandidate = await waitForStableObsCandidate();')
+      < source.indexOf('const assetId = await uploadSoakAsset(assetBytes);'),
+    'the large media upload must happen only after one stable OBS candidate is proven',
+  );
   assert.match(source, /candidateIds\.length === 1/);
   assert.match(source, /routeObservations\.length = 0/);
   assert.match(source, /snapshot\.confirmedPlayback\?\.status === 'ready'/);

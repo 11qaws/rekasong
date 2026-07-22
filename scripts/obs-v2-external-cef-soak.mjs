@@ -484,7 +484,6 @@ async function run() {
   diagnostics.registerSecret(session.playerToken);
   diagnostics.selfCheck();
   pass('diagnostic sanitizer fail-closed self-check');
-  const assetId = await uploadSoakAsset(assetBytes);
 
   coordinator = new OnAirControlCoordinator({
     transport: {
@@ -533,6 +532,17 @@ async function run() {
   console.log('CEF_CANDIDATE_CONNECTED');
   pass('external OBS CEF candidate connected', candidate.playerInstanceId);
   routeObservations.length = 0;
+
+  // Prove that one stable OBS CEF identity exists before spending the large
+  // media upload. A broken or mistyped Browser Source URL must not consume R2
+  // ingress repeatedly while the operator is still fixing the OBS setup.
+  await writeStatus('uploading_asset', {
+    bytes: assetBytes.byteLength,
+  });
+  const assetId = await uploadSoakAsset(assetBytes);
+  await writeStatus('asset_uploaded', {
+    bytes: assetBytes.byteLength,
+  });
 
   const activation = coordinator.activateOutput('obs');
   await waitFor(() => {

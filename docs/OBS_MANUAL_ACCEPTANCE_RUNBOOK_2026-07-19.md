@@ -2,7 +2,7 @@
 
 > 작성일: 2026-07-19
 > 작업 위치: `D:\Agents\rekasong\Codex\workspace`
-> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · G6 장시간 측정 완료/시작 offset 실패/5분 drift 경계·재검 필요 · G5 미실행
+> 상태: 실행 절차 확정 · 실제 OBS G4 및 CEF 60분 통과 · 물리 G6 시작 offset 실패/5분 drift 경계 · 가상 케이블 격리 G6 5분 drift 통과/고정 offset 실패 · G5 미실행
 > 목적: “브라우저 플레이어가 연결됨”이 아니라, 반주가 OBS의 의도한 경로에 들어가고 리모컨 동작과 카라오케 상대 싱크가 유지되는지를 실제 증거로 판정한다.
 
 ## 1. 이 실행서가 증명하는 범위
@@ -324,6 +324,16 @@ npm run make:obs:karaoke-fixture -- "C:\path\to\rekasong-obs-karaoke-5m-v1.wav"
 - OBS Browser Sync Offset `+69ms` 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 복원
 - 판정: **장시간 측정 완료·시작 offset 실패·5분 drift 경계/재검 필요**. established OBS route와 재생은 유지하며 같은 audio clock 장치 또는 저지연 performer-monitor 경로에서 재실행
 - 상세 설계: [OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md](./OBS_PERFORMER_MONITOR_DESIGN_2026-07-22.md)
+
+2026-07-23 실제 OBS 가상 케이블 격리 실행 결과:
+
+- 전용 시험 profile/scene에서만 실행했고 OBS 방송은 끝까지 꺼 둔 채 로컬 녹화만 사용했다.
+- artifact: `C:\Users\Qumin\Videos\2026-07-23 00-30-11.mkv`, `150,015,715바이트`, SHA-256 `4E396C3C22705BC7426A6FD97927757755378AB21F1972F5F1C8A2849D0C0E78`
+- MR은 OBS Browser Source direct track, 비교 입력은 VB-Audio Virtual Cable loopback track이다. 31/31 marker와 전체 `0..300초` endpoint를 검출했다.
+- 5분 edge drift `0.965ms`, linear-fit drift `0.352ms`, jitter p95 `2.015ms`로 상대 drift 기준을 모두 통과했다. 외부 CEF harness도 같은 302.5초 media를 재생해 wall 오차 `94ms`, 재생 중 control disconnect/reconnect `0`, candidate 전이 `0`, unsafe route 관측 `0`으로 끝났다.
+- 중앙 고정 offset `85.797ms`는 ±20ms 기준 실패다. 이것은 5분 동안 커지는 drift가 아니라 이 loopback 경로가 처음부터 가지는 일정한 장치·monitoring 지연이다.
+- 30초 관측 변화는 중앙 `0.830ms`, p95 `3.224ms`, 최악 `3.537ms`다. 실제 5분 linear drift보다 관측 흔들림이 훨씬 크므로 30초마다 seek·restart·속도 변경을 하면 오히려 반주를 흔든다. 정책은 `observe_only_no_seek_restart_or_rate_change`를 유지한다.
+- 판정: **OBS CEF→가상 케이블 경로의 한 곡 상대 drift는 통과, 고정 offset은 실패**. 이 결과는 플레이어가 한 곡 동안 누적 지연을 만들지 않는다는 격리 증거이며, 실제 가수의 마이크·헤드폰 경로가 85.797ms 늦다는 뜻이 아니다. 실제 performer 경로는 같은 clock 또는 저지연 monitoring 구성에서 별도로 재검증한다.
 
 ## 12. 장애 주입 매트릭스
 
