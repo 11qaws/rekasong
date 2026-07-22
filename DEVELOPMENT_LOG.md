@@ -9,6 +9,8 @@
 - 집중 회귀는 control coordinator, output controller, playback adapter, Worker protocol의 `298/298`을 통과했다. 활성 OBS run을 가진 disconnected snapshot에서 수동/대시보드 복구가 coordinator 1개, connect 1회 추가, media·route 명령 0을 유지하고, 협상 중 두 번째 retry도 coordinator/socket을 늘리지 않는 계약을 추가했다.
 - 전체 `716/716` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법 검사를 통과했다. production build의 Dashboard는 `370.81kB raw / 101.51kB gzip`, CSS는 `61.49kB raw / 11.61kB gzip`이며 OBS closure는 `383,782B raw / 117,552B gzip / 102,951B brotli`로 기존 예산 안이다.
 - production preview smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 전환과 reload 지속성, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼, 금발 선을 통과했다. HTTP 오류·ntfy 요청·브라우저 console error는 0이고 warm DCL `21.6ms`, warm long task 0, JS heap `7,896,004B`였다. 이 테스트는 OBS route·재생·방송·녹화를 건드리지 않았다.
+- v0.2.23 commit `462bd2fac91e8cb60b13fdb5dc615aa21f4b0103`을 배포했다. Pages workflow `29960932902`는 clean install·716 tests·lint·Worker 문법·build·OBS budget·artifact upload·deploy를 모두 통과했고 최신 `github-pages` deployment도 같은 SHA를 가리킨다.
+- 공개 entry/Dashboard 자산은 `index-CELi0hru.js` / `Dashboard-Da33zoCb.js`다. 공개 Dashboard SHA-256은 `e0efd63ed84fabb2b89443b37eac2f42328d2582035676ed32a4357ff0059250`이고 `reconnect_in_progress`·`already_ready` 분기를 모두 포함한다. 공개 격리 smoke도 기본 Speaker·소스·검색 모드·한영 reload·320~1100px·모바일 설정·출력 버튼·금발 선을 통과했으며 HTTP 오류·ntfy 요청 0, warm DCL `37.7ms`, warm long task 0, JS heap `7,893,252B`였다. 실제 음악·OBS route·방송·녹화는 시작하지 않았다.
 
 ## 2026-07-23 (Codex) — v0.2.22 Speaker 출력 장치 탈착 복구
 
