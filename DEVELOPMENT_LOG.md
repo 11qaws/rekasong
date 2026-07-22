@@ -519,3 +519,12 @@
 - 첫 Pages 작업은 깨끗한 `npm ci`에서 Rolldown의 선택적 WASM fallback이 요구하는 `@emnapi/core`/`@emnapi/runtime` peer 레코드가 lockfile에 없다고 중단됐다. `npm uninstall`이 Firebase 트리와 함께 공유된 선택적 peer 레코드까지 제거한 것이 원인이었다. Firebase를 되살리지 않고 두 optional peer lock 레코드만 복원했으며, 빈 검증 디렉터리의 `npm ci --ignore-scripts`로 lockfile 재현성을 확인했다.
 - 수정 배포 `743ac9a`의 GitHub Pages 작업은 clean install, 634개 테스트, lint, Worker 문법, build, OBS budget, publish를 모두 통과했다. CDN Last-Modified는 `2026-07-22 06:34:36Z`로 갱신됐고, 런타임 코드가 의도대로 동일해 main/CSS 자산 hash는 유지됐다. 게시 뒤 공개 스모크도 다시 통과했다.
 - 검증: 자동 테스트 634/634, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, whitespace, 공개·로컬 Dashboard smoke, OBS 정적 closure budget(raw 382,301B / gzip 116,110B / brotli 101,713B)을 통과했다.
+
+## 2026-07-22 (Codex) — v0.2.8 Speaker 로컬 파일 수명·복구 상한
+
+- Speaker의 페이지 소유 `blob:` 파일이 완료 이력에 무한히 남지 않도록 상태 모델과 예산을 추가했다. 현재 재생·대기열은 항상 보호하고, 완료 이력 전용 파일만 최신 5개·합계 256 MiB 안에서 유지한다. 같은 Blob을 공유하는 이력은 원자적으로 함께 유지하거나 만료한다.
+- 만료는 곡 삭제가 아니다. 제목·순서·entryId를 보존한 `파일 필요` 항목으로 바꾸고, 사용자가 명시적으로 `파일 다시 선택`하면 대기열은 제자리에서 복구하고 이력은 원본 기록을 둔 채 새 재생 항목을 대기열 맨 위에 만든다. 모든 신규 문구는 한국어·영어 semantic key로 함께 추가했다.
+- localStorage와 다른 탭에는 페이지에서만 유효한 Blob URL을 절대 기록하지 않는다. 다른 탭의 동기화가 현재 탭이 실제 파일을 가진 대기열·이력 항목을 placeholder로 낮추거나 지우지 못하도록 병합 경계를 보강했다.
+- Blob 생성·해제는 페이지 소유 목록으로 관리하고, 최신 상태에 참조가 없다는 사실이 확인된 뒤에만 해제한다. 느린 탭에서도 고정 시간 추정으로 재생 파일을 먼저 해제하지 않는다. OBS의 `assetId`, Worker, WebSocket 계약은 변경하지 않았다.
+- 500회 로컬 Speaker↔OBS 왕복 테스트에서 출력 잠금, watchdog, 소켓 소유자, LOAD/PLAY/STOP 명령이 누적되지 않았다. 격리 브라우저에서 대기열·이력 파일 복구, 잘못된 파일 거부 뒤 재시도, 저장 Blob URL 0개, Worker 요청 0개, 320px overflow 0, Dashboard 이탈 시 생성 Blob 2/2 해제를 확인했다.
+- 1,000곡 이력 성능은 첫 열기 276.9ms, 반복 상호작용 p95 47.6ms, 닫은 뒤 GC heap 증가 210,564B였다. 전체 650/650 테스트, production build, 로컬 Dashboard 320/375/768/1100px smoke, 유레카의 고정 3px 노란 머리선, OBS 정적 번들 예산(raw 382,301B / gzip 116,109B)을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다.

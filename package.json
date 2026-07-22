@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,7 +18,8 @@
     "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs",
     "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs",
     "test:dashboard:smoke": "node scripts/dashboard-production-smoke.mjs",
-    "test:dashboard:history": "npm run build && node scripts/dashboard-history-performance-smoke.mjs"
+    "test:dashboard:history": "npm run build && node scripts/dashboard-history-performance-smoke.mjs",
+    "test:dashboard:local-files": "node scripts/dashboard-local-file-recovery-smoke.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",

@@ -383,6 +383,69 @@ test('local speaker mode only deactivates OBS and never activates a speaker cand
   assert.equal(coordinators[0].calls.some(([name]) => name === 'activateOutput'), false);
 });
 
+test('500 local Speaker and OBS switches never accumulate a lock, timer, or media command', () => {
+  const timers = createTimerHarness();
+  const inactive = coordinatorSnapshot(playerSnapshot({
+    eligibleCandidates: { speaker: [], obs: ['obs-player'] },
+  }));
+  const activeObs = coordinatorSnapshot(readyRoute('obs', {
+    eligibleCandidates: { speaker: [], obs: ['obs-player'] },
+  }));
+  const { controller, coordinators } = createHarness(inactive, {
+    controllerOptions: {
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+    },
+  });
+  const coordinator = coordinators[0];
+
+  for (let index = 0; index < 500; index += 1) {
+    controller.selectOutputMode('obs');
+    assert.equal(timers.size, 1, `OBS activation ${index + 1} owns one watchdog`);
+    coordinator.emit(activeObs);
+    assert.equal(
+      controller.getState().outputSwitchState.status,
+      ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE,
+      `OBS activation ${index + 1} settles`,
+    );
+    assert.equal(timers.size, 0, `OBS activation ${index + 1} clears its watchdog`);
+
+    controller.selectLocalSpeakerMode();
+    assert.equal(timers.size, 1, `Speaker selection ${index + 1} owns one watchdog`);
+    coordinator.emit(inactive);
+    assert.equal(
+      controller.getState().outputSwitchState.status,
+      ON_AIR_OUTPUT_SWITCH_STATUSES.IDLE,
+      `Speaker selection ${index + 1} settles`,
+    );
+    assert.equal(timers.size, 0, `Speaker selection ${index + 1} clears its watchdog`);
+  }
+
+  assert.equal(coordinators.length, 1, 'the page keeps one control owner for the whole soak');
+  assert.equal(coordinator.connectCalls, 1, 'the soak does not rebuild the socket owner');
+  assert.equal(
+    coordinator.calls.filter(([name]) => name === 'activateOutput').length,
+    500,
+  );
+  assert.equal(
+    coordinator.calls.filter(([name]) => name === 'deactivateOutput').length,
+    500,
+  );
+  assert.equal(
+    coordinator.calls.some(([name]) => [
+      'load',
+      'play',
+      'pause',
+      'seek',
+      'setVolume',
+      'stop',
+      'dispose',
+    ].includes(name)),
+    false,
+    'route switching never guesses or replays media work',
+  );
+});
+
 test('registry preserves one session owner across StrictMode cleanup/setup', () => {
   const scheduled = [];
   const created = [];

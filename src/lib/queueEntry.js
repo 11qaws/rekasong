@@ -14,9 +14,13 @@ export const newId = () =>
 export const sanitizeSongDef = (song) => {
   const source = song && typeof song === 'object' ? song : {};
   const type = source.type === 'youtube' ? 'youtube' : 'local';
+  const localSourceExpired = type === 'local' && source.localSourceExpired === true;
+  const localBlobBytes = source.localBlobBytes;
   return {
     type,
-    src: typeof source.src === 'string' ? source.src : '',
+    // An expired local source is metadata, not a dead playback URL. Keeping src
+    // empty prevents every downstream playable check from inventing readiness.
+    src: localSourceExpired ? '' : (typeof source.src === 'string' ? source.src : ''),
     title: typeof source.title === 'string' ? source.title : '',
     artist: typeof source.artist === 'string' ? source.artist : '',
     tags: Array.isArray(source.tags) ? source.tags : [],
@@ -28,7 +32,13 @@ export const sanitizeSongDef = (song) => {
     // On-Air(원격 플레이어) 로컬 곡은 blob 대신 세션 자산 id를 참조한다.
     ...(source.assetId ? { assetId: source.assetId } : {}),
     // 표시 전용(수동) 항목 마커 — setlist 표기용으로 직접 입력한 곡(재생 src 없음).
-    ...(source.manual === true ? { manual: true } : {})
+    ...(source.manual === true ? { manual: true } : {}),
+    // Speaker page-owned Blob metadata. The bytes let the completed-history
+    // cache stay bounded; the expired marker keeps recovery metadata durable.
+    ...(Number.isSafeInteger(localBlobBytes) && localBlobBytes >= 0
+      ? { localBlobBytes }
+      : {}),
+    ...(localSourceExpired ? { localSourceExpired: true } : {})
   };
 };
 
@@ -40,6 +50,18 @@ export const isManualSongDef = (song) =>
     song && typeof song === 'object' &&
     song.manual === true &&
     typeof song.title === 'string' && song.title.trim().length > 0
+  );
+
+// A local-file placeholder retains its setlist metadata but owns no playable
+// bytes in this tab. Queue/history may display and restore it; current playback
+// must never treat it as a valid source.
+export const isExpiredLocalSongDef = (song) =>
+  Boolean(
+    song && typeof song === 'object' &&
+    song.type === 'local' &&
+    song.localSourceExpired === true &&
+    typeof song.title === 'string' && song.title.trim().length > 0 &&
+    song.src === ''
   );
 
 export const isPlayableSongDef = (song) =>
@@ -85,7 +107,10 @@ export const toQueueEntry = (item, fallbackPhase = 'queued') => {
     if (!isPlayableSongDef(item.song)) {
       // 수동(표시 전용) 항목은 완료 이력에서만 유효하다. 대기열·현재 곡 등
       // 다른 위치로 흘러들면 재생 불가 유령이 되므로 구조적으로 걸러낸다.
-      if (!(isManualSongDef(item.song) && phase === 'completed')) return null;
+      const manualHistory = isManualSongDef(item.song) && phase === 'completed';
+      const restorableLocalPlaceholder = isExpiredLocalSongDef(item.song)
+        && (phase === 'queued' || phase === 'completed');
+      if (!manualHistory && !restorableLocalPlaceholder) return null;
     }
     return {
       entryId: item.entryId,

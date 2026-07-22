@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, Check, GripVertical, ListMusic, Loader2, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowUpCircle, Check, FileUp, GripVertical, ListMusic, Loader2, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { createManualEntry, createQueueEntry, isPlayableSongDef } from '../lib/queueEntry';
+import { createManualEntry, createQueueEntry, isExpiredLocalSongDef, isPlayableSongDef } from '../lib/queueEntry';
 import { getAppMessage as t } from '../copy/appMessages';
 import { songPrepareState } from '../lib/preparePipeline';
 import {
@@ -64,13 +64,28 @@ const hasDragType = (event, type) => {
   return Boolean(types && Array.from(types).includes(type));
 };
 
-export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFromQueue, autoPlayNext, setSharedState, prepareStates, onRetryPrepare }) {
+export default function QueuePanel({
+  queue,
+  history,
+  onPlayQueueItem,
+  onRemoveFromQueue,
+  onClearQueue,
+  onRemoveHistoryItem,
+  onRestoreLocalFile,
+  autoPlayNext,
+  setSharedState,
+  prepareStates,
+  onRetryPrepare,
+}) {
   const [dragOverEntryId, setDragOverEntryId] = useState(null);
   const [dragOverHistoryEntryId, setDragOverHistoryEntryId] = useState(null);
   const [manualTitle, setManualTitle] = useState('');
   const [manualArtist, setManualArtist] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyWindowOffset, setHistoryWindowOffset] = useState(0);
+  const [pendingLocalRestore, setPendingLocalRestore] = useState(null);
+  const [restoringLocalKey, setRestoringLocalKey] = useState(null);
+  const restoreFileInputRef = useRef(null);
   const historyWindow = useMemo(
     () => createHistoryWindow(history, historyWindowOffset),
     [history, historyWindowOffset]
@@ -82,6 +97,26 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
     const open = event.currentTarget.open;
     setHistoryOpen(open);
     if (!open) setHistoryWindowOffset(0);
+  };
+
+  const requestLocalRestore = (entryId, location) => {
+    setPendingLocalRestore({ entryId, location });
+    restoreFileInputRef.current?.click();
+  };
+
+  const handleRestoreFileChange = async (event) => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = '';
+    const request = pendingLocalRestore;
+    setPendingLocalRestore(null);
+    if (!file || !request) return;
+    const restoreKey = `${request.location}:${request.entryId}`;
+    setRestoringLocalKey(restoreKey);
+    try {
+      await onRestoreLocalFile(request, file);
+    } finally {
+      setRestoringLocalKey((current) => current === restoreKey ? null : current);
+    }
   };
 
   // D-21: 드래그 시작 시의 인덱스가 아니라 entryId로 항목을 식별하고, 드롭
@@ -133,9 +168,17 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
 
   return (
     <section className="panel queue-panel glass-card" aria-label={t('queue.region.label')}>
+      <input
+        ref={restoreFileInputRef}
+        type="file"
+        accept="audio/*,video/mp4"
+        className="hidden-file-input"
+        aria-label={t('queue.localFile.inputLabel')}
+        onChange={handleRestoreFileChange}
+      />
       <div className="queue-panel-header">
         <div className="playback-heading"><ListMusic size={17} /> {t('queue.heading')} <span>{queue.length}</span></div>
-        {queue.length > 0 && <button type="button" onClick={() => setSharedState((previous) => ({ ...previous, queue: [] }))} className="btn-icon btn-icon-danger" title={t('queue.action.clear.title')}><Trash2 size={15} /></button>}
+        {queue.length > 0 && <button type="button" onClick={onClearQueue} className="btn-icon btn-icon-danger" title={t('queue.action.clear.title')}><Trash2 size={15} /></button>}
       </div>
       <details className="playback-options">
         <summary>{t('queue.autoplay.summary', {
@@ -152,13 +195,18 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
         ) : (
           <AnimatePresence initial={false}>
             {queue.map((entry, index) => {
-              const prep = songPrepareState(entry.song, prepareStates);
+              const expiredLocal = isExpiredLocalSongDef(entry.song);
+              const restoreKey = `queue:${entry.entryId}`;
+              const restoringLocal = restoringLocalKey === restoreKey;
+              const prep = expiredLocal ? null : songPrepareState(entry.song, prepareStates);
               // 실패 행은 '바로 재생' 자리에 '다시 시도'를 놓는다 — 어차피 재생이
               // 불가한 버튼을 남겨 두는 대신, 지금 가능한 유일한 회복 행동을 준다.
               // unavailable(영구 실패)도 force 재시도로만 되살릴 수 있다(비공개→공개 전환 등).
-              const retryable = ['failed', 'unavailable', 'unreachable'].includes(prep.kind);
-              const refreshesConnection = ['session_invalid', 'session_ended'].includes(prep.connectionKind);
-              const prepBadge = PREPARE_BADGES[prepareBadgeKind(prep)] || PREPARE_BADGES.preparing;
+              const retryable = !expiredLocal && ['failed', 'unavailable', 'unreachable'].includes(prep.kind);
+              const refreshesConnection = !expiredLocal && ['session_invalid', 'session_ended'].includes(prep.connectionKind);
+              const prepBadge = expiredLocal
+                ? null
+                : (PREPARE_BADGES[prepareBadgeKind(prep)] || PREPARE_BADGES.preparing);
               return (
                 <motion.div
                   key={entry.entryId}
@@ -166,7 +214,7 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: 16 }}
-                  className={`queue-row ${dragOverEntryId === entry.entryId ? 'drag-over' : ''}`}
+                  className={`queue-row${expiredLocal ? ' is-source-expired' : ''}${dragOverEntryId === entry.entryId ? ' drag-over' : ''}`}
                   draggable
                   onDragStart={(event) => event.dataTransfer.setData('queueEntryId', entry.entryId)}
                   onDragOver={(event) => {
@@ -179,8 +227,25 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                 >
                   <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                   <strong>{entry.song.title}</strong>
-                  <PrepareBadge state={prep} />
-                  {retryable ? (
+                  {expiredLocal ? (
+                    <span className="queue-prepare-badge is-unavailable">
+                      <AlertTriangle size={11} /> {t('queue.localFile.requiredLabel')}
+                    </span>
+                  ) : <PrepareBadge state={prep} />}
+                  {expiredLocal ? (
+                    <button
+                      type="button"
+                      onClick={() => requestLocalRestore(entry.entryId, 'queue')}
+                      className="queue-play-action"
+                      data-local-file-restore="queue"
+                      data-entry-id={entry.entryId}
+                      disabled={restoringLocal}
+                      title={t('queue.localFile.restoreQueueTitle')}
+                    >
+                      {restoringLocal ? <Loader2 size={14} className="spinner" /> : <FileUp size={14} />}
+                      {t(restoringLocal ? 'queue.localFile.restoringLabel' : 'queue.localFile.restoreLabel')}
+                    </button>
+                  ) : retryable ? (
                     <button
                       type="button"
                       onClick={() => onRetryPrepare(entry.song.src)}
@@ -255,12 +320,15 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
             <div className="history-list">
           {history.length === 0 ? <div className="queue-empty">{t('queue.history.empty')}</div> : historyWindow.entries.map((entry) => {
             const manual = entry.song?.manual === true;
+            const expiredLocal = isExpiredLocalSongDef(entry.song);
             const replayable = isPlayableSongDef(entry.song);
+            const restoreKey = `history:${entry.entryId}`;
+            const restoringLocal = restoringLocalKey === restoreKey;
             const isDragOver = dragOverHistoryEntryId === entry.entryId;
             return (
               <div
                 key={entry.entryId}
-                className={`history-item history-played${isDragOver ? ' queue-item draggable drag-over' : ''}`}
+                className={`history-item history-played${expiredLocal ? ' is-source-expired' : ''}${isDragOver ? ' queue-item draggable drag-over' : ''}`}
                 draggable
                 onDragStart={(event) => event.dataTransfer.setData('historyEntryId', entry.entryId)}
                 onDragOver={(event) => {
@@ -277,7 +345,20 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                   {manual && entry.song.artist ? <span className="history-artist"> — {entry.song.artist}</span> : null}
                 </span>
                 <div>
-                  <button
+                  {expiredLocal ? (
+                    <button
+                      type="button"
+                      onClick={() => requestLocalRestore(entry.entryId, 'history')}
+                      className="queue-play-action history-restore-action"
+                      data-local-file-restore="history"
+                      data-entry-id={entry.entryId}
+                      disabled={restoringLocal}
+                      title={t('queue.localFile.restoreHistoryTitle')}
+                    >
+                      {restoringLocal ? <Loader2 size={14} className="spinner" /> : <FileUp size={14} />}
+                      {t(restoringLocal ? 'queue.localFile.restoringLabel' : 'queue.localFile.restoreLabel')}
+                    </button>
+                  ) : <button
                     type="button"
                     onClick={() => {
                       if (!replayable) return;
@@ -290,8 +371,8 @@ export default function QueuePanel({ queue, history, onPlayQueueItem, onRemoveFr
                     title={replayable
                       ? t('queue.history.replay.title')
                       : t('queue.history.replay.unavailableTitle')}
-                  ><ArrowUpCircle size={15} /></button>
-                  <button type="button" onClick={() => setSharedState((previous) => ({ ...previous, history: (previous.history || []).filter((item) => item.entryId !== entry.entryId) }))} className="btn-icon btn-icon-danger" title={t('queue.history.remove.title')}><Trash2 size={15} /></button>
+                  ><ArrowUpCircle size={15} /></button>}
+                  <button type="button" onClick={() => onRemoveHistoryItem(entry.entryId)} className="btn-icon btn-icon-danger" title={t('queue.history.remove.title')}><Trash2 size={15} /></button>
                 </div>
               </div>
             );

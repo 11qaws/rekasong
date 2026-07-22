@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
-import { toQueueEntry } from '../lib/queueEntry.js';
+import { isPlayableSongDef, toQueueEntry } from '../lib/queueEntry.js';
+import { expireLocalBlobEntry, isLocalBlobSong } from '../lib/blobLifecycle.js';
 
 const STORAGE_KEY = 'karaoke_app_state';
 const DEV_HISTORY_FIXTURE_QUERY = '__rekasong_history_fixture';
@@ -31,23 +32,20 @@ const defaultState = {
   autoPlayNext: false
 };
 
-const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = false, onDroppedLocalSong } = {}) => {
+const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = false, onExpiredLocalSong } = {}) => {
   const source = candidate && typeof candidate === 'object' ? candidate : {};
-  // Legacy local entries point at a page-scoped blob URL and cannot survive a
-  // reload. Session-uploaded local media uses an asset id instead, so keep it
-  // with the queue/history while the broadcast session is alive.
-  const keepEntry = (entry) => {
-    if (!entry) return false;
-    if (fromStorage && entry.song.type === 'local' && entry.song.src.startsWith('blob:')) {
-      // D-04: 조용히 지우지 않는다 — 소실 항목을 집계해 호출자가 안내한다.
-      onDroppedLocalSong?.(entry);
-      return false;
-    }
-    return true;
+  // A blob URL belongs to the page that created it. A stored or cross-tab copy
+  // retains metadata as an explicit reselectable placeholder instead of either
+  // pretending the URL works or silently deleting the track.
+  const expireStoredBlob = (entry) => {
+    if (!entry || !fromStorage || !isLocalBlobSong(entry.song)) return entry;
+    onExpiredLocalSong?.(entry);
+    return expireLocalBlobEntry(entry);
   };
   const normaliseList = (list, fallbackPhase) => (Array.isArray(list) ? list : [])
     .map((item) => toQueueEntry(item, fallbackPhase))
-    .filter(keepEntry);
+    .filter(Boolean)
+    .map(expireStoredBlob);
 
   const queue = normaliseList(source.queue, 'queued');
   const history = normaliseList(source.history, 'completed');
@@ -58,7 +56,11 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
   let currentEntry = null;
   if (!resetCurrentSong) {
     const candidateEntry = toQueueEntry(source.currentEntry ?? source.currentSong ?? null, 'starting');
-    currentEntry = candidateEntry && keepEntry(candidateEntry) ? candidateEntry : null;
+    // Restorable placeholders belong only in queue/history. They must never
+    // create a phantom current player with no media bytes.
+    currentEntry = candidateEntry && isPlayableSongDef(candidateEntry.song)
+      ? candidateEntry
+      : null;
   }
   // active(재생 런타임)는 현재 항목과 정확히 일치할 때만 신뢰한다.
   const active = currentEntry &&
@@ -150,21 +152,21 @@ const readDevelopmentHistoryFixture = () => {
 };
 
 const readStoredState = () => {
-  let droppedLocalSongs = 0;
+  let localFilesNeedReselection = 0;
   const developmentFixture = readDevelopmentHistoryFixture();
-  if (developmentFixture) return { state: normaliseState(developmentFixture), droppedLocalSongs };
+  if (developmentFixture) return { state: normaliseState(developmentFixture), localFilesNeedReselection };
   try {
     const item = window.localStorage.getItem(STORAGE_KEY);
-    if (!item) return { state: defaultState, droppedLocalSongs };
+    if (!item) return { state: defaultState, localFilesNeedReselection };
     const state = normaliseState(JSON.parse(item), {
       fromStorage: true,
       resetCurrentSong: true,
-      onDroppedLocalSong: () => { droppedLocalSongs += 1; }
+      onExpiredLocalSong: () => { localFilesNeedReselection += 1; }
     });
-    return { state, droppedLocalSongs };
+    return { state, localFilesNeedReselection };
   } catch (error) {
     console.warn('Error reading localStorage', error);
-    return { state: defaultState, droppedLocalSongs };
+    return { state: defaultState, localFilesNeedReselection };
   }
 };
 
@@ -174,11 +176,36 @@ const readStoredState = () => {
  * through localStorage makes another tab display a phantom player and lets its
  * controls invalidate the real tab's run identity.
  */
-export const createPersistedSyncState = (candidate) => ({
-  ...normaliseState(candidate),
-  currentEntry: null,
-  active: null,
-});
+export const createPersistedSyncState = (candidate) => {
+  const normalized = normaliseState(candidate);
+  const durableEntry = (entry) => isLocalBlobSong(entry?.song)
+    ? expireLocalBlobEntry(entry)
+    : entry;
+  return {
+    ...normalized,
+    queue: normalized.queue.map(durableEntry),
+    history: normalized.history.map(durableEntry),
+    currentEntry: null,
+    active: null,
+  };
+};
+
+// Incoming durable order is the base, but another tab cannot delete or replace
+// this tab's live Blob entries. A matching expired placeholder is replaced by
+// the local playable entry; a missing one is reinserted near its local index.
+const mergeTabOwnedBlobEntries = (localList, incomingList) => {
+  const next = [...incomingList];
+  (Array.isArray(localList) ? localList : []).forEach((localEntry, localIndex) => {
+    if (!isLocalBlobSong(localEntry?.song)) return;
+    const incomingIndex = next.findIndex((entry) => entry.entryId === localEntry.entryId);
+    if (incomingIndex >= 0) {
+      next[incomingIndex] = localEntry;
+      return;
+    }
+    next.splice(Math.min(localIndex, next.length), 0, localEntry);
+  });
+  return next;
+};
 
 /**
  * Apply durable changes from another tab without importing that tab's player
@@ -193,6 +220,8 @@ export const mergeCrossTabSyncState = (localState, incomingState) => {
   const localRuntime = normaliseState(localState);
   return normaliseState({
     ...shared,
+    queue: mergeTabOwnedBlobEntries(localRuntime.queue, shared.queue),
+    history: mergeTabOwnedBlobEntries(localRuntime.history, shared.history),
     currentEntry: localRuntime.currentEntry,
     active: localRuntime.active,
   });
@@ -228,10 +257,11 @@ export function useSyncState() {
     });
   };
 
-  // D-04: 로드 시 정리된 로컬(blob) 곡 수 — Dashboard가 1회 안내 토스트로 소비.
+  // Legacy payloads may still contain page-owned Blob URLs. They are preserved
+  // as reselectable metadata and Dashboard announces that action once.
   const loadNotice = useMemo(
-    () => ({ droppedLocalSongs: initial.droppedLocalSongs }),
-    [initial.droppedLocalSongs]
+    () => ({ localFilesNeedReselection: initial.localFilesNeedReselection }),
+    [initial.localFilesNeedReselection]
   );
 
   return [state, setSharedState, loadNotice];

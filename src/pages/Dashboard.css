@@ -1265,6 +1265,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 }
 .queue-row { display: flex; align-items: center; gap: 0.5rem; min-height: 42px; padding: 0.5rem 0.6rem; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--bg-deep); }
 .queue-row.drag-over { border-top: 2px solid var(--eureka-emerald); }
+.queue-row.is-source-expired { border-style: dashed; }
 .queue-row strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.88rem; }
 .queue-grip { display: inline-flex; align-items: center; gap: 0.1rem; color: var(--text-muted); font-size: 0.74rem; cursor: grab; }
 /* 행마다 반복되는 상시 버튼이므로 네온 대신 중립 테두리 + 딥그린 텍스트, 호버 순간에만 강조 */
@@ -1290,6 +1291,8 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 /* 히스토리 행: 액션 아이콘들이 세로로 쌓여 행이 비대해지지 않게 가로 정렬 + 대기열 행과 밀도 통일 */
 .history-accordion .history-item { padding: 0.4rem 0.6rem; min-height: 42px; }
 .history-accordion .history-item > div { display: flex; align-items: center; gap: 0.15rem; flex: 0 0 auto; }
+.history-accordion .history-item.is-source-expired { opacity: 1; border-style: dashed; }
+.history-restore-action { min-height: 30px; }
 .history-window-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.45rem; margin: 0.55rem 0 0.2rem; }
 .history-window-actions.is-bottom { margin: 0.45rem 0 0; }
 .history-window-actions .queue-play-action { min-height: 36px; }
@@ -1701,6 +1704,13 @@ body.dashboard-page #root {
   display: block;
   padding: 1rem;
   overflow-anchor: none;
+}
+
+@media (max-width: 480px) {
+  .queue-row.is-source-expired { flex-wrap: wrap; }
+  .queue-row.is-source-expired strong { flex-basis: calc(100% - 3rem); }
+  .history-accordion .history-item.is-source-expired { flex-wrap: wrap; }
+  .history-accordion .history-item.is-source-expired > div { width: 100%; justify-content: flex-end; }
 }
 
 .youtube-source-workspace { min-width: 0; }

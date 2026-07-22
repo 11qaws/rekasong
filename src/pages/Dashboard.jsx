@@ -7,8 +7,22 @@ import {
   ON_AIR_OUTPUT_CONTROL_CODES,
   useOnAirOutputControl,
 } from '../hooks/useOnAirOutputControl';
-import { createQueueEntry, newId, toLegacySong, toQueueEntry } from '../lib/queueEntry';
-import { collectBlobSrcs, isBlobReferenced, isLocalBlobSong, revokeBlobSrcs } from '../lib/blobLifecycle';
+import {
+  createQueueEntry,
+  isExpiredLocalSongDef,
+  newId,
+  sanitizeSongDef,
+  toLegacySong,
+  toQueueEntry,
+} from '../lib/queueEntry';
+import {
+  collectBlobSrcs,
+  isBlobReferenced,
+  isLocalBlobSong,
+  planLocalBlobHistoryBudget,
+  restoreLocalBlobSong,
+  revokeBlobSrcs,
+} from '../lib/blobLifecycle';
 import { createBoundedCommandQueue } from '../lib/boundedCommandQueue';
 import { apiUrl } from '../lib/api';
 import {
@@ -74,6 +88,7 @@ import './Dashboard.css';
 
 const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;
 const LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000;
+const LOCAL_FILE_MAX_BYTES = 200 * 1024 * 1024;
 
 const DashboardLocalSpeaker = lazy(() => import('../components/DashboardLocalSpeaker'));
 
@@ -525,6 +540,49 @@ export default function Dashboard() {
   stateRef.current = state;
   const activeRef = useRef(active);
   activeRef.current = active;
+  const pageOwnedBlobSrcsRef = useRef(new Set());
+  const createPageBlobSrc = useCallback((file) => {
+    const src = URL.createObjectURL(file);
+    pageOwnedBlobSrcsRef.current.add(src);
+    return src;
+  }, []);
+  const revokePageBlobSrcs = useCallback((srcs) => {
+    const candidates = [...srcs];
+    revokeBlobSrcs(candidates);
+    candidates.forEach((src) => pageOwnedBlobSrcsRef.current.delete(src));
+  }, []);
+
+  // Completed local-file history is a bounded convenience cache, never
+  // playback authority. Apply the pure plan first; revoke only on a later
+  // committed render after the latest state proves the src is unreferenced.
+  const pendingBlobRevocationsRef = useRef(new Set());
+  useEffect(() => {
+    const plan = planLocalBlobHistoryBudget(state);
+    if (!plan.changed) return;
+    plan.revokeSrcs.forEach((src) => pendingBlobRevocationsRef.current.add(src));
+    setSharedState((previous) => {
+      if (previous.history !== state?.history
+        || previous.queue !== state?.queue
+        || previous.currentEntry !== state?.currentEntry) return previous;
+      return { ...previous, history: plan.history };
+    });
+  }, [setSharedState, state, state?.currentEntry, state?.history, state?.queue]);
+
+  useEffect(() => {
+    if (pendingBlobRevocationsRef.current.size === 0) return;
+    const latest = stateRef.current;
+    const stillPlanned = new Set(planLocalBlobHistoryBudget(latest).revokeSrcs);
+    for (const src of [...pendingBlobRevocationsRef.current]) {
+      if (!isBlobReferenced(src, latest)) {
+        revokePageBlobSrcs([src]);
+        pendingBlobRevocationsRef.current.delete(src);
+      } else if (!stillPlanned.has(src)) {
+        // The user re-queued the source before cleanup committed. Protection
+        // wins over the older cleanup intent.
+        pendingBlobRevocationsRef.current.delete(src);
+      }
+    }
+  }, [revokePageBlobSrcs, state?.currentEntry, state?.history, state?.queue]);
 
   const trackObsRemoteControlRequest = (action, dispatchResult) => {
     if (activeRef.current?.outputMode !== 'obs') return;
@@ -693,9 +751,9 @@ export default function Dashboard() {
       // revoke하지 않는다. cleanup 시점의 stateRef.current는 전환이 반영된 최신
       // 상태다(이력 편입·큐 승격 포함). 마지막 참조가 사라졌을 때만 회수한다.
       if (isBlobReferenced(currentLocalBlobSrc, stateRef.current)) return;
-      URL.revokeObjectURL(currentLocalBlobSrc);
+      revokePageBlobSrcs([currentLocalBlobSrc]);
     };
-  }, [currentLocalBlobSrc]);
+  }, [currentLocalBlobSrc, revokePageBlobSrcs]);
 
   useEffect(() => {
     if (useOnAirPlayer) return undefined;
@@ -1060,16 +1118,23 @@ export default function Dashboard() {
   // 소실 안내(D-04)로 이어진다 — revoke는 멱등이라 이중 정리에도 안전하다.
   // bfcache 보존(event.persisted)일 때는 페이지가 되살아날 수 있어 회수하지 않는다.
   useEffect(() => {
+    const ownedBlobSrcs = pageOwnedBlobSrcsRef.current;
     const handlePageHide = (event) => {
       if (event.persisted) return;
       const srcs = collectBlobSrcs(stateRef.current);
       const staged = stagedItemRef.current;
       if (staged?.type === 'local' && staged.src?.startsWith('blob:')) srcs.add(staged.src);
-      revokeBlobSrcs(srcs);
+      ownedBlobSrcs.forEach((src) => srcs.add(src));
+      revokePageBlobSrcs(srcs);
     };
     window.addEventListener('pagehide', handlePageHide);
-    return () => window.removeEventListener('pagehide', handlePageHide);
-  }, []);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      // Client-side route changes do not fire pagehide. Once Dashboard and its
+      // media elements unmount, none of its page-owned Blob URLs remain valid.
+      revokePageBlobSrcs(ownedBlobSrcs);
+    };
+  }, [revokePageBlobSrcs]);
 
   const {
     aiStatusMessage,
@@ -1371,15 +1436,16 @@ export default function Dashboard() {
     queuedOutputIntent,
   ]);
 
-  // D-04: 새로고침으로 재생 불가가 된 로컬(blob) 곡을 조용히 지우지 않고 안내.
+  // Legacy stored Blob URLs become actionable placeholders rather than being
+  // silently deleted. Announce the migration once; each row carries recovery.
   const localDropNoticeShownRef = useRef(false);
   useEffect(() => {
     if (localDropNoticeShownRef.current) return;
-    if (syncLoadNotice?.droppedLocalSongs > 0) {
+    if (syncLoadNotice?.localFilesNeedReselection > 0) {
       localDropNoticeShownRef.current = true;
       showToast(
-        t('dashboard.localFile.droppedAfterRefresh', {
-          count: syncLoadNotice.droppedLocalSongs,
+        t('dashboard.localFile.reselectionAfterRefresh', {
+          count: syncLoadNotice.localFilesNeedReselection,
         }),
         'info'
       );
@@ -1491,7 +1557,7 @@ export default function Dashboard() {
 
   const handleLocalFileDrop = (file, songbookContext = null) => {
     cancelAiExtraction();
-    const url = URL.createObjectURL(file);
+    const url = createPageBlobSrc(file);
     const stagingId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setStagedItem({
       stagingId,
@@ -1586,7 +1652,7 @@ export default function Dashboard() {
       // 겹칠 일이 없지만, 참조 검사 하나로 규칙을 통일한다.)
       if (previous?.type === 'local' && previous.src?.startsWith('blob:') &&
         !isBlobReferenced(previous.src, stateRef.current)) {
-        URL.revokeObjectURL(previous.src);
+        revokePageBlobSrcs([previous.src]);
       }
       return null;
     });
@@ -1805,7 +1871,10 @@ export default function Dashboard() {
       mediaType: stagedItem.mediaType || 'audio',
       tags: stagedItem.tags || [],
       source: stagedItem.source || 'youtube',
-      songbookId: stagedItem.songbookId || null
+      songbookId: stagedItem.songbookId || null,
+      ...(stagedItem.type === 'local' && stagedItem.file
+        ? { localBlobBytes: stagedItem.file.size }
+        : {}),
     });
     const newSong = entry.song;
 
@@ -1894,7 +1963,7 @@ export default function Dashboard() {
       // 회수한다. 직접 재생 모드는 entry가 이 blob src 자체를 쓰므로 유지된다.
       if (useOnAirPlayer && previous?.type === 'local' && previous.src?.startsWith('blob:') &&
         !isBlobReferenced(previous.src, stateRef.current)) {
-        URL.revokeObjectURL(previous.src);
+        revokePageBlobSrcs([previous.src]);
       }
       return null;
     });
@@ -2338,7 +2407,7 @@ export default function Dashboard() {
       } catch {
         // 파괴된 미디어 요소 참조 — 언마운트가 마저 정리한다.
       }
-      revokeBlobSrcs(collectBlobSrcs(stateRef.current));
+      revokePageBlobSrcs(collectBlobSrcs(stateRef.current));
       setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
       setIsPlaying(false);
       return;
@@ -2455,7 +2524,7 @@ export default function Dashboard() {
     if (isLocalBlobSong(removedEntry.song)) {
       const removedSrc = removedEntry.song.src;
       setTimeout(() => {
-        if (!isBlobReferenced(removedSrc, stateRef.current)) URL.revokeObjectURL(removedSrc);
+        if (!isBlobReferenced(removedSrc, stateRef.current)) revokePageBlobSrcs([removedSrc]);
       }, 6000);
     }
 
@@ -2472,6 +2541,125 @@ export default function Dashboard() {
         });
       }
     });
+  };
+
+  const scheduleBlobRevocation = (srcs, delayMs = 0) => {
+    const candidates = [...srcs];
+    if (candidates.length === 0) return;
+    window.setTimeout(() => {
+      candidates.forEach((src) => {
+        if (!isBlobReferenced(src, stateRef.current)) revokePageBlobSrcs([src]);
+      });
+    }, delayMs);
+  };
+
+  const handleClearQueue = () => {
+    const queue = stateRef.current?.queue || [];
+    const srcs = collectBlobSrcs({ queue, history: [], currentEntry: null });
+    setSharedState((previous) => ({ ...previous, queue: [] }));
+    scheduleBlobRevocation(srcs);
+  };
+
+  const handleRemoveHistoryItem = (entryId) => {
+    const history = stateRef.current?.history || [];
+    const removed = history.find((entry) => entry.entryId === entryId);
+    if (!removed) return;
+    const srcs = collectBlobSrcs({ queue: [], history: [removed], currentEntry: null });
+    setSharedState((previous) => ({
+      ...previous,
+      history: (previous.history || []).filter((entry) => entry.entryId !== entryId),
+    }));
+    scheduleBlobRevocation(srcs);
+  };
+
+  const handleRestoreLocalFile = async ({ entryId, location }, file) => {
+    const list = location === 'history'
+      ? (stateRef.current?.history || [])
+      : (stateRef.current?.queue || []);
+    const sourceEntry = list.find((entry) => entry.entryId === entryId);
+    if (!sourceEntry || !isExpiredLocalSongDef(sourceEntry.song)) {
+      showToast(t('queue.localFile.restoreMissing'), 'error');
+      return false;
+    }
+    const supported = file
+      && (file.type?.startsWith('audio/') || file.type === 'video/mp4');
+    if (!supported) {
+      showToast(t('search.file.invalidType'), 'error');
+      return false;
+    }
+    if (file.size > LOCAL_FILE_MAX_BYTES) {
+      showToast(t('search.file.tooLarge'), 'error');
+      return false;
+    }
+
+    const mediaType = file.type === 'video/mp4' ? 'video' : 'audio';
+    let restoredSong;
+    let blobSrc = null;
+    if (useOnAirPlayer) {
+      showToast(t('dashboard.localFile.preparing'), 'info');
+      try {
+        const asset = await onAir.uploadAsset(file);
+        restoredSong = sanitizeSongDef({
+          ...sourceEntry.song,
+          src: asset.assetId,
+          assetId: asset.assetId,
+          localSourceExpired: false,
+          localBlobBytes: file.size,
+          mediaType,
+        });
+      } catch {
+        showToast(t('queue.localFile.restoreFailed'), 'error');
+        return false;
+      }
+    } else {
+      try {
+        blobSrc = createPageBlobSrc(file);
+      } catch {
+        showToast(t('queue.localFile.restoreFailed'), 'error');
+        return false;
+      }
+      restoredSong = restoreLocalBlobSong(sourceEntry.song, {
+        src: blobSrc,
+        bytes: file.size,
+        mediaType,
+      });
+    }
+    if (!restoredSong) {
+      if (blobSrc) revokePageBlobSrcs([blobSrc]);
+      showToast(t('queue.localFile.restoreMissing'), 'error');
+      return false;
+    }
+
+    const latestList = location === 'history'
+      ? (stateRef.current?.history || [])
+      : (stateRef.current?.queue || []);
+    const latestSourceEntry = latestList.find((entry) => entry.entryId === entryId);
+    if (!latestSourceEntry || !isExpiredLocalSongDef(latestSourceEntry.song)) {
+      if (blobSrc) revokePageBlobSrcs([blobSrc]);
+      showToast(t('queue.localFile.restoreMissing'), 'error');
+      return false;
+    }
+
+    if (location === 'history') {
+      const replay = createQueueEntry(restoredSong);
+      setSharedState((previous) => {
+        if (!(previous.history || []).some((entry) => entry.entryId === entryId)) return previous;
+        return { ...previous, queue: [replay, ...(previous.queue || [])] };
+      });
+      showToast(t('queue.localFile.restoredHistory', { title: sourceEntry.song.title }), 'success');
+    } else {
+      setSharedState((previous) => {
+        if (!(previous.queue || []).some((entry) => entry.entryId === entryId)) return previous;
+        return {
+          ...previous,
+          queue: (previous.queue || []).map((entry) => entry.entryId === entryId
+            ? { ...entry, song: restoredSong, phase: 'queued', completionReason: null }
+            : entry),
+        };
+      });
+      showToast(t('queue.localFile.restoredQueue', { title: sourceEntry.song.title }), 'success');
+    }
+    return true;
   };
 
   togglePlaybackRef.current = handleTogglePlayback;
@@ -2550,7 +2738,7 @@ export default function Dashboard() {
         // Destructive list cleanup is reserved for the user's explicit
         // "end broadcast" action. A player timeout or OBS restart must never
         // erase a setlist.
-        revokeBlobSrcs(collectBlobSrcs(stateRef.current));
+        revokePageBlobSrcs(collectBlobSrcs(stateRef.current));
         setSharedState((previous) => ({ ...previous, currentEntry: null, active: null, queue: [], history: [] }));
         showToast(t('onair.session.ended.explicit'), 'info');
         return;
@@ -2674,6 +2862,9 @@ export default function Dashboard() {
               history={state?.history || []}
               onPlayQueueItem={handlePlayQueuedSong}
               onRemoveFromQueue={handleRemoveFromQueue}
+              onClearQueue={handleClearQueue}
+              onRemoveHistoryItem={handleRemoveHistoryItem}
+              onRestoreLocalFile={handleRestoreLocalFile}
               autoPlayNext={Boolean(state?.autoPlayNext)}
               setSharedState={setSharedState}
               prepareStates={prepareStates}

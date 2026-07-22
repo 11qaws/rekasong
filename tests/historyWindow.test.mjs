@@ -90,6 +90,6 @@ test('the 1000-entry browser fixture is development-only, bounded, and bypasses 
   const source = await fs.readFile(new URL('../src/hooks/useSyncState.js', import.meta.url), 'utf8');
   assert.match(source, /import\.meta\.env\?\.DEV !== true/);
   assert.match(source, /DEV_HISTORY_FIXTURE_MAX = 2000/);
-  assert.match(source, /if \(developmentFixture\) return \{ state: normaliseState\(developmentFixture\), droppedLocalSongs \}/);
+  assert.match(source, /if \(developmentFixture\) return \{ state: normaliseState\(developmentFixture\), localFilesNeedReselection \}/);
   assert.doesNotMatch(source, /localStorage\.setItem\([^\n]*DEV_HISTORY_FIXTURE_QUERY/);
 });
