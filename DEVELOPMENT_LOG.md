@@ -8,7 +8,7 @@
 - Dashboard는 마지막 OBS 절대 위치와 `performance.now()`를 한 anchor로 묶어 실제 재생 중에만 1초마다 화면의 진행 표시를 계산한다. 누적 `+1초` 카운터가 아니므로 탭 timer가 늦어져도 다음 tick에서 절대 경과시간으로 따라잡는다. pause/loading/buffering에서는 timer 자체를 멈추고 duration을 넘지 않는다. 30초 실제 샘플·seek·lifecycle 이벤트가 도착하면 표시 기준만 다시 잡는다.
 - OBS→Speaker 전환 시 React 화면에 마지막으로 그려진 숫자가 아니라 클릭 순간의 projected position을 사용하므로 30초 telemetry 간격이 재개 위치 오차로 이어지지 않는다. 이전 run의 늦은 player event는 identity 확인 전에 진행 시간을 바꾸지 못하도록 함께 정리했다.
 - 새 사용자 문구는 없어서 번역 catalog 변경은 없다. 코드 증가는 작은 순수 시계 helper와 테스트뿐이며, OBS audio에 대한 제어 surface는 추가하지 않았다.
-- 전체 `724/724` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법과 production build를 통과했다. 빌드 기준 Dashboard는 `372.71kB raw / 102.09kB gzip`, OBS player는 `42.66kB raw / 12.53kB gzip`이며 OBS 전용 묶음도 `384.11kB raw / 118.43kB gzip` 예산 안이다. 격리된 production 화면 검사에서 기본 스피커, 320/375/768/1100px 반응형, 노란 머리선, 번역 전환, OBS 설정 진입을 확인했고 warm load에는 long task가 없었다. 배포·공개 artifact 검증은 같은 버전의 후속 기록에 추가한다.
+- 전체 `724/724` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법과 production build를 통과했다. 빌드 기준 Dashboard는 `372.71kB raw / 102.09kB gzip`, OBS player는 `42.66kB raw / 12.53kB gzip`이며 OBS 전용 묶음도 `384.11kB raw / 118.43kB gzip` 예산 안이다. 격리된 production 화면 검사에서 기본 스피커, 320/375/768/1100px 반응형, 노란 머리선, 번역 전환, OBS 설정 진입을 확인했고 warm load에는 long task가 없었다. commit `ccac98477871f01a6625f90056535a9a9687ca33`의 Pages workflow `29966902022`와 deployment `5564569384`가 성공했고, 공개 핵심 자산 5개가 Actions artifact와 바이트·SHA-256까지 일치했다.
 
 ## 2026-07-23 (Codex) — v0.2.25 번역 길이·모바일 레이아웃 배포 관문
 
