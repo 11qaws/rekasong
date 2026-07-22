@@ -133,6 +133,7 @@
 - `+69ms` OBS Browser Sync Offset 비교는 상대 지연을 약 `82–84ms`로 악화시켜 `0ms`로 되돌렸다. 서로 다른 하드웨어 clock의 drift 보정으로 사용하지 않는다.
 - 각 곡은 새 run과 `position: 0`으로 기준점을 다시 잡되 OBS route와 lease는 유지한다. 정확한 이전 run stop proof 뒤에만 다음 media run을 load/play하며, 곡 중간에는 자동 seek·restart·속도 보정을 하지 않는다.
 - 실제 OBS UI에서 Source Refresh와 OBS 재시작 뒤 profile·scene·Browser/FIFINE source·mixer 설정 보존은 확인했다. 당시 Browser URL은 이전 세션 값이므로 live route 복구 증거로 세지 않는다.
+- OBS 30.2.0의 Chromium 103과 Vite 8 기본 Chrome 111+ target 사이의 공백을 제거한 v0.2.19 후보를 만들었다. 전용 test collection 파일에만 비공개 handoff URL을 백업 후 원자적으로 넣는 fail-closed 도구와 회귀 검사는 통과했지만, 이 문서의 실제 CEF 복구 결과는 배포 후 물리 run 전까지 여전히 미통과다.
 - 남은 항목은 사용자가 직접 들은 monitoring 결과, 비공개 방송/VOD(G5), 같은 audio clock 또는 저지연 performer monitoring 경로의 5분 곡 단위 G6 재검증, scene 전환과 유효한 live-session에서의 source refresh·OBS 재시작 변형이다.
 
 세부 증거와 남은 절차는 `docs/OBS_REMAINING_VALIDATION_PLAN_2026-07-20.md`에 유지한다.

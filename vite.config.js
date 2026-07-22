@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// OBS 30.2.0 ships obs-browser with Chromium 103. Vite 8 otherwise targets
+// Chrome 111+, which can leave the player unable to start inside OBS while the
+// same release works in a current desktop browser.
+export const OBS_CEF_BUILD_TARGET = 'chrome103'
+
 const latestPayloads = new Map()
 
 function installWidgetSyncMiddleware(server) {
@@ -70,6 +75,8 @@ export default defineConfig({
   plugins: [react(), widgetSyncPlugin()],
   base: process.env.GITHUB_ACTIONS ? '/rekasong/' : '/',
   build: {
+    target: OBS_CEF_BUILD_TARGET,
+    cssTarget: OBS_CEF_BUILD_TARGET,
     manifest: true,
   },
 })

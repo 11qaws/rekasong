@@ -120,6 +120,11 @@ Chrome 통과만으로 OBS CEF 성능을 합격시키지 않는다. 측정마다
 
 `scripts/obs-v2-external-cef-soak.mjs`는 헤드리스 브라우저가 아니라 사용자가 연 실제 OBS Browser Source 하나를 Protocol v2 세션에 연결한다. 세션 credential이 든 URL은 stdout이나 명령행에 출력하지 않고, 권한이 제한된 임시 JSON handoff 파일로만 전달한다.
 
+OBS 30.2.0의 obs-browser는 Chromium 103이므로 production build는 JS·CSS 모두
+`chrome103`을 명시적으로 target으로 삼는다. Vite의 최신 기본 브라우저 target에
+맡기지 않는다. 이 정적 설정은 필요조건이며 실제 CEF 등록·재생 합격을 대신하지
+않는다.
+
 ```powershell
 $env:REKASONG_WORKER='https://<worker-host>'
 $env:REKASONG_APP='https://<frontend-host>'
@@ -199,6 +204,27 @@ npm run test:obs:v2:cef-recovery
 않아 비공개 live-session URL을 넣지 못했다. 방송·녹화는 시작하지 않았고 임시
 handoff와 clipboard는 정리했다. 따라서 이 subsection의 실제 OBS 합격 증거는 아직
 `not-run`이며 자동·production-browser 새-ID 복구 통과와 구분한다.
+
+Qt Properties 입력 대신 전용 test collection 파일을 준비할 때만 다음 절차를 쓸 수
+있다. OBS가 실행 중이면 도구가 거부하며, collection/scene/source/visible/
+`Control audio via OBS`/앱·Worker origin/Protocol v2 중 하나라도 다르면 원본을
+수정하지 않는다. 백업 파일은 기존 파일이 없는 새 절대 경로여야 한다.
+
+```powershell
+npm run prepare:obs:test-source -- `
+  --scene-file 'C:\Users\<user>\AppData\Roaming\obs-studio\basic\scenes\<test>.json' `
+  --handoff-file 'C:\path\to\obs-player-url.json' `
+  --backup-file 'C:\path\to\new-backup.json' `
+  --collection '<test collection>' `
+  --scene '<test scene>' `
+  --source '<test Browser source>' `
+  --app 'https://<frontend-host>/<base>/' `
+  --worker 'https://<worker-host>/'
+```
+
+교체 뒤 OBS를 정상 실행해 test profile/collection과 방송·녹화 OFF를 다시 확인한다.
+시험 종료 뒤에는 백업 URL을 같은 안전 조건으로 복원하고 cache refresh를 적용한다.
+사용자의 방송용 profile/collection에는 이 절차를 사용하지 않는다.
 
 ## 6. G1 — 출력 선택과 단일 lease
 

@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.18",
+  "version": "0.2.19",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,6 +19,7 @@
     "test:obs:v2:idle-soak": "node scripts/obs-v2-idle-soak.mjs",
     "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs",
     "test:obs:v2:cef-recovery": "node scripts/obs-v2-external-cef-soak.mjs --recovery",
+    "prepare:obs:test-source": "node scripts/prepare-obs-test-browser-source.mjs",
     "make:obs:karaoke-fixture": "node scripts/obs-karaoke-sync-fixture.mjs",
     "test:dashboard:smoke": "node scripts/dashboard-production-smoke.mjs",
     "test:dashboard:history": "npm run build && node scripts/dashboard-history-performance-smoke.mjs",

@@ -1,5 +1,11 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.19 OBS Chromium 103 호환 빌드와 안전한 실기 준비
+
+- 실제 OBS 30.2.0의 `obs-browser 2.23.5`가 Chromium `103.0.5060.134`를 사용하지만 Vite 8 기본 production target은 Chrome 111 이상이라는 호환 공백을 확인했다. 현재 브라우저에서는 정상이어도 OBS CEF가 player 등록 전에 멈출 수 있으므로 JS와 CSS target을 모두 `chrome103`으로 고정했다. 이 차이가 이전 실제 등록 실패의 원인이었다고 단정하지 않고, 새 빌드의 실제 CEF 등록으로 별도 판정한다.
+- Qt Properties 입력 자동화가 비공개 URL을 끝까지 저장하지 못한 문제를 우회하기 위해 `prepare:obs:test-source`를 추가했다. OBS가 완전히 종료된 상태에서만 지정된 test collection·현재/program scene·정확히 한 개의 visible Browser source·`Control audio via OBS=true`·승인된 앱/Worker/Protocol v2 URL을 모두 검사한다. 모든 조건이 맞을 때만 원본을 별도 파일로 먼저 백업하고 같은 경로에 원자적으로 교체하며, stdout에는 token을 남기지 않는다.
+- 새 회귀 6개를 포함한 전체 `705/705` 테스트, Worker 문법, production build, `git diff --check`를 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다. OBS closure는 `383,782B raw / 117,550B gzip / 102,988B brotli`로 기존 예산 안이다. 실제 source refresh·OBS 재시작의 live-session 관문은 새 release 배포 후 전용 시험 scene에서 방송·녹화 OFF로 실행하기 전까지 미통과다.
+
 ## 2026-07-23 (Codex) — v0.2.18 Speaker 탭별 재생 세션과 OBS 복구 실기 절차
 
 - 공개 v0.2.17을 두 탭에서 직접 재현해, 현재 곡은 각 탭에 남지만 A에서 `대기열 맨 위에 다시 추가`한 곡이 B에도 나타나는 결함을 확인했다. A는 `준비됨`, B는 같은 항목을 `준비 중`으로 표시해 서로 다른 미디어 준비 수명과 공유 대기열이 충돌했다. 이것은 “여러 Speaker 창이 서로 막지 않는 일반 웹 플레이어”라는 기존 완료 판정을 반박하는 실제 증거였다.
