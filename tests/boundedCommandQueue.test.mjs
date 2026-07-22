@@ -5,6 +5,8 @@ import {
   BOUNDED_COMMAND_QUEUE_CODES,
   BoundedCommandQueueError,
   createBoundedCommandQueue,
+  dispatchDeferredTransportCommand,
+  reconcileDeferredTransportState,
 } from '../src/lib/boundedCommandQueue.js';
 
 function fakeClock() {
@@ -89,4 +91,56 @@ test('rejectAll settles every waiting command and invalid input fails clearly', 
     (error) => error instanceof BoundedCommandQueueError
       && error.code === BOUNDED_COMMAND_QUEUE_CODES.INVALID_COMMAND,
   );
+});
+
+test('a stale ready label queues until the remounted physical transport reports ready again', async () => {
+  const clock = fakeClock();
+  const queue = queueWith(clock);
+  const unavailableError = () => new Error('local_speaker_not_ready');
+  const pending = dispatchDeferredTransportCommand({
+    transport: null,
+    state: 'ready',
+    queue,
+    command: { type: 'load', runId: 'speaker-switch' },
+    unavailableError,
+  });
+  assert.equal(queue.size(), 1);
+
+  const received = [];
+  const transport = {
+    sendCommand(command) {
+      received.push(command);
+      return `${command.runId}-loaded`;
+    },
+  };
+  assert.equal(reconcileDeferredTransportState({
+    transport,
+    state: 'ready',
+    queue,
+    unavailableError,
+  }), true);
+  assert.equal(await pending, 'speaker-switch-loaded');
+  assert.deepEqual(received, [{ type: 'load', runId: 'speaker-switch' }]);
+});
+
+test('the physical transport wins over a stale initializing label and terminal failures stay bounded', async () => {
+  const clock = fakeClock();
+  const queue = queueWith(clock);
+  const unavailableError = () => new Error('local_speaker_not_ready');
+  const transport = { sendCommand: (command) => command.runId };
+  assert.equal(dispatchDeferredTransportCommand({
+    transport,
+    state: 'initializing',
+    queue,
+    command: { type: 'play', runId: 'already-ready' },
+    unavailableError,
+  }), 'already-ready');
+  assert.equal(queue.size(), 0);
+  assert.throws(() => dispatchDeferredTransportCommand({
+    transport: null,
+    state: 'failed',
+    queue,
+    command: { type: 'play', runId: 'failed' },
+    unavailableError,
+  }), /local_speaker_not_ready/);
 });

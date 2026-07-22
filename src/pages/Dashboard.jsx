@@ -22,7 +22,11 @@ import {
   restoreLocalBlobSong,
   revokeBlobSrcs,
 } from '../lib/blobLifecycle';
-import { createBoundedCommandQueue } from '../lib/boundedCommandQueue';
+import {
+  createBoundedCommandQueue,
+  dispatchDeferredTransportCommand,
+  reconcileDeferredTransportState,
+} from '../lib/boundedCommandQueue';
 import {
   attachObsAssetToPlaybackState,
   collectLocalObsAssetCandidates,
@@ -660,23 +664,32 @@ export default function Dashboard() {
     ? 'obs'
     : 'speaker';
 
-  const queueLocalSpeakerCommand = (command) => (
-    localSpeakerCommandQueueRef.current.enqueue(command)
-  );
-
   const dispatchPlaybackCommand = (command, outputMode = playbackModeForRun()) => {
     if (outputMode === 'obs') return sendOnAirCommand(command);
-    const localSpeaker = localSpeakerRef.current;
-    if (!localSpeaker) {
-      if (localSpeakerState === 'initializing') return queueLocalSpeakerCommand(command);
-      throw new Error(t('playback.localSpeaker.notReady'));
-    }
-    if (localSpeakerState === 'initializing') return queueLocalSpeakerCommand(command);
-    if (localSpeakerState !== 'ready') {
-      throw new Error(t('playback.localSpeaker.notReady'));
-    }
-    return localSpeaker.sendCommand(command);
+    // The forwarded ref is the physical readiness fact. React can briefly keep
+    // the previous `ready` state while a lazy/remounted controller has no ref,
+    // or report `initializing` for one render after the ref is already usable.
+    // Queue the former and use the latter immediately so OBS -> Speaker never
+    // fails only because those two commit signals crossed.
+    return dispatchDeferredTransportCommand({
+      transport: localSpeakerRef.current,
+      state: localSpeakerState,
+      queue: localSpeakerCommandQueueRef.current,
+      command,
+      unavailableError: () => new Error(t('playback.localSpeaker.notReady')),
+    });
   };
+
+  const handleLocalSpeakerStateChange = useCallback((nextState, error = null) => {
+    setLocalSpeakerState(nextState);
+    reconcileDeferredTransportState({
+      transport: localSpeakerRef.current,
+      state: nextState,
+      queue: localSpeakerCommandQueueRef.current,
+      error,
+      unavailableError: () => new Error(t('playback.localSpeaker.notReady')),
+    });
+  }, []);
 
   useEffect(() => {
     if (localSpeakerState === 'ready' && localSpeakerRef.current) {
@@ -3144,7 +3157,7 @@ export default function Dashboard() {
               sinkId={speakerOutputDevice.deviceId}
               onEvidence={handleLocalSpeakerEvidence}
               onSinkError={handleSpeakerSinkRestoreFailure}
-              onStateChange={setLocalSpeakerState}
+              onStateChange={handleLocalSpeakerStateChange}
             />
           </Suspense>
         )}

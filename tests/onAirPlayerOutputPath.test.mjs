@@ -166,7 +166,7 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   );
   assert.match(
     source,
-    /createBoundedCommandQueue\([\s\S]*?LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS[\s\S]*?localSpeakerCommandQueueRef\.current\.enqueue\(command\)[\s\S]*?localSpeakerState === 'ready'[\s\S]*?localSpeakerCommandQueueRef\.current\.drain/,
+    /createBoundedCommandQueue\([\s\S]*?LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS[\s\S]*?dispatchDeferredTransportCommand\(\{[\s\S]*?reconcileDeferredTransportState\(\{/,
     'a first Speaker click must wait for the local element instead of surfacing a route lock',
   );
   assert.match(
@@ -181,8 +181,8 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   );
   assert.match(
     source,
-    /if \(!localSpeaker\) \{\s+if \(localSpeakerState === 'initializing'\) return queueLocalSpeakerCommand\(command\);/,
-    'the first local command waits only for the page-owned player element',
+    /dispatchDeferredTransportCommand\(\{[\s\S]*?transport: localSpeakerRef\.current[\s\S]*?state: localSpeakerState[\s\S]*?queue: localSpeakerCommandQueueRef\.current/,
+    'the first local command waits only for the page-owned physical player element',
   );
   assert.doesNotMatch(source, /DashboardSpeakerPlayerV2|shouldHostDashboardSpeaker|rekasong-output-owner/);
   assert.doesNotMatch(source, /const selectLocalSpeakerMode = outputControl\.selectLocalSpeakerMode;/);

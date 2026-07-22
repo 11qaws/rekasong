@@ -65,4 +65,14 @@ test('production Speaker keeps local files page-owned until explicit OBS demand'
     dashboard,
     /const retryStagedLocalObsAsset = useCallback[\s\S]*?assetStatus: 'local'[\s\S]*?onRetryLocalObsAsset: retryStagedLocalObsAsset/,
   );
+  assert.match(
+    dashboard,
+    /dispatchDeferredTransportCommand\(\{[\s\S]*?transport: localSpeakerRef\.current[\s\S]*?queue: localSpeakerCommandQueueRef\.current/,
+    'a temporarily missing Speaker ref must queue instead of failing a live OBS-to-Speaker switch',
+  );
+  assert.match(
+    dashboard,
+    /const handleLocalSpeakerStateChange = useCallback[\s\S]*?reconcileDeferredTransportState[\s\S]*?onStateChange=\{handleLocalSpeakerStateChange\}/,
+    'every physical controller-ready notification must drain commands even across ready-to-ready remounts',
+  );
 });

@@ -1,5 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-22 (Codex) — v0.2.12 재생 중 OBS → Speaker 전환 복구
+
+- 공개 v0.2.11과 실제 OBS 30.2.0 `Rekasong` Browser Source로 48kHz mono 880Hz 펄스 WAV를 재생했다. OBS 믹서의 `Rekasong` 레벨이 실제로 움직였고, 로컬 녹화 `C:\Users\Qumin\Videos\2026-07-22 18-40-45.mp4`는 223.933초 H.264 + AAC 48kHz stereo, 34,830,505바이트였다. 첫 실행은 18개 펄스를 모두 기록했고 두 번째 실행은 Speaker 전환 시점까지 10개를 기록한 뒤 OBS 신호가 멈췄으며, 전체 peak는 -19.1dB로 clipping이 없었다. 라이브 송출은 시작하지 않았다.
+- 이 물리 시험에서 OBS 출력은 정상 정지했지만 Dashboard가 `Playing through speakers`로 바뀐 직후 실제 Speaker `<audio>`에는 source가 붙지 않고 `The speaker player is getting ready` 실패로 끝나는 race를 재현했다. 원인은 lazy/remount 구간에 forwarded ref와 React의 `ready`/`initializing` 라벨이 서로 다른 commit을 가리킬 수 있는데, 기존 dispatch가 라벨을 먼저 믿고 즉시 실패하거나 이미 사용 가능한 ref를 불필요하게 대기시킨 것이었다.
+- v0.2.12는 실제 local Speaker controller ref를 물리적 준비 근거로 삼는다. ref가 있으면 stale `initializing` 라벨과 무관하게 즉시 명령을 보내고, ref가 잠시 없으면 stale `ready` 라벨이어도 기존 12초 상한 queue에 넣는다. 자식의 모든 `ready` 알림에서 `ready → ready`처럼 React state effect가 생략되는 경우까지 queue를 drain한다. `failed`/`invalid_configuration`만 즉시 실패하며 OBS 정지 확인 실패는 기존처럼 Speaker 시작을 막지 않는다.
+- `dispatchDeferredTransportCommand`와 `reconcileDeferredTransportState`의 순수 회귀 계약을 추가했다. stale-ready/no-ref 명령이 대기한 뒤 remount-ready 알림에서 정확히 한 번 실행되는지, stale-initializing/live-ref는 즉시 실행되는지, terminal 실패는 bounded인지 자동 테스트한다.
+- 검증: 자동 테스트 666/666, lint 신규 경고 0(기존 `functions/api/gemini.js` escape 경고 2건만 유지), 모든 Functions/Worker 문법, production build, OBS 정적 closure 예산(raw 382,809B / gzip 117,324B / brotli 102,821B)을 통과했다. 로컬 Speaker network smoke는 실제 재생 중 session HTTP 0회/WebSocket 0개/frame 0개, local chunk 2개/remote chunk 0개를 유지했고, 로컬 파일 복구·drag·Dashboard·1,000곡 성능 smoke도 통과했다. 1,000곡 cold 254.7ms, warm p95 34.6ms, post-GC heap 증가 0B, 320px overflow 0이었다.
+- 유레카의 노란 머리를 상징하는 3px 금발선은 영구 UI 계약으로 보존한다. 이번 변경은 CSS를 건드리지 않았고 기존 한국어·영어 320/375/768/1100px 브라우저 검증과 정적 회귀 검사를 계속 유지한다.
+- 실제 OBS 설정은 시험 후 원래 Browser Source URL로 정확히 복원했고 테스트 URL이 설정 파일에 남지 않았음을 확인했다. v0.2.12 배포 뒤 같은 실제 OBS → Speaker 재생 중 전환을 다시 실행해 `<audio>`의 `paused=false`, Blob source, 증가하는 media time을 최종 확인한다.
+
 ## 2026-07-22 (Codex) — v0.2.11 Speaker 로컬 파일 완전 로컬 우선
 
 - 로컬 파일 선택·검토·즉시 재생·대기열 추가·파일 다시 선택은 이제 page-owned `blob:`만 사용한다. Speaker에서는 파일을 Worker에 올리거나 `/v1/sessions`를 만들지 않으며, 로컬 WAV를 실제 `<audio>`로 재생해 시간이 증가하는 동안 session HTTP 0회 / control WebSocket 0개 / 전송 frame 0개를 확인했다.
