@@ -10,6 +10,8 @@
 >
 > 추가 scene 전환 harness 배포: `0.2.20` / `b70d5b6e408a9fd5fe6379567b28a2eed3a25bfb`
 >
+> 추가 활성 곡 control-gap 검증: `0.2.24` 후보 / 실제 OBS 통과
+>
 > Production Worker: `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`
 >
 > OBS: `30.2.0`, 전용 profile·scene collection `Rekasong_Local_Record_Test_20260722`
@@ -24,6 +26,7 @@
 - 플랫폼으로 실제 전송된 결과물 G5는 의도적으로 검증하지 않았다.
 - 라이브 마이크↔MR G6는 전용 분리 track과 물리 스피커·FIFINE 마이크로 10분까지 실행했다. 60/60 marker와 낮은 jitter는 확인했지만, 현재 장치 조합의 상대 drift가 허용치를 넘었으므로 **G6 통과로 판정하지 않는다**.
 - 공개 v0.2.19 OBS player의 302.5초 곡을 빈 장면으로 10초 전환했다가 복귀해도 동일 player·connection·run이 유지됐고 wall 오차 `84ms`로 자연 종료했다. 30초 관측은 기록 전용이며 곡 중 재생 위치나 속도를 보정하지 않는다.
+- v0.2.24 실제 control-gap run은 활성 곡 중 Dashboard 제어 socket만 끊어도 같은 coordinator·player·run이 유지되고 media timeline이 계속 전진하며, 복구 뒤 명시적 pause/play/stop이 다시 적용됨을 확인했다.
 
 ### 1.1 장면 전환 연속성 추가 검증 — 2026-07-23
 
@@ -32,6 +35,16 @@
 - 최종 run은 `302,584ms / 기대 302,500ms / 오차 84ms`, candidate transition 0, unsafe route 0, session 종료 뒤 HTTP 410이었다. 앞선 두 run도 오차 `97ms`, `31ms`로 곡을 자연 종료했다.
 - 한 앞선 run의 control WebSocket 순간 단절에서도 OBS media graph는 계속 재생됐다. 최종 합격 run에는 client socket-close 진단과 재접속 시도가 없었다. 기존 raw disconnect counter 1은 `end_session` 뒤 정상 close까지 집계한 계측 오류였고, 정상 terminal close를 제외하도록 수정했다.
 - 세 run 모두 `Start Streaming`·`Start Recording` 버튼과 두 타이머 `00:00:00`을 매번 확인했다. 실제 방송·녹화는 시작하지 않았다. 각 run 뒤 Browser Source URL을 백업으로 복원하고 임시 credential 파일을 제거했다.
+
+### 1.2 활성 곡 control socket 단절·복구 — 2026-07-23
+
+- 실제 OBS 30.2.0 안전 모드와 전용 `Rekasong_Local_Record_Test_20260722 / Scene / Browser`에서 production Worker·공개 player·15초 생성 WAV를 사용했다. `Control audio via OBS=true`, visible Browser source 1개 조건을 교체 도구가 먼저 검증했다.
+- 최초 PLAY 후 media가 실제 advancing인 상태에서 유일한 Dashboard control WebSocket에 close `4101`을 요청했다. client close event는 Cloudflare 경로에서 `1006 / wasClean=false`로 관측됐지만 OBS player·media socket은 닫히지 않았다.
+- coordinator factory는 `1`, control socket은 `1→2`, 추가 connect는 정확히 `1`이었다. disconnect/retry는 `1/1`, 최대 gap은 `1,118ms`, retry부터 READY까지 `740ms`였다. 같은 player ID·entry/run·audible lease를 복구했고 position은 `0→3.322594s`로 전진했다.
+- 복구 중 자동 activate/deactivate/emergency/load/play/pause/seek/volume/stop delta는 모두 `0`이었다. 늦은 Dashboard timer도 `already_ready`로 끝나 새 coordinator/socket/command를 만들지 않았다.
+- 복구 뒤 명시적 PAUSE→PLAY→STOP을 같은 run에 보내 실제 상태 변화를 확인했다. output deactivate와 end session 뒤 session status는 HTTP 410이었다.
+- 첫 run은 동작 결함이 아니라 검증기가 요청 close code와 관측 close code의 일치를 강제한 탓에 실패했다. 요청·관측을 분리하도록 고친 뒤 전체 시나리오를 처음부터 다시 실행해 통과했다. 두 run 모두 정리 후 원본 URL을 exact match로 복원했다.
+- 시험 전후 UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 최종 로그 `2026-07-23 07-20-44.txt`의 Streaming/Recording Start·Stop은 모두 0이고 clean shutdown은 1회다. 원본 URL은 214자·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`로 exact 복원됐고 handoff는 제거됐다. 실제 방송·녹화는 시작하지 않았다.
 
 ## 2. 안전 경계와 방송 OFF 증거
 

@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.23",
+  "version": "0.2.24",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,7 @@
     "test:obs:v2:cef-soak": "node scripts/obs-v2-external-cef-soak.mjs",
     "test:obs:v2:cef-recovery": "node scripts/obs-v2-external-cef-soak.mjs --recovery",
     "test:obs:v2:cef-scene-transition": "node scripts/obs-v2-external-cef-soak.mjs --scene-transition",
+    "test:obs:v2:cef-control-gap": "node scripts/obs-v2-external-cef-soak.mjs --control-gap",
     "prepare:obs:test-source": "node scripts/prepare-obs-test-browser-source.mjs",
     "make:obs:karaoke-fixture": "node scripts/obs-karaoke-sync-fixture.mjs",
     "test:dashboard:smoke": "node scripts/dashboard-production-smoke.mjs",

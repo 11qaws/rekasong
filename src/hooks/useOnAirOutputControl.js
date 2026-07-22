@@ -409,8 +409,8 @@ export class OnAirOutputController {
     // authoritative snapshot can prove that the same OBS playback survived.
     // Replacing the coordinator here would discard that identity and turn the
     // still-playing song into an unowned run, making recovery itself lock the
-    // controls. Keep the coordinator and reconnect only its socket. Other
-    // When there is no live run, other recovery cases (stuck negotiation,
+    // controls. Keep the coordinator and reconnect only its socket. When there
+    // is no live run, other recovery cases (stuck negotiation,
     // released owner, superseded authority, invalid snapshot) may still use a
     // fresh coordinator below. Ambiguous state with a live run stays fenced
     // until the user chooses the explicit full-reset boundary.

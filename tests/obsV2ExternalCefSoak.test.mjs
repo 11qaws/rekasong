@@ -135,3 +135,45 @@ test('external CEF scene transition preserves one live player until natural end'
     'node scripts/obs-v2-external-cef-soak.mjs --scene-transition',
   );
 });
+
+test('external CEF control-gap mode proves output-controller recovery without command replay', async () => {
+  const source = await readFile(scriptUrl, 'utf8');
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
+  assert.match(source, /import \{ OnAirOutputController \} from '\.\.\/src\/hooks\/useOnAirOutputControl\.js';/);
+  assert.match(source, /const CONTROL_GAP_MODE = process\.argv\.includes\('--control-gap'\)/);
+  assert.match(
+    source,
+    /\[RECOVERY_MODE, SCENE_TRANSITION_MODE, CONTROL_GAP_MODE\]\.filter\(Boolean\)\.length > 1/,
+  );
+  assert.match(source, /renderObsV2ContinuityFixture\(\{ durationMs: EXPECTED_DURATION_MS \}\)/);
+  assert.match(source, /createOutputControllerCoordinatorFacade\(\)/);
+  assert.match(source, /coordinatorFactory: createTrackedCoordinator/);
+  assert.match(source, /webSocketFactory: createTrackedControlWebSocket/);
+  assert.match(source, /socketRecord\.socket\.close\(CONTROL_GAP_CLOSE_CODE, 'injected control gap'\)/);
+  assert.match(
+    source,
+    /await sleep\(CONTROL_GAP_TRIGGER_DELAY_MS\);[\s\S]*?controlReconnectAttemptCount \+= 1;[\s\S]*?outputController\.retryConnection\(\)/,
+  );
+  assert.match(source, /controlCoordinatorFactoryCount === beforeGapFactoryCount/);
+  assert.match(source, /controlSocketRecords\.length === beforeGapSocketCount \+ 1/);
+  assert.match(source, /Number\.isInteger\(socketRecord\.closeCode\)/);
+  assert.match(source, /replacementSocketRecord !== socketRecord/);
+  assert.match(source, /replacementSocketRecord\.socket\.readyState === WebSocket\.OPEN/);
+  assert.match(source, /afterRecoveryCalls\.connect - beforeGapCalls\.connect === 1/);
+  assert.match(source, /Object\.values\(automaticReplayDeltas\)\.every\(\(count\) => count === 0\)/);
+  assert.match(source, /lateRetry\?\.status === 'already_ready'/);
+  assert.match(source, /sendControllerRunCommand\('pause'\)/);
+  assert.match(source, /sendControllerRunCommand\('play'\)/);
+  assert.match(source, /sendControllerRunCommand\('stop'\)/);
+  assert.match(source, /response\.status === 410 && body\?\.status === 'ended'/);
+  assert.doesNotMatch(
+    source,
+    /\b(?:StartStream|StopStream|StartRecord|StopRecord|StartStreaming|StopStreaming)\b/,
+    'the CEF harness has no OBS broadcast or recording command surface',
+  );
+  assert.equal(
+    packageJson.scripts['test:obs:v2:cef-control-gap'],
+    'node scripts/obs-v2-external-cef-soak.mjs --control-gap',
+  );
+});

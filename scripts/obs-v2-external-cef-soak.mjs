@@ -6,6 +6,8 @@ import {
   ON_AIR_CONTROL_COORDINATOR_CODES,
   OnAirControlCoordinator,
 } from '../src/lib/onAirControlCoordinator.js';
+import { OnAirOutputController } from '../src/hooks/useOnAirOutputControl.js';
+import { renderObsV2ContinuityFixture } from './obs-v2-continuity-fixture.mjs';
 import {
   createHarnessDiagnosticSanitizer,
   omittedHttpBodyErrorMessage,
@@ -17,7 +19,8 @@ const ASSET_PATH = process.env.REKASONG_CEF_SOAK_ASSET || '';
 const ASSET_MIME = process.env.REKASONG_CEF_SOAK_MIME || 'audio/mp4';
 const RECOVERY_MODE = process.argv.includes('--recovery');
 const SCENE_TRANSITION_MODE = process.argv.includes('--scene-transition');
-if (RECOVERY_MODE && SCENE_TRANSITION_MODE) {
+const CONTROL_GAP_MODE = process.argv.includes('--control-gap');
+if ([RECOVERY_MODE, SCENE_TRANSITION_MODE, CONTROL_GAP_MODE].filter(Boolean).length > 1) {
   throw new Error('choose exactly one external CEF scenario mode');
 }
 const EXPECTED_DURATION_MS = positiveIntegerEnvironment('REKASONG_CEF_SOAK_DURATION_MS', 60_000);
@@ -66,9 +69,47 @@ const SCENE_RETURN_STABLE_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_SCENE_RETURN_STABLE_MS',
   5_000,
 );
+const CONTROL_GAP_TRIGGER_DELAY_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_CONTROL_GAP_TRIGGER_DELAY_MS',
+  350,
+);
+const CONTROL_GAP_PRE_CLOSE_PLAYING_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_CONTROL_GAP_PRE_CLOSE_MS',
+  1_500,
+);
+const CONTROL_GAP_POST_RECOVERY_PLAYING_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_CONTROL_GAP_POST_RECOVERY_MS',
+  750,
+);
 const MAX_ASSET_BYTES = 64 * 1024 * 1024;
+const CONTROL_GAP_CLOSE_CODE = 4101;
+const CONTROL_GAP_TRACKED_METHODS = Object.freeze([
+  'connect',
+  'activateOutput',
+  'deactivateOutput',
+  'emergencyStop',
+  'load',
+  'play',
+  'pause',
+  'seek',
+  'setVolume',
+  'stop',
+  'endSession',
+]);
+const CONTROL_GAP_NO_REPLAY_METHODS = Object.freeze([
+  'activateOutput',
+  'deactivateOutput',
+  'emergencyStop',
+  'load',
+  'play',
+  'pause',
+  'seek',
+  'setVolume',
+  'stop',
+]);
 
 let coordinator = null;
+let outputController = null;
 let session = null;
 let sessionEnded = false;
 let temporaryDirectory = null;
@@ -82,9 +123,16 @@ let controlDisconnectCount = 0;
 let controlReconnectAttemptCount = 0;
 let currentControlReconnectAttempts = 0;
 let maxControlGapMs = 0;
+let activeAssetName = null;
+let activeAssetMime = ASSET_MIME;
+let controlCoordinatorFactoryCount = 0;
+let latestTrackedCoordinator = null;
+let outputControllerStarted = false;
 const commandResults = new Map();
 const routeObservations = [];
 const controlDiagnostics = [];
+const controlSocketRecords = [];
+const controlCoordinatorCallCounts = new Map();
 const diagnostics = createHarnessDiagnosticSanitizer();
 
 function positiveIntegerEnvironment(name, fallback) {
@@ -109,6 +157,146 @@ function invariant(condition, label, detail = '') {
     return;
   }
   throw new Error(diagnostics.text(`${label}${detail ? `: ${detail}` : ''}`));
+}
+
+function incrementCoordinatorCall(method) {
+  controlCoordinatorCallCounts.set(method, (controlCoordinatorCallCounts.get(method) || 0) + 1);
+}
+
+function coordinatorCallSnapshot() {
+  return Object.freeze(Object.fromEntries(
+    CONTROL_GAP_TRACKED_METHODS.map((method) => [
+      method,
+      controlCoordinatorCallCounts.get(method) || 0,
+    ]),
+  ));
+}
+
+function coordinatorCallDeltas(before, after, methods = CONTROL_GAP_TRACKED_METHODS) {
+  return Object.freeze(Object.fromEntries(
+    methods.map((method) => [method, (after[method] || 0) - (before[method] || 0)]),
+  ));
+}
+
+function createCoordinatorCallbacks() {
+  return {
+    onSnapshot(snapshot) {
+      routeObservations.push(routeObservation(snapshot));
+      if (routeObservations.length > 512) routeObservations.shift();
+    },
+    onCommandResult(result) {
+      const commandId = result?.entry?.commandId;
+      if (typeof commandId === 'string') commandResults.set(commandId, result);
+    },
+    onDiagnostic(diagnostic) {
+      controlDiagnostics.push({
+        at: Date.now(),
+        code: typeof diagnostic?.code === 'string' ? diagnostic.code : 'connection_diagnostic',
+        closeCode: Number.isInteger(diagnostic?.detail?.code) ? diagnostic.detail.code : null,
+        wasClean: typeof diagnostic?.detail?.wasClean === 'boolean'
+          ? diagnostic.detail.wasClean
+          : null,
+      });
+      if (controlDiagnostics.length > 64) controlDiagnostics.shift();
+    },
+    onStateChange(change) {
+      const expectedTerminalClose = coordinator?.snapshot?.().unknownLock?.code
+        === ON_AIR_CONTROL_COORDINATOR_CODES.SESSION_ENDED;
+      if (!expectedTerminalClose
+        && ['disconnected', 'closed'].includes(change?.state)
+        && controlGapStartedAt === null) {
+        controlGapStartedAt = Date.now();
+        controlDisconnectCount += 1;
+      }
+    },
+  };
+}
+
+function createTrackedControlWebSocket(url) {
+  const socket = new WebSocket(url);
+  const record = {
+    socket,
+    createdAt: Date.now(),
+    openedAt: null,
+    closedAt: null,
+    closeCode: null,
+    wasClean: null,
+  };
+  controlSocketRecords.push(record);
+  socket.addEventListener('open', () => {
+    record.openedAt = Date.now();
+  }, { once: true });
+  socket.addEventListener('close', (event) => {
+    record.closedAt = Date.now();
+    record.closeCode = Number.isInteger(event?.code) ? event.code : null;
+    record.wasClean = typeof event?.wasClean === 'boolean' ? event.wasClean : null;
+  }, { once: true });
+  return socket;
+}
+
+function createTrackedCoordinator(options) {
+  controlCoordinatorFactoryCount += 1;
+  const rawCoordinator = new OnAirControlCoordinator({
+    ...options,
+    callbacks: createCoordinatorCallbacks(),
+  });
+  const proxy = new Proxy(rawCoordinator, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== 'function') return value;
+      return (...args) => {
+        if (CONTROL_GAP_TRACKED_METHODS.includes(property)) incrementCoordinatorCall(property);
+        return value.apply(target, args);
+      };
+    },
+  });
+  latestTrackedCoordinator = proxy;
+  return proxy;
+}
+
+function controllerRunIdentity() {
+  const snapshot = outputController?.getState?.().snapshot;
+  const activeRun = snapshot?.activeRun ?? snapshot?.playerSnapshot?.activeFamily;
+  if (typeof activeRun?.entryId !== 'string' || typeof activeRun?.runId !== 'string') {
+    throw new Error('output controller has no owned active run identity');
+  }
+  return { entryId: activeRun.entryId, runId: activeRun.runId };
+}
+
+function sendControllerRunCommand(type, detail = {}) {
+  return outputController.sendCommand({ type, ...controllerRunIdentity(), ...detail });
+}
+
+function createOutputControllerCoordinatorFacade() {
+  outputController = new OnAirOutputController({
+    session,
+    baseUrl: WORKER,
+    buildId: 'rekasong-v2-external-cef-control-gap',
+    webSocketFactory: createTrackedControlWebSocket,
+    coordinatorFactory: createTrackedCoordinator,
+  });
+  return Object.freeze({
+    connect() {
+      if (!outputControllerStarted) {
+        outputControllerStarted = true;
+        return outputController.connect();
+      }
+      return outputController.retryConnection();
+    },
+    dispose: () => outputController.dispose(),
+    snapshot: () => outputController.getState().snapshot,
+    activateOutput: (mode) => outputController.selectOutputMode(mode),
+    deactivateOutput: () => outputController.selectLocalSpeakerMode(),
+    emergencyStop: (options) => outputController.emergencyStop(options),
+    load: (command) => outputController.sendCommand({ type: 'load', ...command }),
+    play: () => sendControllerRunCommand('play'),
+    pause: () => sendControllerRunCommand('pause'),
+    seek: (position) => sendControllerRunCommand('seek', { position }),
+    setVolume: (volume) => sendControllerRunCommand('volume', { volume }),
+    stop: () => sendControllerRunCommand('stop'),
+    endSession: () => outputController.sendCommand({ type: 'end_session' }),
+    waitForCommandResult: (...args) => latestTrackedCoordinator.waitForCommandResult(...args),
+  });
 }
 
 function commandFailure(commandId) {
@@ -191,6 +379,29 @@ async function waitFor(predicate, timeoutMs, label, options = {}) {
     lease: snapshot?.playerSnapshot?.lease,
     activeFamily: snapshot?.playerSnapshot?.activeFamily,
     confirmedPlayback: snapshot?.playerSnapshot?.confirmedPlayback,
+  })}`);
+}
+
+async function waitForControllerState(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (stopRequested) throw new Error('external CEF soak interrupted');
+    const result = await predicate();
+    if (result) return result;
+    await sleep(50);
+  }
+  const snapshot = outputController?.getState?.().snapshot;
+  throw new Error(`${label} timed out after ${timeoutMs}ms: ${diagnostics.json({
+    state: snapshot?.state,
+    ready: snapshot?.ready,
+    writable: snapshot?.writable,
+    unknownLock: snapshot?.unknownLock,
+    activeRun: snapshot?.activeRun,
+    activeFamily: snapshot?.playerSnapshot?.activeFamily,
+    lease: snapshot?.playerSnapshot?.lease,
+    confirmedPlayback: snapshot?.playerSnapshot?.confirmedPlayback,
+    coordinatorFactoryCount: controlCoordinatorFactoryCount,
+    controlSocketCount: controlSocketRecords.length,
   })}`);
 }
 
@@ -312,8 +523,21 @@ async function createSession() {
 }
 
 async function readSoakAsset() {
+  if (CONTROL_GAP_MODE && ASSET_PATH.length === 0) {
+    const fixture = renderObsV2ContinuityFixture({ durationMs: EXPECTED_DURATION_MS });
+    activeAssetName = fixture.filename;
+    activeAssetMime = fixture.mimeType;
+    invariant(
+      fixture.byteLength > 0 && fixture.byteLength <= MAX_ASSET_BYTES,
+      'generated control-gap fixture fits the active-media cap',
+      `bytes=${fixture.byteLength} limit=${MAX_ASSET_BYTES}`,
+    );
+    return fixture.bytes;
+  }
   invariant(ASSET_PATH.length > 0, 'external CEF soak asset path is configured');
   const bytes = await readFile(ASSET_PATH);
+  activeAssetName = basename(ASSET_PATH);
+  activeAssetMime = ASSET_MIME;
   invariant(bytes.byteLength > 0 && bytes.byteLength <= MAX_ASSET_BYTES,
     'external CEF soak asset fits the active-media cap',
     `bytes=${bytes.byteLength} limit=${MAX_ASSET_BYTES}`);
@@ -327,10 +551,10 @@ async function uploadSoakAsset(bytes) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${session.controlToken}`,
-        'Content-Type': ASSET_MIME,
+        'Content-Type': activeAssetMime,
         'X-Rekasong-Size': String(bytes.byteLength),
-        'X-Rekasong-Type': ASSET_MIME,
-        'X-Rekasong-Name': encodeURIComponent(basename(ASSET_PATH)),
+        'X-Rekasong-Type': activeAssetMime,
+        'X-Rekasong-Name': encodeURIComponent(activeAssetName),
       },
       body: bytes,
     },
@@ -878,6 +1102,260 @@ async function runRecoveryScenario({ candidate, assetId, candidateTransitions })
   })}`));
 }
 
+async function runControlGapScenario({ candidate, assetId, candidateTransitions }) {
+  invariant(outputController !== null, 'control-gap scenario owns the production output controller');
+  await activateRecoveryCandidate(candidate, 'initial');
+
+  const entryId = 'external-cef-control-gap-entry';
+  const runId = 'external-cef-control-gap-run';
+  const load = outputController.sendCommand({
+    type: 'load',
+    entryId,
+    runId,
+    song: {
+      type: 'local',
+      assetId,
+      title: 'OBS CEF control-gap fixture',
+      artist: 'Rekasong',
+    },
+    position: 0,
+    volume: 20,
+  });
+  const playing = await waitFor(() => {
+    const snapshot = outputController.getState().snapshot;
+    const protocol = snapshot?.playerSnapshot;
+    return snapshot?.activeRun?.entryId === entryId
+      && snapshot.activeRun.runId === runId
+      && protocol?.activeFamily?.entryId === entryId
+      && protocol.activeFamily.runId === runId
+      && protocol.confirmedPlayback?.status === 'playing'
+      && protocol.confirmedPlayback.playerInstanceId === candidate.playerInstanceId
+      && protocol.lease?.status === 'audible'
+      && protocol.lease.leaseTarget === candidate.playerInstanceId
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'control-gap fixture starts through the output controller', {
+    commandId: load.command.commandId,
+  });
+  invariant(
+    (controlCoordinatorCallCounts.get('play') || 0) === 1,
+    'output controller sends the initial PLAY exactly once',
+  );
+  await writeStatus('control_gap_playing', {
+    playerCount: playing.players.length,
+    obsCandidateCount: playing.eligibleCandidates.obs.length,
+    leaseStatus: playing.lease.status,
+  });
+
+  await sleep(CONTROL_GAP_PRE_CLOSE_PLAYING_MS);
+  const beforeGapProtocol = outputController.getState().snapshot?.playerSnapshot;
+  const beforeGapPosition = Number(beforeGapProtocol?.confirmedPlayback?.position);
+  invariant(
+    beforeGapProtocol?.confirmedPlayback?.status === 'playing'
+      && Number.isFinite(beforeGapPosition),
+    'control-gap fixture is physically advancing before the injected close',
+  );
+  const beforeGapCalls = coordinatorCallSnapshot();
+  const beforeGapFactoryCount = controlCoordinatorFactoryCount;
+  const beforeGapSocketCount = controlSocketRecords.length;
+  const socketRecord = controlSocketRecords.at(-1);
+  invariant(
+    beforeGapFactoryCount === 1
+      && beforeGapSocketCount === 1
+      && socketRecord?.socket?.readyState === WebSocket.OPEN,
+    'control-gap injection targets the sole coordinator and open control socket',
+  );
+  await writeStatus('injecting_control_gap', {
+    triggerDelayMs: CONTROL_GAP_TRIGGER_DELAY_MS,
+    beforeGapPosition,
+  });
+  socketRecord.socket.close(CONTROL_GAP_CLOSE_CODE, 'injected control gap');
+
+  const disconnected = await waitForControllerState(() => {
+    const snapshot = outputController.getState().snapshot;
+    return ['disconnected', 'closed'].includes(snapshot?.state)
+      && snapshot?.unknownLock?.code === ON_AIR_CONTROL_COORDINATOR_CODES.CONNECTION_LOST
+      ? snapshot
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'injected control socket close becomes a bounded connection gap');
+  invariant(
+    disconnected.activeRun?.entryId === entryId
+      && disconnected.activeRun.runId === runId
+      && disconnected.playerSnapshot?.activeFamily?.entryId === entryId
+      && disconnected.playerSnapshot.activeFamily.runId === runId
+      && disconnected.playerSnapshot.confirmedPlayback?.status === 'playing',
+    'connection loss preserves the owned active run before recovery',
+  );
+
+  await sleep(CONTROL_GAP_TRIGGER_DELAY_MS);
+  const retryStartedAt = Date.now();
+  controlReconnectAttemptCount += 1;
+  outputController.retryConnection();
+  const recovered = await waitForControllerState(() => {
+    const snapshot = outputController.getState().snapshot;
+    const protocol = snapshot?.playerSnapshot;
+    return snapshot?.ready === true
+      && snapshot.writable === true
+      && snapshot.unknownLock === null
+      && snapshot.activeRun?.entryId === entryId
+      && snapshot.activeRun.runId === runId
+      && protocol?.activeFamily?.entryId === entryId
+      && protocol.activeFamily.runId === runId
+      && protocol.confirmedPlayback?.status === 'playing'
+      && protocol.confirmedPlayback.playerInstanceId === candidate.playerInstanceId
+      && protocol.lease?.status === 'audible'
+      && protocol.lease.leaseTarget === candidate.playerInstanceId
+      ? snapshot
+      : null;
+  }, CONTROL_RECONNECT_GRACE_MS, 'output controller recovers the exact active OBS run');
+  finishRecoveredControlGap();
+  const recoveryElapsedMs = Date.now() - retryStartedAt;
+  const afterRecoveryCalls = coordinatorCallSnapshot();
+  const replacementSocketRecord = controlSocketRecords.at(-1);
+  const automaticReplayDeltas = coordinatorCallDeltas(
+    beforeGapCalls,
+    afterRecoveryCalls,
+    CONTROL_GAP_NO_REPLAY_METHODS,
+  );
+  invariant(
+    controlCoordinatorFactoryCount === beforeGapFactoryCount,
+    'control recovery preserves the run-owning coordinator instance',
+    `before=${beforeGapFactoryCount} after=${controlCoordinatorFactoryCount}`,
+  );
+  invariant(
+    controlSocketRecords.length === beforeGapSocketCount + 1,
+    'control recovery opens exactly one replacement socket',
+    `before=${beforeGapSocketCount} after=${controlSocketRecords.length}`,
+  );
+  invariant(
+    socketRecord.closedAt !== null
+      && Number.isInteger(socketRecord.closeCode)
+      && replacementSocketRecord !== socketRecord
+      && replacementSocketRecord?.openedAt !== null
+      && replacementSocketRecord.closedAt === null
+      && replacementSocketRecord.socket.readyState === WebSocket.OPEN,
+    'control recovery replaces only the observed closed socket with a distinct open socket',
+    diagnostics.json({
+      requestedCloseCode: CONTROL_GAP_CLOSE_CODE,
+      injectedSocketClosed: socketRecord.closedAt !== null,
+      observedCloseCode: socketRecord.closeCode,
+      observedCloseWasClean: socketRecord.wasClean,
+      replacementSocketOpened: replacementSocketRecord?.openedAt !== null,
+      replacementSocketClosed: replacementSocketRecord?.closedAt !== null,
+    }),
+  );
+  invariant(
+    afterRecoveryCalls.connect - beforeGapCalls.connect === 1,
+    'control recovery performs exactly one additional connect',
+  );
+  invariant(
+    Object.values(automaticReplayDeltas).every((count) => count === 0),
+    'control recovery replays no route or media command',
+    diagnostics.json(automaticReplayDeltas),
+  );
+
+  const callsBeforeLateRetry = coordinatorCallSnapshot();
+  const socketsBeforeLateRetry = controlSocketRecords.length;
+  const lateRetry = outputController.retryConnection();
+  invariant(
+    lateRetry?.status === 'already_ready',
+    'late Dashboard recovery timer observes the restored active run without replacement',
+    diagnostics.json(lateRetry),
+  );
+  invariant(
+    controlCoordinatorFactoryCount === beforeGapFactoryCount
+      && controlSocketRecords.length === socketsBeforeLateRetry,
+    'late recovery creates no coordinator or socket',
+  );
+  invariant(
+    Object.values(coordinatorCallDeltas(callsBeforeLateRetry, coordinatorCallSnapshot()))
+      .every((count) => count === 0),
+    'late recovery sends no command',
+  );
+
+  await sleep(CONTROL_GAP_POST_RECOVERY_PLAYING_MS);
+  const afterRecoveryProtocol = recovered.playerSnapshot;
+  const latestProtocol = outputController.getState().snapshot?.playerSnapshot;
+  const afterRecoveryPosition = Number(latestProtocol?.confirmedPlayback?.position);
+  invariant(
+    latestProtocol?.confirmedPlayback?.status === 'playing'
+      && latestProtocol.activeFamily?.entryId === entryId
+      && latestProtocol.activeFamily.runId === runId
+      && Number.isFinite(afterRecoveryPosition)
+      && afterRecoveryPosition > beforeGapPosition,
+    'the same OBS media timeline advances across the control gap',
+    `before=${beforeGapPosition} after=${afterRecoveryPosition}`,
+  );
+  invariant(
+    afterRecoveryProtocol?.confirmedPlayback?.playerInstanceId === candidate.playerInstanceId,
+    'recovery keeps the exact OBS player identity',
+  );
+
+  const pause = sendControllerRunCommand('pause');
+  const paused = await waitFor(() => {
+    const protocol = outputController.getState().snapshot?.playerSnapshot;
+    return protocol?.confirmedPlayback?.status === 'paused'
+      && protocol.confirmedPlayback.entryId === entryId
+      && protocol.confirmedPlayback.runId === runId
+      && protocol.activeFamily?.entryId === entryId
+      && protocol.activeFamily.runId === runId
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'explicit PAUSE works after control recovery', {
+    commandId: pause.command.commandId,
+  });
+  const resume = sendControllerRunCommand('play');
+  await waitFor(() => {
+    const protocol = outputController.getState().snapshot?.playerSnapshot;
+    return protocol?.confirmedPlayback?.status === 'playing'
+      && protocol.confirmedPlayback.entryId === entryId
+      && protocol.confirmedPlayback.runId === runId
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'explicit PLAY works after recovered PAUSE', {
+    commandId: resume.command.commandId,
+  });
+  const stop = sendControllerRunCommand('stop');
+  await waitFor(() => {
+    const snapshot = outputController.getState().snapshot;
+    const protocol = snapshot?.playerSnapshot;
+    return protocol?.confirmedPlayback?.status === 'stopped'
+      && protocol.activeFamily === null
+      && snapshot.activeRun === null
+      && protocol.lease?.status === 'ready'
+      ? protocol
+      : null;
+  }, COMMAND_TIMEOUT_MS, 'explicit STOP works after control recovery', {
+    commandId: stop.command.commandId,
+  });
+  await finishRecoverySession();
+
+  const finalCalls = coordinatorCallSnapshot();
+  console.log(diagnostics.text(`EVIDENCE ${diagnostics.json({
+    mode: 'control_gap',
+    candidateTransitions,
+    samePlayerInstanceId: paused.confirmedPlayback.playerInstanceId
+      === candidate.playerInstanceId,
+    coordinatorFactoryCount: controlCoordinatorFactoryCount,
+    controlSocketCount: controlSocketRecords.length,
+    requestedCloseCode: CONTROL_GAP_CLOSE_CODE,
+    observedCloseCode: socketRecord.closeCode,
+    observedCloseWasClean: socketRecord.wasClean,
+    controlDisconnectCount,
+    controlReconnectAttemptCount,
+    maxControlGapMs,
+    recoveryElapsedMs,
+    beforeGapPosition,
+    afterRecoveryPosition,
+    positionAdvance: afterRecoveryPosition - beforeGapPosition,
+    automaticReplayDeltas,
+    finalCoordinatorCallCounts: finalCalls,
+    controlCloseDiagnostics: controlDiagnostics
+      .filter((diagnostic) => diagnostic.code === 'v2_connection_socket_closed')
+      .slice(-8),
+  })}`));
+}
+
 async function verifyEndedStatus() {
   const response = await fetch(
     `${WORKER.replace(/\/$/, '')}/v1/sessions/${encodeURIComponent(session.room)}/status`,
@@ -949,46 +1427,18 @@ async function run() {
   diagnostics.selfCheck();
   pass('diagnostic sanitizer fail-closed self-check');
 
-  coordinator = new OnAirControlCoordinator({
-    transport: {
-      url: websocketUrl(session.room, session.controlToken),
-      sessionId: session.room,
-      webSocketFactory: (url) => new WebSocket(url),
-      buildId: 'rekasong-v2-external-cef-soak',
-      capabilities: {},
-    },
-    callbacks: {
-      onSnapshot(snapshot) {
-        routeObservations.push(routeObservation(snapshot));
-        if (routeObservations.length > 512) routeObservations.shift();
+  coordinator = CONTROL_GAP_MODE
+    ? createOutputControllerCoordinatorFacade()
+    : new OnAirControlCoordinator({
+      transport: {
+        url: websocketUrl(session.room, session.controlToken),
+        sessionId: session.room,
+        webSocketFactory: (url) => new WebSocket(url),
+        buildId: 'rekasong-v2-external-cef-soak',
+        capabilities: {},
       },
-      onCommandResult(result) {
-        const commandId = result?.entry?.commandId;
-        if (typeof commandId === 'string') commandResults.set(commandId, result);
-      },
-      onDiagnostic(diagnostic) {
-        controlDiagnostics.push({
-          at: Date.now(),
-          code: typeof diagnostic?.code === 'string' ? diagnostic.code : 'connection_diagnostic',
-          closeCode: Number.isInteger(diagnostic?.detail?.code) ? diagnostic.detail.code : null,
-          wasClean: typeof diagnostic?.detail?.wasClean === 'boolean'
-            ? diagnostic.detail.wasClean
-            : null,
-        });
-        if (controlDiagnostics.length > 64) controlDiagnostics.shift();
-      },
-      onStateChange(change) {
-        const expectedTerminalClose = coordinator?.snapshot?.().unknownLock?.code
-          === ON_AIR_CONTROL_COORDINATOR_CODES.SESSION_ENDED;
-        if (!expectedTerminalClose
-          && ['disconnected', 'closed'].includes(change?.state)
-          && controlGapStartedAt === null) {
-          controlGapStartedAt = Date.now();
-          controlDisconnectCount += 1;
-        }
-      },
-    },
-  });
+      callbacks: createCoordinatorCallbacks(),
+    });
   coordinator.connect();
   await waitFor(
     () => coordinator.snapshot().ready,
@@ -1028,6 +1478,10 @@ async function run() {
   }
   if (SCENE_TRANSITION_MODE) {
     await runSceneTransitionScenario({ candidate, assetId, candidateTransitions });
+    return;
+  }
+  if (CONTROL_GAP_MODE) {
+    await runControlGapScenario({ candidate, assetId, candidateTransitions });
     return;
   }
 
@@ -1198,7 +1652,9 @@ process.once('SIGTERM', requestStop);
 try {
   await run();
   await writeStatus('passed');
-  const modeName = RECOVERY_MODE ? 'recovery' : SCENE_TRANSITION_MODE ? 'scene transition' : 'soak';
+  const modeName = CONTROL_GAP_MODE
+    ? 'control gap'
+    : RECOVERY_MODE ? 'recovery' : SCENE_TRANSITION_MODE ? 'scene transition' : 'soak';
   console.log(`RESULT Protocol v2 external OBS CEF ${modeName} passed`);
 } catch (error) {
   await writeStatus('failed', {
@@ -1210,7 +1666,9 @@ try {
       .filter((diagnostic) => diagnostic.code === 'v2_connection_socket_closed')
       .slice(-8),
   }).catch(() => {});
-  const modeName = RECOVERY_MODE ? 'recovery' : SCENE_TRANSITION_MODE ? 'scene transition' : 'soak';
+  const modeName = CONTROL_GAP_MODE
+    ? 'control gap'
+    : RECOVERY_MODE ? 'recovery' : SCENE_TRANSITION_MODE ? 'scene transition' : 'soak';
   console.error(`FAIL Protocol v2 external OBS CEF ${modeName} - ${diagnostics.errorText(error)}`);
   process.exitCode = 1;
 } finally {

@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포와 로컬 검증 기준은 v0.2.23이다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.23이고 로컬·실제 OBS 검증 기준은 v0.2.24다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -21,7 +21,7 @@
 | 지원 브라우저에서 Speaker 출력 장치 선택·탈착 복구 | v0.2.22 자동·모사 브라우저 검증 완료 | v0.2.22 배포·공개 자산 확인 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | 현재 후보 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
-| OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작 완료 | v0.2.23 배포·공개 자산 확인 | 실제 OBS 활성 곡의 control socket 강제 단절 뒤 조작 복구 |
+| OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작·활성 곡 control socket 단절 후 조작 복구 완료 | v0.2.23 동작 배포·v0.2.24 검증 harness 배포 대기 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | 현재 후보 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | 현재 후보 배포·시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | 현재 후보 배포됨 | 공개 수동 smoke |
@@ -31,7 +31,16 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | 현재 후보 배포·60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.23` / release commit `462bd2fac91e8cb60b13fdb5dc615aa21f4b0103`까지 성공적으로 배포됐다. v0.2.23은 제어 WebSocket gap에서 현재 곡을 소유한 coordinator를 보존하고 route·media 명령을 재전송하지 않는다. v0.2.22는 Speaker의 선택 출력 장치 탈착을 재생 비차단 기본 sink 폴백으로 처리한다. v0.2.21은 최초 OBS 설정 대기와 실제 route failure를 분리한다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19 player는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구와 5분 scene 전환 연속성을 통과했다. source refresh·재시작은 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. scene 전환은 동일 player·connection·run을 유지하고 302.5초 fixture를 wall 오차 `84ms`로 자연 종료했다. production Worker의 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.23` / release commit `462bd2fac91e8cb60b13fdb5dc615aa21f4b0103`까지 성공적으로 배포됐다. v0.2.24 후보의 실제 OBS run은 활성 곡 중 control socket만 끊고 `740ms`에 같은 coordinator/player/run으로 복구했으며, media timeline 전진·자동 명령 재전송 0·명시적 pause/play/stop·HTTP 410을 통과했다. v0.2.23은 제어 WebSocket gap에서 현재 곡을 소유한 coordinator를 보존하고 route·media 명령을 재전송하지 않는다. v0.2.22는 Speaker의 선택 출력 장치 탈착을 재생 비차단 기본 sink 폴백으로 처리한다. v0.2.21은 최초 OBS 설정 대기와 실제 route failure를 분리한다. 공개 v0.2.17에서 확인한 A→B 대기열 누출과 서로 다른 준비 상태 결함은 v0.2.18에서 대기열·자동 다음 곡을 탭 session으로 분리해 제거했고, 공개 실제 A/B/C 세 탭·reload·A 단독 재생으로 다시 증명했다. v0.2.19 player는 OBS Chromium 103 target을 명시하고 실제 live-session의 source refresh·OBS 재시작 새-ID 복구와 5분 scene 전환 연속성을 통과했다. source refresh·재시작은 old run을 연결 손실 상태로 보존하되 새 player를 `standby`로 두어 자동 재생하지 않았고, 명시적 full reset·재선택 뒤 5초 무음을 확인했다. scene 전환은 동일 player·connection·run을 유지하고 302.5초 fixture를 wall 오차 `84ms`로 자연 종료했다. production Worker의 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+
+### v0.2.24 실제 OBS 활성 곡 control-gap 검증 — 2026-07-23
+
+- 실제 `OnAirOutputController`를 사용하는 opt-in harness가 유일한 control socket만 닫고 Dashboard의 350ms 복구 경로를 실행한다. coordinator factory 수와 socket 수명, 명령 호출을 계측해 단위 테스트가 아닌 실제 OBS CEF player에 대한 증거를 남긴다.
+- 합격 run은 coordinator `1`, socket `1→2`, disconnect/retry `1/1`, 최대 gap `1,118ms`, READY 복귀 `740ms`, 같은 player identity, position `0→3.322594s`를 확인했다. 자동 activate/deactivate/emergency/load/play/pause/seek/volume/stop delta는 모두 `0`이었다.
+- 복구 후 명시적 pause→play→stop이 같은 run에 적용됐고 늦은 복구 timer는 `already_ready`로 끝났다. session end 뒤 status는 HTTP 410이었다.
+- 실제 close 요청은 `4101`이었지만 Cloudflare 경로에서 client가 관측한 close event는 `1006 / wasClean=false`였다. 요청과 관측을 분리해 기록하며, 이를 route나 media 실패로 오판하지 않는다.
+- OBS는 시험 전후 `Start Streaming`·`Start Recording`, 타이머 `00:00:00`이었다. 최종 OBS 로그의 Streaming/Recording Start·Stop은 모두 0, 원본 Browser URL exact 복원과 임시 handoff 제거를 확인했다.
+- 전체 `717/717`, build, OBS bundle budget, Speaker network/local-file/drag/history smoke가 통과했다. Speaker 로컬 재생 중 Worker HTTP/socket/frame은 0, 1,000곡 warm p95는 `26.8ms`, post-GC heap 증가는 `0B`였다.
 
 ### v0.2.23 공개 배포 — 2026-07-23
 
@@ -40,7 +49,7 @@
 - commit `462bd2fac91e8cb60b13fdb5dc615aa21f4b0103`의 Pages workflow `29960932902`는 clean install·716 tests·lint·Worker 문법·build·OBS budget·deploy를 모두 통과했고 deployment SHA도 일치한다.
 - 공개 entry/Dashboard는 `index-CELi0hru.js` / `Dashboard-Da33zoCb.js`다. Dashboard SHA-256 `e0efd63ed84fabb2b89443b37eac2f42328d2582035676ed32a4357ff0059250`에 `reconnect_in_progress`·`already_ready`가 모두 포함됐다.
 - 공개 격리 smoke는 기본 Speaker, 두 출력 버튼, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 모바일 설정, 금발 선을 통과했다. HTTP 오류·ntfy 요청 0, warm DCL `37.7ms`, warm long task 0, JS heap `7,893,252B`였다. 음악 재생·OBS route·방송·녹화는 시작하지 않았다.
-- 남은 실물 관문은 실제 OBS에서 활성 곡 재생 중 제어 소켓만 끊었다 복구한 뒤 pause/stop 같은 명시적 조작이 같은 곡에 다시 적용되는지 확인하는 것이다. 자동 회귀와 공개 자산 검증은 이를 대신하지 않는다.
+- 활성 곡의 실제 control socket 단절 뒤 같은 player/run 복구와 명시적 pause/play/stop 관문은 v0.2.24 실물 run으로 통과했다. 사용자 물리 청취, 실제 플랫폼 ingest/VOD G5, 장치 조합별 G6는 별도 관문으로 남는다.
 
 ### v0.2.22 공개 배포 — 2026-07-23
 

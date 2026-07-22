@@ -232,6 +232,38 @@ npm run prepare:obs:test-source -- `
 조건으로 URL을 복원한다. 복원 뒤 OBS를 열어 exact URL과 방송·녹화 OFF를 확인한다.
 사용자의 방송용 profile/collection에는 이 절차를 사용하지 않는다.
 
+### 5.4 실제 OBS 활성 곡 control socket 단절·복구 run
+
+이 run은 source refresh나 OBS 재시작과 다르다. OBS player와 media graph는 그대로 둔 채
+Dashboard control WebSocket 하나만 의도적으로 닫아, 제품의 빠른 연결 복구가 현재 곡의
+소유권을 보존하는지 검증한다. 실제 방송·녹화를 시작하는 권한은 없으며 시작 전후 OBS UI는
+`Start Streaming`·`Start Recording`, 두 타이머는 `00:00:00`이어야 한다.
+
+```powershell
+$env:REKASONG_WORKER='https://<worker-host>'
+$env:REKASONG_APP='https://<frontend-host>'
+$env:REKASONG_CEF_SOAK_DURATION_MS='15000'
+$env:REKASONG_CEF_SOAK_CANDIDATE_STABLE_MS='5000'
+$env:REKASONG_CEF_SOAK_STATUS_FILE='C:\path\to\cef-control-gap-status.json'
+npm run test:obs:v2:cef-control-gap
+```
+
+운영 순서와 합격 기준:
+
+1. OBS가 완전히 종료된 상태에서 5.3의 fail-closed 교체 도구로 임시 handoff URL을 전용 test Browser Source에 넣는다.
+2. 전용 test profile·collection·scene으로 OBS를 열고 방송·녹화 OFF를 다시 확인한다. source는 visible 1개, `Control audio via OBS=true`여야 한다.
+3. harness가 생성한 48kHz WAV를 LOAD하고 최초 PLAY가 정확히 한 번 적용돼 media position이 전진해야 한다.
+4. harness가 유일한 control socket만 닫는다. 이때 active entry/run, 같은 OBS player, audible lease와 playing 상태가 보존돼야 한다.
+5. Dashboard 350ms 복구 경로는 기존 coordinator를 보존하고 socket 하나만 교체해야 한다. 추가 connect는 1회, 자동 activate/deactivate/emergency/LOAD/PLAY/PAUSE/SEEK/VOLUME/STOP은 모두 0회여야 한다.
+6. 복구 뒤 늦은 timer는 `already_ready`로 끝나야 하고 명시적 PAUSE→PLAY→STOP이 같은 run에 다시 적용돼야 한다.
+7. output deactivate, end session과 HTTP 410 fence를 확인한다. OBS를 종료하고 원본 URL을 exact match로 복원하며 handoff를 제거한다.
+8. client가 요청한 close code와 실제 close event code는 구분해 기록한다. 중간 프록시·Cloudflare가 `1006`을 관측시킬 수 있으므로 code 일치만으로 route/media 실패를 판정하지 않고, 이전 socket 종료·서로 다른 새 socket OPEN·동일 run의 media 전진을 함께 요구한다.
+
+2026-07-23 v0.2.24 실제 실행은 coordinator `1`, socket `1→2`, disconnect/retry
+`1/1`, 최대 gap `1,118ms`, READY 복귀 `740ms`, position `0→3.322594s`, 자동
+route/media replay `0`, 명시적 pause/play/stop과 HTTP 410을 통과했다. 실제 방송·녹화는
+시작하지 않았고 원본 URL을 exact match로 복원했다.
+
 ## 6. G1 — 출력 선택과 단일 lease
 
 ### 6.1 스피커

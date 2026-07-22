@@ -1,5 +1,16 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.24 실제 OBS 활성 곡의 제어 소켓 복구
+
+- 기존 실제 CEF harness는 `OnAirControlCoordinator`를 직접 사용해 Dashboard의 `OnAirOutputController.retryConnection()` 경로를 통과하지 않았다. `--control-gap` 전용 모드를 추가해 실제 output controller와 coordinator를 그대로 사용하면서 생성 48kHz WAV, coordinator factory 횟수, 제어 socket 수명, route/media 명령 횟수를 계측한다. 이 모드는 방송·녹화 명령 surface를 갖지 않으며 `--recovery`·`--scene-transition`과 동시에 실행할 수 없다.
+- 실제 OBS 30.2.0 안전 모드와 전용 `Rekasong_Local_Record_Test_20260722 / Scene / Browser`에서 production Worker·공개 player로 15초 fixture를 실행했다. 활성 곡 중 유일한 Dashboard control WebSocket만 닫고 350ms 빠른 복구를 호출했다. coordinator factory는 끝까지 `1`, socket은 `1→2`, connect는 정확히 1회만 추가됐고 같은 player·entry/run·audible lease를 회복했다.
+- 첫 실물 run은 핵심 복구까지 성공했지만 검증기가 client에서 요청한 close code `4101`이 close event에도 그대로 돌아와야 한다고 잘못 강제해 실패했다. Cloudflare 경로의 실제 client close event는 `1006 / wasClean=false`였다. 요청 코드와 관측 코드를 별도 증거로 기록하고, 이전 socket의 종료·서로 다른 새 socket의 OPEN만 요구하도록 고쳤다. 실패 run도 best-effort STOP·deactivate·session end 뒤 OBS를 종료하고 원본 URL을 exact match로 복원했다.
+- 수정 후 재실행은 control disconnect `1`, reconnect 시도 `1`, 최대 gap `1,118ms`, retry 시작부터 READY까지 `740ms`였다. media position은 gap 전 `0`에서 복구 후 `3.322594s`로 전진했고 player identity가 유지됐다. 자동 route/LOAD/PLAY/PAUSE/SEEK/VOLUME/STOP/emergency 재전송은 전부 `0`이었다. 늦은 Dashboard timer는 `already_ready`로 끝나 coordinator·socket·명령을 늘리지 않았다.
+- 복구 뒤 사용자가 누르는 것과 같은 명시적 PAUSE→PLAY→STOP을 같은 run에 적용해 실제 player 상태 변화를 각각 확인했다. 최종 호출은 connect 2, activate 1, load 1, play 2(최초 자동 시작과 명시적 resume), pause 1, stop 1, deactivate 1, end session 1, emergency 0이었고 종료 session은 HTTP 410으로 재사용 차단됐다.
+- 두 run 전후 OBS UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 최종 로그 `2026-07-23 07-20-44.txt`의 Streaming/Recording Start·Stop은 모두 0건이고 clean shutdown을 확인했다. Browser Source URL은 시험 전 214자 값과 exact match·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`로 복원했으며 임시 credential handoff도 제거했다. 실제 방송과 녹화는 시작하지 않았다.
+- 전체 `717/717` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker·harness 문법, production build와 OBS bundle 예산을 통과했다. Dashboard는 `370.81kB raw / 101.51kB gzip`, OBS closure는 `383,782B raw / 117,550B gzip / 103,024B brotli`다.
+- production preview는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 모바일 설정, 두 출력 버튼과 금발 선을 통과했다. warm DCL `21.4ms`, warm long task 0, heap `7,926,044B`, HTTP 오류·ntfy 요청 0이었다. Speaker 로컬 재생은 Worker session HTTP·socket·frame `0`, 이력 1,000곡은 warm interaction p95 `26.8ms`, 닫은 뒤 post-GC heap 증가 `0B`였다.
+
 ## 2026-07-23 (Codex) — v0.2.23 OBS 제어 재연결의 활성 곡 소유권 보존
 
 - established OBS route의 전체 절단 경로를 Graphify와 실제 소스로 다시 추적했다. source active/visible 변화, streaming telemetry, heartbeat warning/stale, player event 전달 불명, player WebSocket 일시 단절은 일반 곡의 media graph를 정지하지 않는다. 명시적 STOP·route deactivate·emergency stop·실제 player dispose·session end만 물리 정지 경계다.
