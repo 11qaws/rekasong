@@ -1,6 +1,7 @@
 import {
   AUXILIARY_CONTROL_COMMAND_TYPES,
   ON_AIR_MESSAGE_TYPES,
+  ON_AIR_POSITION_OBSERVATION_INTERVAL_MS,
   ON_AIR_PROTOCOL_VERSION,
   PLAYER_CLIENT_KINDS,
   ROUTE_COMMAND_TYPES,
@@ -266,6 +267,7 @@ export class OnAirPlaybackAdapter {
   #currentNormalController = null;
   #localCommandSequence = 0;
   #lastObservedNow = 0;
+  #lastPositionObservation = null;
   #routeState = 'standby';
   #confirmation = 'unknown';
   #lastError = null;
@@ -2213,6 +2215,16 @@ export class OnAirPlaybackAdapter {
     if (evidence?.runId !== this.#activeRunId) return;
     const event = evidence.type;
     if (!Object.values(RUN_EVENT_TYPES).includes(event)) return;
+    const evidenceTimeMs = Number.isFinite(evidence.monotonicTimeMs)
+      ? Math.max(0, evidence.monotonicTimeMs)
+      : this.#clockNow();
+    if (event === RUN_EVENT_TYPES.POSITION) {
+      const previous = this.#lastPositionObservation;
+      const sameRun = previous?.runId === this.#activeRunId;
+      if (sameRun
+        && evidenceTimeMs - previous.observedAtMs
+          < ON_AIR_POSITION_OBSERVATION_INTERVAL_MS) return;
+    }
     const draft = {
       ...this.#eventBase(ON_AIR_MESSAGE_TYPES.PLAYBACK_EVENT, this.#activeLeaseEpoch),
       event,
@@ -2240,6 +2252,15 @@ export class OnAirPlaybackAdapter {
       && !Number.isFinite(draft.mediaTime)
     );
     if (requiredEvidenceMissing) return;
+    // Lifecycle evidence (playing/paused/buffering/ended) already carries an
+    // exact media time and therefore starts the next 30-second observation
+    // window. Suppressed position events never move this anchor.
+    if (Number.isFinite(evidence.mediaTime)) {
+      this.#lastPositionObservation = Object.freeze({
+        runId: this.#activeRunId,
+        observedAtMs: evidenceTimeMs,
+      });
+    }
     this.#sendEvent(draft, { telemetry: TELEMETRY_EVIDENCE.has(event) });
   }
 }

@@ -8,6 +8,11 @@
 
 export const ON_AIR_PROTOCOL_VERSION = 2;
 
+// Position is passive observability, never the audio clock. Transport
+// transitions and user commands remain immediate; uninterrupted playback only
+// publishes an absolute media-time anchor at this cadence.
+export const ON_AIR_POSITION_OBSERVATION_INTERVAL_MS = 30_000;
+
 export const PLAYER_CLIENT_KINDS = Object.freeze({
   DASHBOARD_SPEAKER: 'dashboard-speaker',
   OBS_BROWSER_SOURCE: 'obs-browser-source',

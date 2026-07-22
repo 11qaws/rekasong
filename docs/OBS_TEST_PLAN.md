@@ -116,6 +116,8 @@ npm run test:obs:v2:cef-scene-transition
 
 - [자동] ready YouTube 첫 곡의 cold streaming 재생, pause, seek, ended/error.
 - [자동] 실제 `playing/buffering/position/ended/error` 이벤트가 control에 돌아오는지 확인.
+- [자동] 5분 재생을 4Hz `timeupdate`로 모사해 lifecycle은 즉시, `position`은 30초마다 최대 9~10회만 전송되는지 확인한다. 이 관측이 seek/restart/rate/route/media 명령을 한 건도 만들지 않는지 함께 계수한다.
+- [자동] Dashboard 진행 표시는 마지막 절대 position과 단조 시계로 30초 사이를 보간하고, pause/buffering에서는 멈추며, background timer 지연 뒤에도 tick 누적 오차 없이 따라잡는지 확인한다.
 - [자동] `currentTime`과 `performance.now()`를 100ms 이하 간격으로 표본화해 역행·정지·dropout을 검사.
 - [자동] 자동재생 차단 시 실패 이벤트와 사용자 안내가 정확한지 확인.
 - [자동] 로컬 오디오와 비디오 자산의 Range, seek, 종료.

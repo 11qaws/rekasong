@@ -10,6 +10,7 @@ import {
 import {
   AUXILIARY_CONTROL_COMMAND_TYPES,
   ON_AIR_MESSAGE_TYPES,
+  ON_AIR_POSITION_OBSERVATION_INTERVAL_MS,
   ON_AIR_PROTOCOL_VERSION,
   ROUTE_COMMAND_TYPES,
   ROUTE_EVENT_TYPES,
@@ -2249,4 +2250,63 @@ test('ordinary playback evidence ambiguity preserves an established media graph'
     harness.commands.some((command) => command.type === PLAYBACK_COMMAND_TYPES.EMERGENCY_STOP),
     false,
   );
+});
+
+test('normal playback sends immediate lifecycle evidence but only one position anchor per 30 seconds', async () => {
+  const harness = createHarness();
+  await activate(harness);
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.LOAD));
+  await harness.connectionCallbacks.onPlayerCommand(runCommand(RUN_COMMAND_TYPES.PLAY));
+  harness.events.length = 0;
+  harness.commands.length = 0;
+
+  harness.engineCallbacks.onEvidence({
+    type: RUN_EVENT_TYPES.PLAYING,
+    runId: 'run-1',
+    monotonicTimeMs: 0,
+    mediaTime: 0,
+    duration: 300,
+    paused: false,
+    readyState: 4,
+    seeking: false,
+  });
+  for (let elapsedMs = 250; elapsedMs < 300_000; elapsedMs += 250) {
+    harness.engineCallbacks.onEvidence({
+      type: RUN_EVENT_TYPES.POSITION,
+      runId: 'run-1',
+      monotonicTimeMs: elapsedMs,
+      mediaTime: elapsedMs / 1_000,
+      duration: 300,
+      paused: false,
+      readyState: 4,
+      seeking: false,
+    });
+  }
+  harness.engineCallbacks.onEvidence({
+    type: RUN_EVENT_TYPES.ENDED,
+    runId: 'run-1',
+    monotonicTimeMs: 300_000,
+    mediaTime: 300,
+    duration: 300,
+    paused: true,
+    readyState: 4,
+    seeking: false,
+  });
+
+  const positionEvents = harness.events.filter(
+    (event) => event.event === RUN_EVENT_TYPES.POSITION,
+  );
+  assert.equal(ON_AIR_POSITION_OBSERVATION_INTERVAL_MS, 30_000);
+  assert.deepEqual(
+    positionEvents.map((event) => event.mediaTime),
+    [30, 60, 90, 120, 150, 180, 210, 240, 270],
+  );
+  assert.deepEqual(
+    harness.events.filter((event) => event.event !== RUN_EVENT_TYPES.POSITION)
+      .map((event) => event.event),
+    [RUN_EVENT_TYPES.PLAYING, RUN_EVENT_TYPES.ENDED],
+  );
+  assert.deepEqual(harness.commands, []);
+  assert.equal(harness.engineState.sourceAttached, true);
+  assert.equal(harness.engineState.status, 'playing');
 });

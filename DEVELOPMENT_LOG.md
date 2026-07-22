@@ -1,5 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.26 OBS 30초 위치 관측과 리모컨 로컬 보간
+
+- 사용자가 제안한 “한 곡은 자체 오디오 시계로 재생하고 30초마다 기준만 다시 확인한다”는 정책을 실제 일반 재생 경로에 적용했다. 곡 시작·재생·일시정지·버퍼링·탐색·종료·오류는 계속 즉시 전달하지만, 조작 없는 `position` telemetry만 `30,000ms` 간격으로 제한한다. 이 관측은 seek·restart·playback-rate 변경·route 교체·오디오 재연결을 절대 일으키지 않는다.
+- Protocol v2의 `PlaybackEngine`은 브라우저의 모든 `timeupdate`를 계속 로컬 증거로 관찰하되 `OnAirPlaybackAdapter`가 마지막 lifecycle/position 절대 기준 뒤 30초가 지난 샘플만 WebSocket에 싣는다. legacy rollback player도 1초 interval을 30초로 낮췄다. Worker의 position 처리는 기존처럼 storage-free relay이며 durable write를 만들지 않는다.
+- 5분 곡을 4Hz `timeupdate` 1,200회로 모사한 계약 테스트에서 네트워크 position은 30·60·90·120·150·180·210·240·270초의 9회만 발생했다. 시작 `playing`과 끝 `ended`는 즉시 별도 전달됐고, 관측 때문에 생성된 media command는 0건이며 재생 source와 상태는 그대로 유지됐다. 평상시 위치 메시지는 4Hz 기준 약 133배, 기존 1Hz legacy 기준 약 33배 줄어든다.
+- Dashboard는 마지막 OBS 절대 위치와 `performance.now()`를 한 anchor로 묶어 실제 재생 중에만 1초마다 화면의 진행 표시를 계산한다. 누적 `+1초` 카운터가 아니므로 탭 timer가 늦어져도 다음 tick에서 절대 경과시간으로 따라잡는다. pause/loading/buffering에서는 timer 자체를 멈추고 duration을 넘지 않는다. 30초 실제 샘플·seek·lifecycle 이벤트가 도착하면 표시 기준만 다시 잡는다.
+- OBS→Speaker 전환 시 React 화면에 마지막으로 그려진 숫자가 아니라 클릭 순간의 projected position을 사용하므로 30초 telemetry 간격이 재개 위치 오차로 이어지지 않는다. 이전 run의 늦은 player event는 identity 확인 전에 진행 시간을 바꾸지 못하도록 함께 정리했다.
+- 새 사용자 문구는 없어서 번역 catalog 변경은 없다. 코드 증가는 작은 순수 시계 helper와 테스트뿐이며, OBS audio에 대한 제어 surface는 추가하지 않았다.
+- 전체 `724/724` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker 문법과 production build를 통과했다. 빌드 기준 Dashboard는 `372.71kB raw / 102.09kB gzip`, OBS player는 `42.66kB raw / 12.53kB gzip`이며 OBS 전용 묶음도 `384.11kB raw / 118.43kB gzip` 예산 안이다. 격리된 production 화면 검사에서 기본 스피커, 320/375/768/1100px 반응형, 노란 머리선, 번역 전환, OBS 설정 진입을 확인했고 warm load에는 long task가 없었다. 배포·공개 artifact 검증은 같은 버전의 후속 기록에 추가한다.
+
 ## 2026-07-23 (Codex) — v0.2.25 번역 길이·모바일 레이아웃 배포 관문
 
 - Graphify의 locale/catalog/pseudo/mobile/layout 경로와 번역 계획을 실제 소스에 대조했다. 현재 사용자 흐름의 한국어/영어 semantic key 이관과 selector는 완료됐지만, 계획서에 요구된 pseudo-locale 30~50% 길이 확장과 320/375/768/1100px 자동 시각 검증은 일회성 수동 확인만 있고 배포 관문에는 없었다.

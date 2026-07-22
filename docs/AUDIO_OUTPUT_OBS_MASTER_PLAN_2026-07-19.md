@@ -1318,7 +1318,7 @@ OBS stable player URL
 | `src/hooks/useOnAirSession.js:32` 부근 | Boolean presence | live registry, leases, ACK promise, telemetry |
 | `useOnAirSession.js:188-199` | session token URL | 단기 truthful copy, 장기 stable pairing |
 | `src/components/OnAirPlayer.jsx:69-108` | v1 event/command와 media 결합 | protocol adapter + 공통 engine |
-| `OnAirPlayer.jsx:191-202` | 약 1Hz position | heartbeat/state/PCM telemetry |
+| `OnAirPlayer.jsx` / `OnAirPlaybackAdapter` | lifecycle 즉시 + 30초 position 관측 | heartbeat/state/PCM telemetry |
 | `OnAirPlayer.jsx:248-334` | source/prefetch/fallback | broadcast-safe readiness |
 | `workers/rekasong-session/src/index.js:204` | desired/confirmed 혼합 | 별도 state와 audit |
 | `Worker index.js:265-320` | role socket/메시지 | live registry와 protocol union |

@@ -3982,7 +3982,8 @@ export class SessionRoom {
       nextTransport.status = event.type;
     }
     session.transport = nextTransport;
-    // ★ position 은 초당 발화하는 순수 진행도라 DO 스토리지에 영속하지 않는다
+    // position is a low-rate absolute progress observation and remains
+    // storage-free. It never acts as an audio clock or playback correction.
     // (Gemini f461686). 2시간 방송이면 세션당 ~7200회 쓰기 → DO 쓰기 한도(10만/일)
     // 를 동시 스트리머 몇 명이면 소진한다. 인메모리 캐시(this.sessionState)에는
     // 반영되므로 후속 읽기는 최신 위치를 보고, 다음 상태변경 이벤트에서 함께 영속된다.

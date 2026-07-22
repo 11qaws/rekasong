@@ -89,6 +89,11 @@ import {
   outputSwitchFailureMessageKey,
 } from '../copy/outputMessages';
 import { deriveObsSetupWaitReason } from '../lib/playbackOutputStatus';
+import {
+  REMOTE_PLAYBACK_PROGRESS_TICK_MS,
+  projectRemotePlaybackPosition,
+  reanchorRemotePlaybackProgress,
+} from '../lib/remotePlaybackProgress';
 import { getAppMessage as t } from '../copy/appMessages';
 import { useAppLocale } from '../hooks/useAppLocale';
 import {
@@ -117,6 +122,8 @@ import './Dashboard.css';
 const OUTPUT_INTENT_WAIT_TIMEOUT_MS = 8_000;
 const LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000;
 const LOCAL_FILE_MAX_BYTES = 200 * 1024 * 1024;
+
+const playbackProgressNow = () => globalThis.performance?.now?.() ?? Date.now();
 
 const DashboardLocalSpeaker = lazy(() => import('../components/DashboardLocalSpeaker'));
 
@@ -572,6 +579,22 @@ export default function Dashboard() {
   ), []);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
+  const obsProgressAnchorRef = useRef(null);
+  const observeObsPlaybackProgress = useCallback((observation) => {
+    const next = reanchorRemotePlaybackProgress(
+      obsProgressAnchorRef.current,
+      observation,
+      playbackProgressNow(),
+    );
+    obsProgressAnchorRef.current = next;
+    setCurrentTime(next.position);
+    if (Number.isFinite(next.duration)) setDuration(next.duration);
+    return next;
+  }, []);
   const [obsRemoteControlFeedback, setObsRemoteControlFeedback] = useState(null);
   // Stage 6c 불변식: 방송 출력은 광고가 나올 수 있는 어떤 경로(YouTube iframe
   // 등)도 절대 사용하지 않는다. YouTube 곡은 준비 파이프라인이 `ready`로 확정한
@@ -598,6 +621,40 @@ export default function Dashboard() {
   stateRef.current = state;
   const activeRef = useRef(active);
   activeRef.current = active;
+
+  // Uninterrupted OBS playback publishes only a low-rate absolute position
+  // anchor. Project the visible timer locally between observations. This
+  // changes dashboard state only; it never commands or seeks the OBS player.
+  useEffect(() => {
+    const runId = active?.outputMode === 'obs' ? active.runId : null;
+    if (!runId) {
+      obsProgressAnchorRef.current = null;
+      return undefined;
+    }
+    if (obsProgressAnchorRef.current?.runId !== runId) {
+      obsProgressAnchorRef.current = reanchorRemotePlaybackProgress(null, {
+        runId,
+        position: currentTimeRef.current,
+        duration: durationRef.current,
+        status: active.phase,
+      }, playbackProgressNow());
+    }
+    if (active.phase !== 'playing') return undefined;
+    const updateVisibleProgress = () => {
+      const anchor = obsProgressAnchorRef.current;
+      if (anchor?.runId !== activeRef.current?.runId) return;
+      const projected = projectRemotePlaybackPosition(anchor, playbackProgressNow());
+      if (!Number.isFinite(projected)) return;
+      setCurrentTime((previous) => (
+        Math.abs(previous - projected) >= 0.05 ? projected : previous
+      ));
+    };
+    const interval = window.setInterval(
+      updateVisibleProgress,
+      REMOTE_PLAYBACK_PROGRESS_TICK_MS,
+    );
+    return () => window.clearInterval(interval);
+  }, [active?.outputMode, active?.phase, active?.runId]);
   const pageOwnedBlobSrcsRef = useRef(new Set());
   const localFileByBlobSrcRef = useRef(new Map());
   const localObsAssetUploadsRef = useRef(new Map());
@@ -860,7 +917,17 @@ export default function Dashboard() {
         });
         trackObsRemoteControlRequest('seek', dispatchResult);
         Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
-        setCurrentTime(time);
+        if (activeRef.current?.outputMode === 'obs') {
+          observeObsPlaybackProgress({
+            runId: activeRef.current.runId,
+            position: time,
+            duration: durationRef.current,
+            status: obsProgressAnchorRef.current?.status
+              ?? (isPlaying ? 'playing' : 'paused'),
+          });
+        } else {
+          setCurrentTime(time);
+        }
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1576,7 +1643,15 @@ export default function Dashboard() {
       const activeRun = activeRef.current;
       const activeEntry = stateRef.current?.currentEntry;
       if (activeRun?.outputMode === 'obs' && activeEntry) {
-        const resumePosition = Number.isFinite(currentTime) ? currentTime : 0;
+        const projectedPosition = obsProgressAnchorRef.current?.runId === activeRun.runId
+          ? projectRemotePlaybackPosition(
+            obsProgressAnchorRef.current,
+            playbackProgressNow(),
+          )
+          : null;
+        const resumePosition = Number.isFinite(projectedPosition)
+          ? projectedPosition
+          : Number.isFinite(currentTimeRef.current) ? currentTimeRef.current : 0;
         let transfer;
         let transferredState;
         try {
@@ -1652,7 +1727,6 @@ export default function Dashboard() {
       sessionKey: outputControlSessionKey,
     });
   }, [
-    currentTime,
     outputBootstrapSelectionAvailable,
     outputControlConflict,
     outputControlRecoveryRequired,
@@ -1961,6 +2035,14 @@ export default function Dashboard() {
     const runId = newId();
     setCurrentTime(initialPosition);
     setDuration(0);
+    if (runOutputMode === 'obs') {
+      observeObsPlaybackProgress({
+        runId,
+        position: initialPosition,
+        duration: 0,
+        status: 'loading',
+      });
+    }
     if (useOnAirPlayer) {
       // OnAirPlayer가 song.src(videoId)로 준비된 오디오 URL을 스스로 구성하므로
       // (자기 player 토큰 사용) load 명령의 프로토콜은 변경 없다.
@@ -2017,6 +2099,14 @@ export default function Dashboard() {
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
+    if (activeRef.current?.outputMode === 'obs') {
+      observeObsPlaybackProgress({
+        runId: stoppingRunId || activeRef.current?.runId,
+        position: 0,
+        duration: 0,
+        status: 'stopped',
+      });
+    }
   };
 
   // active.phase 확정 — 반드시 실제 Player 확인 이벤트 뒤에만 호출된다(INV-5).
@@ -3040,6 +3130,9 @@ export default function Dashboard() {
       if (actualOutputMode !== 'obs' && activeRef.current?.outputMode !== 'obs') return;
       const remoteTransport = payload.transport || {};
       const remoteSong = remoteTransport.song;
+      let currentObsRunId = activeRef.current?.outputMode === 'obs'
+        ? activeRef.current.runId
+        : null;
       if (remoteSong?.id && remoteSong.id !== lastDiscardedEntryIdRef.current) {
         // Worker transport 스냅숏 복원: load 시 내보낸 평면 곡(id=entryId)을
         // QueueEntry로 되감아 currentEntry/active를 재구성한다.
@@ -3056,10 +3149,17 @@ export default function Dashboard() {
             if (previous.currentEntry?.entryId === restored.entryId) return previous;
             return { ...previous, currentEntry: restored, active: restoredActive };
           });
+          currentObsRunId = restoredActive.runId;
         }
       }
-      if (Number.isFinite(remoteTransport.position)) setCurrentTime(remoteTransport.position);
-      if (Number.isFinite(remoteTransport.duration)) setDuration(remoteTransport.duration);
+      if (currentObsRunId) {
+        observeObsPlaybackProgress({
+          runId: currentObsRunId,
+          position: remoteTransport.position,
+          duration: remoteTransport.duration,
+          status: remoteTransport.status,
+        });
+      }
       setIsPlaying(remoteTransport.status === 'playing' || remoteTransport.status === 'buffering' || remoteTransport.status === 'loading');
     }
     if (payload.type === 'player_event') {
@@ -3069,8 +3169,6 @@ export default function Dashboard() {
       })) return;
       const event = payload.event || {};
       const remoteTransport = payload.transport || {};
-      if (Number.isFinite(remoteTransport.position)) setCurrentTime(remoteTransport.position);
-      if (Number.isFinite(event.duration)) setDuration(event.duration);
       // Protocol v2 reports the runId; the legacy observer reports entryId.
       // Never let a late event from the previous run mutate the current song.
       const act = activeRef.current;
@@ -3082,6 +3180,12 @@ export default function Dashboard() {
         ? { entryId: act.entryId, runId: act.runId }
         : null;
       if (!marker) return;
+      observeObsPlaybackProgress({
+        runId: marker.runId,
+        position: remoteTransport.position,
+        duration: event.duration ?? remoteTransport.duration,
+        status: remoteTransport.status ?? event.type,
+      });
       if (event.type === 'playing') handleConfirmedPlaying(marker);
       if (event.type === 'paused') handleConfirmedPaused(marker);
       if (event.type === 'buffering') {
@@ -3115,6 +3219,7 @@ export default function Dashboard() {
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
+      obsProgressAnchorRef.current = null;
       if (reason === 'explicit') {
         // Destructive list cleanup is reserved for the user's explicit
         // "end broadcast" action. A player timeout or OBS restart must never

@@ -14,6 +14,15 @@
 6. OBS Sync Offset은 자동 변경하지 않는다. 추천값을 제시하더라도 사용자가 적용한 뒤 같은 fixture로 다시 녹화해 통과해야 한다.
 7. 실제 OBS streaming이 진행 중이거나 streaming 여부를 확인하지 못하면 점검 신호를 재생하지 않는다. 앱과 Worker는 OBS 방송 시작·종료 권한을 갖지 않는다.
 
+### 1.1 30초 기준 갱신의 정확한 의미
+
+- 실제 MR은 `HTMLMediaElement`와 출력 장치의 오디오 시계로 계속 재생한다. JavaScript timer나 Worker 시각이 오디오를 끌고 가지 않는다.
+- 곡 시작, play, pause, buffering, seek 적용, ended, error는 즉시 보고한다. 아무 조작 없이 재생되는 동안의 절대 `position`만 30초마다 관측한다.
+- Dashboard는 마지막 절대 위치와 단조 시계를 사용해 진행 표시를 로컬 보간한다. 30초 동안 숫자가 멈추지 않으며, 탭 timer가 늦어져도 누적 tick 수가 아니라 절대 경과시간으로 다시 계산한다.
+- 30초 관측값과 예상 표시가 다르면 화면 기준만 다시 잡는다. 재생 중인 OBS media에는 자동 seek, restart, playback-rate 변경, route 교체 또는 reconnect를 보내지 않는다.
+- 5분 곡은 시작·종료와 최대 9~10개의 주기 위치 관측만 필요하다. 각 곡의 새 `runId`와 `position: 0`이 다음 곡의 실제 재동기화 경계다.
+- 이 방식은 Cloudflare 메시지를 줄이고 리모컨을 부드럽게 유지하지만, 서로 다른 물리 입력·출력 장치의 clock drift 자체를 보정하지는 않는다. 그 문제는 같은-clock performer 경로와 곡 단위 G6 측정으로 판정한다.
+
 ## 2. 2026-07-22 실측이 알려 준 것
 
 현재 시험 장치는 온보드 `High Definition Audio` 스피커 출력과 별도 USB `FIFINE K670` 마이크 입력이다.

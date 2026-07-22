@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { prepareAudioUrl } from '../lib/preparePipeline';
+import { ON_AIR_POSITION_OBSERVATION_INTERVAL_MS } from '../lib/onAirProtocol';
 
 // Stage 6b: 방송 출력(OBS 위젯)에서 YouTube iframe을 완전히 제거했다.
 // YouTube 곡은 준비 파이프라인이 R2에 확정한 오디오(/v1/audio/{videoId})를
@@ -252,12 +253,13 @@ export default function OnAirPlayer({ apiBaseUrl, room, token }) {
     if (transport.status !== 'playing') return undefined;
     const interval = window.setInterval(() => {
       const now = Date.now();
-      if (now - lastProgressRef.current < 900) return;
+      if (now - lastProgressRef.current
+        < ON_AIR_POSITION_OBSERVATION_INTERVAL_MS) return;
       lastProgressRef.current = now;
       const position = mediaRef.current?.currentTime;
       const duration = mediaRef.current?.duration;
       if (Number.isFinite(position)) sendEvent({ type: 'position', position, duration: Number.isFinite(duration) ? duration : undefined });
-    }, 1000);
+    }, ON_AIR_POSITION_OBSERVATION_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [transport.status, transport.sessionId]);
 
