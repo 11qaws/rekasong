@@ -113,16 +113,21 @@ try {
     const layout = await page.evaluate(() => {
       const bar = document.querySelector('.dashboard-output-route-bar');
       const hairpin = document.querySelector('.dashboard-output-route-bar-inner');
-      const line = getComputedStyle(bar, '::before');
+      const lineElement = document.querySelector('.dashboard-brand-hairline');
+      const line = getComputedStyle(lineElement);
       const hairpinRect = hairpin.getBoundingClientRect();
       const barRect = bar.getBoundingClientRect();
+      const lineRect = lineElement.getBoundingClientRect();
       return {
         viewportWidth: window.innerWidth,
         documentWidth: document.documentElement.scrollWidth,
         bar: { left: barRect.left, right: barRect.right, width: barRect.width },
         hairpin: { left: hairpinRect.left, right: hairpinRect.right, width: hairpinRect.width },
         line: {
-          content: line.content,
+          left: lineRect.left,
+          right: lineRect.right,
+          top: lineRect.top,
+          width: lineRect.width,
           display: line.display,
           height: line.height,
           color: line.backgroundColor,
@@ -139,6 +144,8 @@ try {
       `${width}px hairpin controls leave the viewport.`);
     assert.equal(layout.line.display, 'block');
     assert.equal(layout.line.height, '3px');
+    assert.equal(layout.line.zIndex, '1');
+    assert.ok(layout.line.width >= layout.bar.width - 1, 'The Eureka blonde line no longer spans the header.');
     assert.notEqual(layout.line.color, 'rgba(0, 0, 0, 0)', 'The Eureka blonde line is transparent.');
     responsiveLayouts.push(layout);
   }

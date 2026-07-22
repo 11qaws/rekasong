@@ -111,16 +111,23 @@ test('dashboard header permanently keeps the blonde line behind the compact hair
   ]);
   assert.doesNotMatch(dashboard, /className="subtitle"/);
   assert.match(dashboard, /id="dashboard-output-route-bar"/);
-  const hairlineRules = [...css.matchAll(/\.dashboard-output-route-bar::before\s*\{([^}]*)\}/g)];
+  assert.match(
+    dashboard,
+    /<span className="dashboard-brand-hairline" aria-hidden="true" \/>/,
+    'the blonde line must be a permanent element, not portal content or a conditional pseudo-element',
+  );
+  const hairlineRules = [...css.matchAll(/\.dashboard-brand-hairline\s*\{([^}]*)\}/g)];
   assert.ok(hairlineRules.length >= 1, 'the blonde line must have a dedicated rule');
   const barRule = css.match(/\.dashboard-output-route-bar\s*\{([^}]*)\}/);
   assert.ok(barRule, 'the blonde line container must have a dedicated rule');
   assert.match(
     barRule[1],
     /isolation:\s*isolate/,
-    'the line needs a local stacking context or z-index zero can paint behind the header',
+    'the line needs a local stacking context so later header rules cannot move it behind the header',
   );
   assert.match(hairlineRules[0][1], /background: var\(--chr-hair\);/);
+  assert.match(hairlineRules[0][1], /z-index:\s*1/);
+  assert.match(hairlineRules[0][1], /height:\s*3px/);
   for (const [, rule] of hairlineRules) {
     assert.doesNotMatch(rule, /display:\s*none|visibility:\s*hidden|opacity:\s*0(?:\D|$)/);
   }

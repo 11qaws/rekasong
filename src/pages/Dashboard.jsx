@@ -2594,7 +2594,9 @@ export default function Dashboard() {
         <div className="dashboard-branding">
           <h1 className="logo">Rekasong</h1>
         </div>
-        <div id="dashboard-output-route-bar" className="dashboard-output-route-bar" aria-label={t('onair.output.region.label')} />
+        <div id="dashboard-output-route-bar" className="dashboard-output-route-bar" aria-label={t('onair.output.region.label')}>
+          <span className="dashboard-brand-hairline" aria-hidden="true" />
+        </div>
       </header>
 
       <div className="dashboard-grid">

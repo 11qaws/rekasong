@@ -1019,14 +1019,15 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   box-sizing: border-box;
   color: var(--text-main);
 }
-/* 유레카의 금발을 상징하는 고정 브랜드 선. 반응형에서도 숨기지 않는다. */
-.dashboard-output-route-bar::before {
-  content: '';
+/* 유레카의 금발을 상징하는 고정 브랜드 선.
+   출력 상태 포털과 분리된 실제 요소라 연결 상태와 무관하게 항상 남는다. */
+.dashboard-brand-hairline {
   position: absolute;
-  z-index: 0;
+  z-index: 1;
   left: 0;
   right: 0;
   top: 50%;
+  display: block;
   height: 3px;
   border-radius: 999px;
   background: var(--chr-hair);
@@ -1036,7 +1037,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 }
 .dashboard-output-route-bar-inner {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
