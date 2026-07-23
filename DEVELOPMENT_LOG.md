@@ -853,3 +853,12 @@
 - 공개 Pages를 다시 열어 기본 `스피커 송출 중`, 주요 소스 순서와 console warning/error 0을 확인했다. 공개 HTTP HEAD는 200이고 workflow `29977321000`의 product SHA·build·deploy는 success 상태다.
 - 현재 PC에는 ADB가 없고, 오디오 endpoint도 온보드 speaker와 별도 USB FIFINE mic 조합이다. VB-Audio Cable은 플레이어 drift 격리 증거일 뿐 실제 performer-monitoring 합격을 대신하지 않는다. 실기기 모바일 관문과 같은-clock/저지연 인터페이스 G6는 새 장비 경로에서 수행해야 한다.
 - 실제 방송·녹화·재생·OBS 설정 변경은 하지 않았다. 미검증 운영 관문은 사용자에게 남은 행동을 알리는 근거이며, established route나 정상 MR을 자동 차단하는 조건으로 사용하지 않는다.
+
+## 2026-07-23 (Codex) — v0.2.34 Speaker 자연 종료의 비파괴 정리
+
+- 공개 v0.2.33 Speaker에서 6초 48 kHz WAV를 실제로 재생해 `0초 → 6초 → ended`와 이력 편입을 확인했다. 재생 자체는 정상 완료됐지만, 자연 종료 증거를 처리하는 같은 observer frame에서 Dashboard가 다시 STOP을 보내 `observer_reentry` 내부 코드가 토스트로 노출되는 결함을 발견했다.
+- Speaker 자연 종료는 이미 물리 재생이 끝났다는 증거이므로 Dashboard가 중복 STOP을 보내지 않는다. 대신 로컬 컨트롤러가 observer frame을 벗어난 microtask에서 같은 `runId`가 여전히 `ended`인지 다시 확인한 뒤 source를 정리한다. 그 사이 다음 곡이 승격되거나 새 LOAD가 시작되면 이전 곡 정리는 취소되어 새 곡을 멈출 수 없다.
+- OBS 자연 종료는 기존 강한 STOP 경계를 그대로 유지한다. Speaker의 비파괴 정리만 분리했으며 OBS lease, Worker protocol, 방송·녹화 제어, 30초 cadence에는 변경이 없다. 30초 cadence는 계속 위치 관찰 전용이고 곡 중간 seek·restart·playbackRate·경로 재연결을 만들지 않는다.
+- production-build 브라우저에서 4초 Speaker fixture의 자연 종료, idle 전환, 내부 코드 비노출, session HTTP 0, WebSocket 0, 송신 frame 0을 자동 확인했다. 전체 테스트 `744/744`, lint(기존 Gemini escape 경고 2건만 유지), production build, `git diff --check`, OBS 정적 closure 예산을 통과했다.
+- Dashboard는 `377.69 kB raw / 103.49 kB gzip`, 로컬 Speaker lazy chunk는 `8.34 kB raw / 2.85 kB gzip`이다. OBS closure는 `384,105 B raw / 118,431 B gzip / 103,706 B brotli`로 기존 예산 안이며 OBS runtime bundle 증가는 없다.
+- FIFINE 마이크 20초 캡처에는 재생 fixture의 440 Hz가 idle 잡음보다 유의하게 구분되지 않았다. 이 PC에는 물리 스피커 loopback 입력이 없으므로 브라우저의 실제 재생 완료는 증명했지만 공기 중 Speaker→마이크 경로는 증명하지 않았다. 해당 물리 관문에는 스피커를 실제로 켜거나 같은-clock 가상 케이블이 필요하다. OBS 방송·녹화는 시작하지 않았다.

@@ -114,4 +114,18 @@ test('Speaker lifecycle observers report physical state but never own playback a
     dashboard,
     /if \(mode === 'speaker'\) \{[\s\S]*?setOutputModePreference\('speaker'\)[\s\S]*?return;/,
   );
+  assert.match(
+    dashboard,
+    /const needsPhysicalStop = !\(outputMode === 'speaker' && physicalPlaybackEnded\)[\s\S]*?dispatchPlaybackCommand\([\s\S]*?outputMode\)/,
+    'a natural Speaker end must not issue a re-entrant STOP while OBS retains its strong STOP',
+  );
+  assert.match(
+    dashboard,
+    /stopPlaybackOutput\(\{[\s\S]*?outputMode: act\?\.outputMode,[\s\S]*?physicalPlaybackEnded: true/,
+  );
+  assert.match(
+    localController,
+    /queueMicrotask\(\(\) => \{[\s\S]*?snapshot\.runId !== endedRunId \|\| snapshot\.status !== 'ended'[\s\S]*?nextCommandId\('ended-release'\)/,
+    'Speaker source cleanup must leave the observer frame and verify exact run identity',
+  );
 });

@@ -60,6 +60,7 @@ export function createLocalSpeakerController({
   let sequence = 0;
   let pendingAutoplayRunId = null;
   let scheduledAutoplayRunId = null;
+  let scheduledEndedReleaseRunId = null;
   let activeSong = null;
   let engine = null;
 
@@ -79,6 +80,47 @@ export function createLocalSpeakerController({
     }));
   };
 
+  const scheduleEndedRelease = (evidence) => {
+    const endedRunId = evidence?.runId;
+    if (disposed || evidence?.type !== PLAYBACK_EVIDENCE_TYPES.ENDED
+      || typeof endedRunId !== 'string' || !endedRunId
+      || scheduledEndedReleaseRunId === endedRunId) return;
+    const endedSnapshot = engine?.snapshot();
+    if (endedSnapshot?.runId !== endedRunId || endedSnapshot?.status !== 'ended') return;
+
+    scheduledEndedReleaseRunId = endedRunId;
+    // ENDED is delivered from PlaybackEngine's protected evidence observer.
+    // Release the completed source only after that frame exits. The exact
+    // run/status guard prevents this cleanup from stopping a synchronously
+    // promoted replacement song.
+    queueMicrotask(() => {
+      if (scheduledEndedReleaseRunId === endedRunId) {
+        scheduledEndedReleaseRunId = null;
+      }
+      if (disposed) return;
+      const snapshot = engine.snapshot();
+      if (snapshot.runId !== endedRunId || snapshot.status !== 'ended') return;
+      pendingAutoplayRunId = null;
+      scheduledAutoplayRunId = null;
+      let operation;
+      try {
+        operation = engine.stop({
+          commandId: nextCommandId('ended-release'),
+          runId: endedRunId,
+        });
+      } catch {
+        // Natural playback has already ended. A best-effort source release
+        // must never turn that successful completion into a user-facing error.
+        return;
+      }
+      Promise.resolve(operation).then(() => {
+        if (engine.snapshot().runId === null) activeSong = null;
+      }).catch(() => {
+        // Keep completion authoritative even if browser source cleanup fails.
+      });
+    });
+  };
+
   const playWhenReady = (evidence) => {
     const annotatedEvidence = annotateSpeakerEvidenceWithIntent(
       evidence,
@@ -86,6 +128,7 @@ export function createLocalSpeakerController({
       { mediaEnded: audio.ended === true },
     );
     safeNotify(onEvidence, annotatedEvidence);
+    scheduleEndedRelease(annotatedEvidence);
     if (disposed || evidence?.type !== PLAYBACK_EVIDENCE_TYPES.READY
       || evidence.runId !== pendingAutoplayRunId
       || scheduledAutoplayRunId === evidence.runId) return;
@@ -143,6 +186,7 @@ export function createLocalSpeakerController({
             { type: command.type },
           );
         }
+        scheduledEndedReleaseRunId = null;
         activeSong = command.song;
         pendingAutoplayRunId = runId;
         const sourceFactory = ({ signal }) => resolveSource({
@@ -165,10 +209,12 @@ export function createLocalSpeakerController({
       case 'play':
         pendingAutoplayRunId = null;
         scheduledAutoplayRunId = null;
+        scheduledEndedReleaseRunId = null;
         return engine.play({ commandId: nextCommandId('play'), runId });
       case 'pause':
         pendingAutoplayRunId = null;
         scheduledAutoplayRunId = null;
+        scheduledEndedReleaseRunId = null;
         return engine.pause({ commandId: nextCommandId('pause'), runId });
       case 'seek':
         return engine.seek({
@@ -185,6 +231,7 @@ export function createLocalSpeakerController({
       case 'stop':
         pendingAutoplayRunId = null;
         scheduledAutoplayRunId = null;
+        scheduledEndedReleaseRunId = null;
         activeSong = null;
         return engine.stop({ commandId: nextCommandId('stop'), runId });
       case 'prefetch':
@@ -216,6 +263,7 @@ export function createLocalSpeakerController({
         ...engine.snapshot(),
         pendingAutoplayRunId,
         scheduledAutoplayRunId,
+        scheduledEndedReleaseRunId,
         activeSong,
         disposed,
       });
@@ -225,6 +273,7 @@ export function createLocalSpeakerController({
       disposed = true;
       pendingAutoplayRunId = null;
       scheduledAutoplayRunId = null;
+      scheduledEndedReleaseRunId = null;
       activeSong = null;
       engine.dispose();
     },

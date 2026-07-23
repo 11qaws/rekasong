@@ -38,7 +38,18 @@ function createHarness() {
     pause(command) { calls.push(['pause', command]); return 'paused'; },
     seek(command) { calls.push(['seek', command]); return 'seeked'; },
     volume(command) { calls.push(['volume', command]); return 'volume'; },
-    stop(command) { calls.push(['stop', command]); return 'stopped'; },
+    stop(command) {
+      if (insideEvidenceObserver) throw Object.assign(new Error('observer_reentry'), { code: 'observer_reentry' });
+      calls.push(['stop', command]);
+      engineSnapshot = {
+        ...engineSnapshot,
+        status: 'stopped',
+        runId: null,
+        sourceAttached: false,
+        mediaPaused: true,
+      };
+      return 'stopped';
+    },
     dispose() { calls.push(['dispose']); },
   };
   const controller = createLocalSpeakerController({
@@ -155,6 +166,79 @@ test('prefetch remains a media optimization and does not create playback authori
   const { calls, controller } = createHarness();
   await controller.sendCommand({ type: 'prefetch', videoIds: ['abcdefghijk'] });
   assert.deepEqual(calls, [['prefetch', ['abcdefghijk']]]);
+});
+
+test('natural end releases the completed source only after the evidence observer exits', async () => {
+  const harness = createHarness();
+  await harness.controller.sendCommand({
+    type: 'load',
+    runId: 'run-natural-end',
+    song: { type: 'youtube', src: 'abcdefghijk' },
+  });
+  harness.setEngineSnapshot({
+    status: 'ended',
+    runId: 'run-natural-end',
+    sourceAttached: true,
+    mediaPaused: true,
+    wantsPlayback: false,
+    position: 180,
+    duration: 180,
+  });
+
+  harness.emitEvidence({
+    type: 'ended',
+    runId: 'run-natural-end',
+    mediaTime: 180,
+    duration: 180,
+  });
+
+  assert.equal(
+    harness.calls.filter(([name]) => name === 'stop').length,
+    0,
+    'source cleanup must not re-enter PlaybackEngine from its evidence observer',
+  );
+  assert.equal(harness.observed.at(-1).type, 'ended');
+  await Promise.resolve();
+  assert.equal(harness.calls.filter(([name]) => name === 'stop').length, 1);
+  assert.equal(
+    harness.calls.find(([name]) => name === 'stop')[1].runId,
+    'run-natural-end',
+  );
+  await Promise.resolve();
+  assert.equal(harness.controller.snapshot().activeSong, null);
+});
+
+test('deferred natural-end release cannot stop a replacement run', async () => {
+  const harness = createHarness();
+  await harness.controller.sendCommand({
+    type: 'load',
+    runId: 'run-ended',
+    song: { type: 'youtube', src: 'abcdefghijk' },
+  });
+  harness.setEngineSnapshot({
+    status: 'ended',
+    runId: 'run-ended',
+    sourceAttached: true,
+    mediaPaused: true,
+    wantsPlayback: false,
+  });
+
+  harness.emitEvidence({ type: 'ended', runId: 'run-ended' });
+  const replacementLoad = harness.controller.sendCommand({
+    type: 'load',
+    runId: 'run-replacement',
+    song: { type: 'youtube', src: 'lmnopqrstuv' },
+  });
+  harness.setEngineSnapshot({
+    status: 'loading',
+    runId: 'run-replacement',
+    sourceAttached: false,
+  });
+  await replacementLoad;
+  await Promise.resolve();
+
+  assert.equal(harness.calls.filter(([name]) => name === 'stop').length, 0);
+  assert.equal(harness.controller.snapshot().activeSong.src, 'lmnopqrstuv');
 });
 
 test('page resume observes a system pause without issuing a transport command', () => {

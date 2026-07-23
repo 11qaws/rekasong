@@ -2089,13 +2089,23 @@ export default function Dashboard() {
   }, [active?.entryId, active?.outputMode, active?.runId]);
 
   // 재생 출력 정지(다음 곡 없음). On-Air 명령 실패는 호출자가 처리한다.
-  const stopPlaybackOutput = ({ stoppingEntryId, stoppingRunId } = {}) => {
-    if (useOnAirPlayer) {
+  const stopPlaybackOutput = ({
+    stoppingEntryId,
+    stoppingRunId,
+    outputMode = playbackModeForRun(),
+    physicalPlaybackEnded = false,
+  } = {}) => {
+    // A Speaker ENDED event already proves the physical transport stopped.
+    // Its controller releases the completed source after the evidence observer
+    // returns, so issuing STOP here would re-enter PlaybackEngine and expose an
+    // internal observer_reentry code. OBS keeps its explicit strong STOP.
+    const needsPhysicalStop = !(outputMode === 'speaker' && physicalPlaybackEnded);
+    if (useOnAirPlayer && needsPhysicalStop) {
       const operation = dispatchPlaybackCommand({
         type: 'stop',
         sessionId: stoppingEntryId || currentEntry?.entryId,
         runId: stoppingRunId || activeRef.current?.runId
-      });
+      }, outputMode);
       Promise.resolve(operation).catch((error) => showToast(error.message, 'error'));
     }
     setIsPlaying(false);
@@ -2171,7 +2181,12 @@ export default function Dashboard() {
     }
     if (!promoted) {
       try {
-        stopPlaybackOutput({ stoppingEntryId: marker.entryId, stoppingRunId: marker.runId });
+        stopPlaybackOutput({
+          stoppingEntryId: marker.entryId,
+          stoppingRunId: marker.runId,
+          outputMode: act?.outputMode,
+          physicalPlaybackEnded: true,
+        });
       } catch {
         // 이미 끝난 곡이다 — 정지 명령 실패가 완료 처리를 막지 않는다.
         setIsPlaying(false);

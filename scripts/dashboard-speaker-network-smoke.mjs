@@ -447,6 +447,36 @@ try {
     'A page-owned local file must not load the remote prepare/cache graph.',
   );
 
+  await localAudio.evaluate((audio) => new Promise((resolve, reject) => {
+    if (audio.ended) {
+      resolve();
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      reject(new Error('Speaker fixture did not reach its natural end.'));
+    }, 8_000);
+    audio.addEventListener('ended', () => {
+      window.clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  }));
+  await page.locator('.playback-idle').waitFor({ state: 'visible' });
+  await page.waitForTimeout(50);
+  const naturalEndEvidence = {
+    bodyText: await page.locator('body').innerText(),
+    sessionHttpRequests: sessionHttpRequests.length,
+    sessionSockets: sessionSockets.length,
+    sessionSocketFramesSent,
+  };
+  assert.doesNotMatch(
+    naturalEndEvidence.bodyText,
+    /observer_reentry|local_speaker_[a-z_]+/,
+    'A successful natural end must never expose an internal transport code.',
+  );
+  assert.equal(naturalEndEvidence.sessionHttpRequests, 0);
+  assert.equal(naturalEndEvidence.sessionSockets, 0);
+  assert.equal(naturalEndEvidence.sessionSocketFramesSent, 0);
+
   // Current playback is tab-owned and intentionally not durable. Reloading is
   // the bounded cleanup between the local-file and prepared-media scenarios.
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
