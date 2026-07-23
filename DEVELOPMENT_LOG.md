@@ -888,3 +888,6 @@
 - 전체 `751/751` 테스트와 집중 회귀 `81/81`, lint 신규 오류 0(기존 Gemini escape 경고 2), production build와 `git diff --check`를 통과했다. 집중 회귀는 STOP dispatch 실패 보존, ACK/relay 유실 뒤 지연 snapshot, 오래된 run 거부, 명시적 STOP 재요청, snapshot+relay 중복 finalization, Speaker 회귀를 포함한다.
 - build는 Dashboard `382.38kB raw / 104.61kB gzip`, CSS `63.67kB / 11.97kB`다. v0.2.35 대비 Dashboard gzip 증가는 약 `0.94kB`이며 OBS player chunk는 `42.66kB / 12.53kB`로 동일하다.
 - 로컬 브라우저에서 기본 Speaker, YouTube 단일 상위 소스와 Search/Playlist, 한국어↔영어, 390px 모바일, 금발 선과 머리핀 상태를 확인했다. 가로 이탈과 console warning/error는 0이었다. 이 검증은 음악·OBS route·점검음·방송·녹화를 시작하지 않았고 Worker와 OBS player runtime도 변경하지 않았다.
+- release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`, Pages workflow `29982114310`, build job `89125971819`, deploy job `89126157653`, deployment `5567403732`가 성공했다. clean Ubuntu에서 751개 테스트·lint·Worker 문법·build·pseudo-locale·30곡 Blob 수명·OBS bundle·publish를 통과했다.
+- Actions artifact에서 manifest를 제외한 공개 대상 21개를 내려받고 공개 CDN에서 다시 수집해 크기와 SHA-256 `21/21` exact match를 확인했다. 공개 smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 금발 선을 통과했고 HTTP 오류·legacy ntfy·warm long task는 0이었다.
+- 공개 Speaker fixture의 유휴·로컬 재생·페이지 수명·기기 pause 복구를 통과했다. 전 구간의 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다. 실제 OBS·음악·점검음·방송·녹화는 시작하지 않았다.

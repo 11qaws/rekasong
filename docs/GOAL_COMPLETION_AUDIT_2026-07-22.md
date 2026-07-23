@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.35다. Speaker 자연 종료는 성공한 재생을 내부 오류로 바꾸지 않고 완료 source만 비파괴적으로 정리하며, 사용자 화면은 브라우저·통신·플레이어 내부 코드 대신 현재 언어의 다음 행동을 표시한다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.36이다. Speaker 자연 종료는 성공한 재생을 내부 오류로 바꾸지 않고 완료 source만 비파괴적으로 정리하며, 사용자 화면은 브라우저·통신·플레이어 내부 코드 대신 현재 언어의 다음 행동을 표시한다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. OBS 곡 경계는 같은 run의 강한 정지를 확인한 뒤에만 현재 곡을 완료·폐기하고 다음 곡을 시작하며, 정지 증거가 늦어져도 목록이나 경로를 자동 절단하지 않는다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -25,6 +25,7 @@
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작·활성 곡 control socket 단절 후 조작 복구 완료 | v0.2.26 공개 배포됨 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 운영 Worker 연결 자동 검증 완료 | v0.2.29 공개 배포됨 | 실제 OBS 화면 수동 확인 |
+| OBS 스킵·자연 종료·폐기 뒤 이전 음원이 멎기 전에 다음 곡을 시작하지 않음 | 동일 run strong-stop 장벽·지연/유실/중복 증거 회귀 완료 | v0.2.36 공개 배포·artifact exact match | 실제 OBS에서 방송·녹화 OFF 수동 곡 경계 확인 |
 | OBS 오디오를 건드리지 않고 평상시 위치 관측만 30초로 제한 | 5분·4Hz 모사 1,200→9 + 실제 CEF 302.5초 position 10회, 자동 media 명령 0 | v0.2.26 공개 player 실제 OBS 통과 | 없음 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | v0.2.26 공개 배포·긴 문구 시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
@@ -34,7 +35,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.29 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.35` / release commit `2ce37ae45851f9314e29c1b3612cc272a5345627`까지 성공적으로 배포됐다. Pages workflow `29980592766`과 deployment `5567109650`가 success이며 clean Ubuntu에서 749개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 기기-pause 복구와 자연 종료를 통과했고 내부 코드가 나타나지 않았다. Speaker 유휴·재생·페이지 수명·복구·자연 종료의 session HTTP/WebSocket/frame과 Worker host 요청은 모두 0이었다. production Worker 격리 검증에서는 가짜 OBS 페이지 두 개가 동시에 연결된 동안 lease 대상만 LOAD→PLAY→PAUSE→PLAY→VOLUME→STOP을 수행하고 추가 페이지는 source-detached·paused로 남았다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 실제 OBS runtime은 변경·재배포하지 않았고 실제 방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.36` / release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`까지 성공적으로 배포됐다. Pages workflow `29982114310`, build job `89125971819`, deploy job `89126157653`, deployment `5567403732`가 success이며 clean Ubuntu에서 751개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px와 금발 선을 통과했고 HTTP 오류와 warm long task는 0이었다. 공개 Speaker 유휴·로컬 재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame과 Worker host 요청도 모두 0이었다. OBS 곡 경계는 `정지 의도 → 동일 run STOP → strong-stop → 완료/폐기 → 다음 LOAD` 순서를 사용하고 8초 증거 지연이나 첫 STOP 유실 시 현재 곡과 다음 곡 예약을 보존한 채 명시적 재요청을 제시한다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 OBS player runtime은 변경·재배포하지 않았고 실제 OBS·방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, v0.2.36의 실제 OBS 곡 경계 수동 확인, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
 
 ### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 
@@ -396,3 +397,14 @@
 - 30초 cadence는 계속 관찰 전용이다. 곡 시작 때 `position: 0`으로 기준을 잡고 곡 안에서는 seek·restart·playbackRate·route 재연결을 만들지 않으며 다음 곡의 새 run에서 다시 기준을 잡는다.
 - release commit `2ce37ae45851f9314e29c1b3612cc272a5345627`, Pages workflow `29980592766`, build `89121348032`, deploy `89121502137`, deployment `5567109650`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
 - 공개 production smoke와 Speaker fixture에서 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 기기 pause 복구, 자연 종료, 내부 코드 비노출을 확인했다. Speaker 전 구간의 session HTTP/WebSocket/frame과 Worker host 요청은 0이었고 실제 OBS·방송·녹화는 시작하지 않았다.
+
+## 17. v0.2.36 OBS 곡 경계 strong-stop 장벽 — 2026-07-23
+
+- 기존 OBS 스킵 폴백은 STOP 명령의 동기 반환을 실제 물리 정지처럼 취급해 현재 곡을 먼저 완료하거나 다음 곡 LOAD를 열 수 있었다. 자연 `ended` 역시 source detach와 autoplay 취소를 별도로 증명하지 않은 채 완료 전이로 들어갈 수 있었다.
+- 스킵·자연 종료·폐기를 `현재 entry/run에 묶인 STOP → 같은 run의 strong-stop relay 또는 authoritative snapshot → 완료/폐기 확정 → 선택한 다음 곡의 새 run LOAD`로 통일했다. snapshot은 `stopped + paused + sourceDetached + autoplayCancelled + audible=false`를 모두 요구하며 ACK, pause, ended, 과거 run은 완료 근거가 아니다.
+- 첫 STOP 전송이 실패하거나 8초 안에 강한 증거가 오지 않아도 current/queue/route를 절단하지 않는다. `정지 확인 필요`와 44px `정지 다시 요청` 행동을 한국어·영어로 표시하며, 사용자가 누를 때만 동일 run의 STOP을 다시 발행한다. 일반 중복 STOP은 계속 한 번으로 합치고 snapshot과 relay가 함께 도착해도 history/LOAD를 한 번만 수행한다.
+- 전체 `751/751`, 집중 회귀 `81/81`, lint 신규 오류 0, Worker 문법, production build, pseudo-locale, 30곡 Blob 수명, OBS bundle을 통과했다. 30곡 run은 생성 Blob 30개를 unmount까지 30/30 회수했고 저장된 Blob URL과 Worker 요청은 0이었다.
+- build는 Dashboard `382.38kB raw / 104.61kB gzip`, CSS `63.67kB / 11.97kB`, Speaker lazy chunk `8.34kB / 2.85kB`, OBS player `42.66kB / 12.53kB`다.
+- release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`, Pages workflow `29982114310`, build `89125971819`, deploy `89126157653`, deployment `5567403732`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
+- 공개 production smoke는 기본 Speaker, YouTube/Setlink/Meloming과 Search/Playlist, 한·영 reload, 320/375/768/1100px, 320px 영문 설정, 금발 선을 통과했다. HTTP 오류·legacy ntfy 요청·warm long task는 0이고 warm DCL은 `21ms`, JS heap은 `8,355,732B`였다.
+- 공개 Speaker 유휴·로컬 재생·페이지 수명·기기 pause 복구에서 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다. 이 release 검증은 실제 OBS route·음악·점검음·방송·녹화를 시작하지 않았으며, 실제 OBS에서 방송·녹화 OFF 상태의 자연 종료·스킵·증거 지연 수동 확인은 운영 관문으로 남긴다.
