@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.29다. 출력별 음량과 OBS strong-stop 뒤 폐기 UI 복구를 추가하고, 실제 운영 Worker의 격리 세션과 공개 Pages에서 검증했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.32다. Speaker가 기기·브라우저 정책으로 물리 일시정지됐을 때 같은 곡과 위치를 보존하고 사용자가 누를 `계속 재생` 행동을 제공한다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -19,6 +19,7 @@
 | Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 없음 |
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택·탈착 복구 | v0.2.22 자동·모사 브라우저 검증 완료 | v0.2.22 배포·공개 자산 확인 | 실제 지원 장치에서 물리 청취 확인 |
+| 기기·브라우저 일시정지 뒤 같은 Speaker 곡을 사용자가 복구 | 의도/물리 상태·이벤트 순서 계약 + production Chrome 통과 | v0.2.32 공개 Chrome 통과 | 실제 Android/iOS 백그라운드·잠금 화면 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | v0.2.26 공개 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작·활성 곡 control socket 단절 후 조작 복구 완료 | v0.2.26 공개 배포됨 | 없음 |
@@ -32,7 +33,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.29 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.29` / release commit `03a062a190994a62c17c2b8307b9b7d52d9e78aa`까지 성공적으로 배포됐다. Pages workflow `29972538959`와 deployment `5565613740`가 success이며 clean Ubuntu에서 733개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 출력별 음량 reload, 한영 전환, 320~1100px, 320px 영문 설정, 금발 선을 통과했고 HTTP 오류·ntfy 요청·warm long task는 0이었다. 운영 Worker 격리 연결에서는 실제 방송·녹화 없이 OBS 재생·음량 확정 1회·strong-stop 뒤 UI 종료·Speaker 복귀·세션 410을 통과했다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker runtime은 변경·재배포하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.32` / release commit `e1cecf8ae9df9388306798a252345922a6a4c12e`까지 성공적으로 배포됐다. Pages workflow `29975753233`과 deployment `5566204012`가 success이며 clean Ubuntu에서 735개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 출력별 음량, 한영 전환, 320~1100px, 320px 영문 설정, 금발 선과 새 `계속 재생` 행동을 통과했고 HTTP 오류·ntfy 요청·warm long task는 0이었다. 공개 Speaker 기기-pause 복구의 session HTTP/WebSocket/frame과 Worker host 요청도 0이었다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 OBS runtime은 변경·재배포하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
 
 ### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 
@@ -276,8 +277,8 @@
 
 ## 7. 배포 완료와 다음 관문
 
-1. 현재 공개 frontend는 `0.2.31` / `e7a4acb1c5d6d466e3bbf93e661fc063dd69c38d`다. Pages workflow `29974560178`의 build job `89103488646`과 deploy job `89103692362`가 성공하고 같은 product SHA를 가리킨다.
-2. GitHub Pages clean install·734개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. ntfy 요청·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선, 한국어/영어와 긴 문구 3화면×4폭을 확인했다. v0.2.31 Actions artifact와 공개 파일은 21/21 exact match다.
+1. 현재 공개 frontend는 `0.2.32` / `e1cecf8ae9df9388306798a252345922a6a4c12e`다. Pages workflow `29975753233`의 build job `89107013923`과 deploy job `89107182934`가 성공하고 deployment `5566204012`가 같은 product SHA를 가리킨다.
+2. GitHub Pages clean install·735개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. ntfy 요청·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선, 한국어/영어와 긴 문구 3화면×4폭, Speaker 기기-pause 복구를 확인했다. v0.2.32 Actions artifact와 공개 파일은 21/21 exact match다.
 3. 실제 OBS G3, G4, source hide/show, 5분 scene 전환, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했고, 공개 3탭 독립 재생·reload도 v0.2.18에서 통과했다. 다음 수동 관문은 모바일 Speaker 백그라운드·잠금 화면/PiP 조작과 실제 출력 장치 전환·청취다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
@@ -313,3 +314,11 @@
 - 30초 관찰 정책은 구현과 테스트가 일치한다. OBS adapter는 playing/paused/buffering/ended lifecycle을 즉시 전송하고 position만 30초 간격으로 제한한다. 5분 fixture는 30~270초의 position 9건과 command 0건을 증명한다. Dashboard는 절대 position+단조 시계로 표시만 재기준화하고, 새 run은 이전 시간을 상속하지 않고 기본 0초에서 시작한다. 관찰값은 seek·restart·playbackRate·route 전환·reconnect를 만들지 않는다.
 - release commit `e7a4acb1c5d6d466e3bbf93e661fc063dd69c38d`, Pages workflow `29974560178`, build `89103488646`, deploy `89103692362`가 성공했다. Actions artifact에서 manifest를 제외한 실제 게시 파일을 공개 URL에서 다시 내려받아 SHA-256으로 비교했고 `21/21` exact match였다.
 - 목표는 아직 완료로 판정하지 않는다. 실제 모바일 백그라운드/PiP·잠금 화면·물리 출력 장치 청취, 사용자 OBS monitoring 청취, 별도 명시 승인 뒤 G5, 같은 audio clock/저지연 performer monitoring 경로의 곡 단위 G6가 남아 있다. 방송·녹화는 시작하지 않았다.
+
+## 11. v0.2.32 Speaker 기기 일시정지 복구·공개 배포 증거 — 2026-07-23
+
+- `wantsPlayback=true`인 같은 Speaker run의 실제 media만 paused이면 자동 명령 없이 사용자에게 `계속 재생` 행동을 보인다. 명시적 사용자 pause는 일반 pause로 남고, 자연 종료는 기존 auto-next/이력 경계를 사용한다. 페이지 복귀 관측과 늦은 native pause 이벤트 순서가 바뀌어도 같은 의도 분류로 수렴한다.
+- 공개 Chrome에서 로컬 WAV를 물리 pause하고 복귀 관측 뒤 행동을 눌렀다. 같은 source와 위치가 보존되고 media가 다시 전진했으며 320px overflow `0`, 행동 높이 `44px`였다. 이 흐름의 session HTTP, WebSocket, 송신 frame과 Worker host 요청은 모두 0이어서 OBS 경로 검사나 서버 연결이 Speaker 복구에 들어오지 않는다.
+- clean Ubuntu 자동 근거는 `735/735`, lint 신규 오류 0, Worker 문법, build, pseudo-locale 3화면×4폭, 30곡 local Blob 수명, OBS bundle 예산 통과다. 공개 일반 smoke도 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한영 reload, 320/375/768/1100px, 320px 영문 설정, 흰 hairpin과 3px 금발 선, HTTP 오류·ntfy·warm long task 0을 통과했다.
+- release commit `e1cecf8ae9df9388306798a252345922a6a4c12e`, Pages workflow `29975753233`, build `89107013923`, deploy `89107182934`, deployment `5566204012`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
+- 30초 cadence는 오디오 명령이 아니라 관찰이다. 현재 곡의 seek·restart·playbackRate·route 재연결을 만들지 않고 다음 곡의 새 run만 `position: 0`에서 시작한다. 실제 모바일 백그라운드/PiP·잠금 화면·물리 출력 장치 청취, 사용자 OBS monitoring 청취, 별도 명시 승인 뒤 G5, 같은-clock/저지연 performer monitoring의 곡 단위 G6는 계속 별도 관문이다. 방송·녹화는 시작하지 않았다.
