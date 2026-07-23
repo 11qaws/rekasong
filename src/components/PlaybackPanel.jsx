@@ -54,6 +54,8 @@ export default function PlaybackPanel({
   volume,
   volumeOutputMode = 'speaker',
   onVolumeChange,
+  outputVolumes = null,
+  onOutputVolumeChange,
   speakerOutputDevice = null,
   onChooseSpeakerOutputDevice,
   onResetSpeakerOutputDevice,
@@ -111,6 +113,8 @@ export default function PlaybackPanel({
   // 것을 뿌리에서 없앤다. (Worker 는 seek 을 이미 영속하지 않는다.)
   const [seekDraft, setSeekDraft] = useState(null);
   const [volumeDraft, setVolumeDraft] = useState(null);
+  const [outputVolumeDrafts, setOutputVolumeDrafts] = useState({});
+  const outputVolumeDraftsRef = useRef({});
   const commitSeek = () => {
     if (transportControlsLocked) {
       setSeekDraft(null);
@@ -124,6 +128,23 @@ export default function PlaybackPanel({
       return;
     }
     if (volumeDraft !== null) { onVolumeChange(volumeDraft); setVolumeDraft(null); }
+  };
+  const previewOutputVolume = (mode, value) => {
+    const next = {
+      ...outputVolumeDraftsRef.current,
+      [mode]: Math.max(0, Math.min(100, Number(value) || 0)),
+    };
+    outputVolumeDraftsRef.current = next;
+    setOutputVolumeDrafts(next);
+  };
+  const commitOutputVolume = (mode) => {
+    if (!Object.prototype.hasOwnProperty.call(outputVolumeDraftsRef.current, mode)) return;
+    const nextVolume = outputVolumeDraftsRef.current[mode];
+    const next = { ...outputVolumeDraftsRef.current };
+    delete next[mode];
+    outputVolumeDraftsRef.current = next;
+    setOutputVolumeDrafts(next);
+    onOutputVolumeChange?.(mode, nextVolume);
   };
   const [isObsSetupOpen, setIsObsSetupOpen] = useState(false);
   const [isObsConfigurationVisible, setIsObsConfigurationVisible] = useState(outputMode === 'obs');
@@ -776,7 +797,7 @@ export default function PlaybackPanel({
             <button type="button" onClick={toggleMute} className="btn-icon" disabled={transportControlsLocked} title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
               {isMuted ? <VolumeX size={16} /> : volume < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
             </button>
-            <input aria-label={t('playback.control.volumeForOutput', { mode: outputModeLabel(volumeOutputMode) })} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" disabled={transportControlsLocked} />
+            <input aria-label={t('playback.control.volumeForOutput', { mode: outputModeLabel(volumeOutputMode) })} aria-valuetext={`${Math.round(volumeDraft ?? volume)}%`} type="range" min="0" max="100" value={volumeDraft ?? volume} onChange={(event) => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} className="volume-slider" disabled={transportControlsLocked} />
             {/* D-01: 클릭 이벤트 객체가 expectedMarker 인자로 넘어가지 않게 인자 없이 호출한다. */}
             <button type="button" onClick={() => onSkip()} className="btn-icon" disabled={transportControlsLocked} title={isFinishing ? t('playback.control.skipFinishing') : isFailed ? t('playback.control.skipFailed') : t('playback.control.skip')}><SkipForward size={17} /></button>
             {isFailed && (
@@ -955,6 +976,58 @@ export default function PlaybackPanel({
                   {t('obs.audioCheck.localSpeakerSilent')}
                 </p>
               )}
+            </section>
+
+            <section className="output-volume-profiles" aria-labelledby="output-volume-profiles-title">
+              <header>
+                <div>
+                  <h3 id="output-volume-profiles-title">{t('settings.outputVolume.title')}</h3>
+                  <p>{t('settings.outputVolume.description')}</p>
+                </div>
+              </header>
+              <div className="output-volume-profile-list">
+                {['speaker', 'obs'].map((mode) => {
+                  const storedVolume = Number.isFinite(Number(outputVolumes?.[mode]))
+                    ? Math.max(0, Math.min(100, Number(outputVolumes[mode])))
+                    : 100;
+                  const displayedVolume = Object.prototype.hasOwnProperty.call(
+                    outputVolumeDrafts,
+                    mode,
+                  )
+                    ? outputVolumeDrafts[mode]
+                    : storedVolume;
+                  return (
+                    <label
+                      key={mode}
+                      className="output-volume-profile-row"
+                      data-output-mode={mode}
+                    >
+                      <span className="output-volume-profile-label">
+                        {mode === 'speaker'
+                          ? <Volume2 size={15} aria-hidden="true" />
+                          : <Radio size={15} aria-hidden="true" />}
+                        <span>{outputModeLabel(mode)}</span>
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={displayedVolume}
+                        onChange={(event) => previewOutputVolume(mode, event.target.value)}
+                        onPointerUp={() => commitOutputVolume(mode)}
+                        onKeyUp={() => commitOutputVolume(mode)}
+                        onBlur={() => commitOutputVolume(mode)}
+                        disabled={typeof onOutputVolumeChange !== 'function'}
+                        aria-label={t('playback.control.volumeForOutput', {
+                          mode: outputModeLabel(mode),
+                        })}
+                        aria-valuetext={`${Math.round(displayedVolume)}%`}
+                      />
+                      <output aria-live="off">{Math.round(displayedVolume)}%</output>
+                    </label>
+                  );
+                })}
+              </div>
             </section>
 
             {!isObsConfigurationVisible && speakerOutputDevice?.supported && (

@@ -787,3 +787,13 @@
 - 설정 안에 기본 접힘 상태의 `노래 방송 모니터 경로` 안내를 추가했다. 물리 스피커→마이크 loop는 측정용일 뿐이고 실제 방송에서는 헤드폰을 사용한다는 점, 가능하면 마이크 입력과 헤드폰 출력을 같은 오디오 인터페이스 clock에 두는 점, OBS monitoring 설정과 10분 재측정 순서를 설명한다. 실패 결과는 연결·재생을 막거나 Sync Offset을 자동 변경하지 않는다.
 - 실제 OBS 10분 분리 트랙은 MR 재생 중단·restart·seek 없이 marker 60/60과 jitter p95 1.832ms를 기록했다. 현재 온보드 출력+별도 USB 마이크 조합은 drift 15.5–17.32ms/590초와 중앙 offset 43.25ms로 수용 기준을 넘었으므로, 같은 audio clock 경로에서 재측정하기 전에는 카라오케 sync 통과로 표시하지 않는다.
 - 전체 684/684 테스트, Worker 문법, production build, `git diff --check`, OBS 정적 closure 예산(raw 383,782B / gzip 117,558B / brotli 103,025B)을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다. production Worker는 먼저 version `2b819923-49bb-4002-9407-848321a6c6f7`로 배포했으며 실제 streaming은 시작하지 않았다.
+
+## 2026-07-23 (Codex) — v0.2.29 출력별 음량과 OBS 폐기 확정 복구
+
+- 설정 톱니 안에 스피커와 OBS의 재생 음량을 각각 저장하는 작은 슬라이더를 추가했다. 비활성 출력의 값은 환경설정만 바꾸고, 실제 재생 중인 정확한 출력과 run이 일치할 때만 명령을 보낸다. 드래그 중에는 로컬 숫자만 미리 보여 주며 pointer/key/blur 확정 시 한 번만 적용한다.
+- 운영 Worker와 격리된 새 세션을 연결한 실제 Dashboard↔가상 OBS Browser Source 검증에서 Speaker `34%`, OBS `61%`가 각각 실제 media volume에 적용됐다. OBS 슬라이더를 `60%`로 움직이는 동안 명령은 0회였고 확정 시 정확히 1회만 전달됐다. 새로고침 뒤에도 `34/60` 프로필이 유지됐다.
+- 이 검증에서 STOP 뒤 OBS media가 이미 `paused=true`, source detached, autoplay cancelled, audible false였는데 Dashboard만 영구히 `폐기 중`에 남는 실제 결함을 발견했다. 빠른 strong-stop snapshot과 로컬 폐기 의도의 도착 순서가 바뀔 수 있는데, `useSyncState.normaliseState()`가 `discardRequested`를 제거하고 Dashboard가 snapshot 위치 하나만 관찰한 것이 원인이었다.
+- 탭 런타임 정규화가 폐기 의도를 확정 시점까지 보존하고, Dashboard가 root 또는 player snapshot의 같은 strong-stop 증거를 사용하며 의도와 증거 어느 쪽이 먼저 와도 다시 판정하도록 고쳤다. 운영 연결 재검증에서 정지 후 재생 카드가 정상적으로 비워지고 Speaker 재선택과 세션 종료 HTTP 410까지 완료됐다.
+- 연결 브라우저 검사는 우발적인 운영 트래픽을 막기 위해 `REKASONG_WORKER`를 명시해야 하며, production은 `REKASONG_ALLOW_PRODUCTION_WORKER=1`도 함께 요구한다. CI에는 넣지 않는다. 검증 중 OBS binding은 streaming/recording 모두 false였고 실제 방송·녹화는 시작하지 않았다.
+- 30초 카라오케 타이머는 위치 보정기가 아니라 관찰자로 유지한다. 곡 중간에는 자동 seek·restart·playbackRate 보정을 하지 않고, 시작점과 다음 곡 LOAD에서 0초 기준을 다시 잡는다. 작은 관측 오차는 안내만 하며 established route를 끊지 않는다.
+- 사전 검증: 733/733 단위 테스트, pseudo-locale 3화면×4폭 overflow 0, production build, 로컬 Dashboard smoke, Speaker 재생 중 Worker HTTP/socket/frame 0, 30곡 Blob 수명, OBS 정적 closure `384,105B raw / 118,425B gzip / 103,671B brotli`를 통과했다. Dashboard는 `374.58kB raw / 102.47kB gzip`, CSS는 `62.57kB raw / 11.79kB gzip`이다.

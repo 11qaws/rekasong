@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
-const targetUrl = process.argv[2] || 'https://11qaws.github.io/rekasong/';
+const localPreviewRequested = process.argv[2] === '--local';
+const requestedTargetUrl = !localPreviewRequested && process.argv[2]
+  ? new URL(process.argv[2]).href
+  : null;
 const executableCandidates = [
   process.env.REKASONG_CHROMIUM_PATH,
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -12,6 +18,84 @@ const executableCandidates = [
 const executablePath = executableCandidates.find((candidate) => existsSync(candidate));
 
 assert.ok(executablePath, 'Chrome or Edge is required for the Dashboard production smoke test.');
+
+const setRangeValueAndBlur = async (page, locator, value) => {
+  await locator.focus();
+  await locator.evaluate((input, nextValue) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, String(nextValue));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+  const mode = await locator.evaluate((input) => (
+    input.closest('[data-output-mode]')?.dataset.outputMode
+  ));
+  await page.waitForFunction(({ outputMode, expected }) => (
+    document.querySelector(`.output-volume-profile-row[data-output-mode="${outputMode}"] output`)
+      ?.textContent?.trim() === `${expected}%`
+  ), { outputMode: mode, expected: value });
+  await locator.blur();
+};
+
+const reservePort = async () => {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = server.address();
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  return port;
+};
+
+const waitForServer = async (url, child, logs) => {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (child?.exitCode !== null) break;
+    try {
+      const response = await fetch(url);
+      if (response.ok) return;
+    } catch {
+      // Preview is still starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Dashboard did not become reachable at ${url}. ${logs.join('').slice(-2_000)}`);
+};
+
+const stopChild = async (child) => {
+  if (!child || child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    new Promise((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  if (child.exitCode === null) child.kill('SIGKILL');
+};
+
+const previewPort = localPreviewRequested ? await reservePort() : null;
+const targetUrl = localPreviewRequested
+  ? `http://127.0.0.1:${previewPort}/`
+  : requestedTargetUrl || 'https://11qaws.github.io/rekasong/';
+const previewLogs = [];
+let preview = null;
+if (localPreviewRequested) {
+  const vitePath = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
+  preview = spawn(process.execPath, [
+    vitePath,
+    'preview',
+    '--host', '127.0.0.1',
+    '--port', String(previewPort),
+    '--strictPort',
+  ], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: { ...process.env, BROWSER: 'none' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  preview.stdout.on('data', (chunk) => previewLogs.push(String(chunk)));
+  preview.stderr.on('data', (chunk) => previewLogs.push(String(chunk)));
+  await waitForServer(targetUrl, preview, previewLogs);
+}
 
 const browser = await chromium.launch({
   executablePath,
@@ -171,6 +255,23 @@ try {
   assert.equal(await routeButtons.nth(0).getAttribute('aria-checked'), 'true');
   assert.equal(await routeButtons.nth(0).isDisabled(), false, 'Speaker selection is unexpectedly locked.');
   assert.equal(await routeButtons.nth(1).isDisabled(), false, 'OBS selection is unexpectedly locked.');
+  await setRangeValueAndBlur(
+    page,
+    page.locator('.output-volume-profile-row[data-output-mode="speaker"] input'),
+    34,
+  );
+  await setRangeValueAndBlur(
+    page,
+    page.locator('.output-volume-profile-row[data-output-mode="obs"] input'),
+    61,
+  );
+  assert.deepEqual(
+    await page.evaluate(() => JSON.parse(
+      localStorage.getItem('rekasong.output-volume-profiles.v1') || 'null',
+    )),
+    { version: 1, speaker: 34, obs: 61 },
+    'Speaker and OBS volume profiles must be stored independently.',
+  );
   await localeSelect.selectOption('en');
   await page.waitForFunction(() => document.documentElement.lang === 'en');
   assert.deepEqual(
@@ -212,6 +313,16 @@ try {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.locator('.output-settings-button').click();
   await page.locator('#obs-setup-dialog').waitFor({ state: 'visible' });
+  assert.equal(
+    await page.locator('.output-volume-profile-row[data-output-mode="speaker"] input').inputValue(),
+    '34',
+    'Speaker volume did not survive reload.',
+  );
+  assert.equal(
+    await page.locator('.output-volume-profile-row[data-output-mode="obs"] input').inputValue(),
+    '61',
+    'OBS volume did not survive reload.',
+  );
   const mobileDialog = await page.locator('#obs-setup-dialog').evaluate((dialog) => {
     const rect = dialog.getBoundingClientRect();
     return {
@@ -278,4 +389,5 @@ try {
 } finally {
   await context.close();
   await browser.close();
+  await stopChild(preview);
 }

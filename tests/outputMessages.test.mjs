@@ -232,6 +232,25 @@ test('OBS audio check copy has exact Korean-English key and placeholder parity',
   assert.match(outputMessageCatalog.en['obs.audioCheck.mixerVerification.userScope'], /only what you saw/i);
 });
 
+test('the merged app translation surface has exact Korean-English key parity', () => {
+  const merged = {
+    ko: { ...outputMessageCatalog.ko, ...appMessageCatalog.ko },
+    en: { ...outputMessageCatalog.en, ...appMessageCatalog.en },
+  };
+  const koreanKeys = Object.keys(merged.ko).sort();
+  const englishKeys = Object.keys(merged.en).sort();
+  assert.deepEqual(englishKeys, koreanKeys);
+  for (const key of koreanKeys) {
+    assert.ok(String(merged.ko[key]).trim(), `empty Korean message for ${key}`);
+    assert.ok(String(merged.en[key]).trim(), `empty English message for ${key}`);
+    assert.deepEqual(
+      placeholders(merged.en[key]),
+      placeholders(merged.ko[key]),
+      `merged placeholder mismatch for ${key}`,
+    );
+  }
+});
+
 test('karaoke performer-monitor guidance is compact, translated, and explicitly nonblocking', async () => {
   const panelSource = await readFile(
     new URL('../src/components/PlaybackPanel.jsx', import.meta.url),

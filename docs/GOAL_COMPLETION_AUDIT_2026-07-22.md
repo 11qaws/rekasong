@@ -284,3 +284,13 @@
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.
 7. v0.2.17의 새-ID 완전 초기화는 로컬과 production 실제 브라우저+Worker에서 무자동재생까지 통과했다.
 8. v0.2.18의 탭별 대기열·auto-next는 로컬과 공개 실제 세 탭, 새로고침, A 단독 실제 재생을 통과했다.
+
+## 8. v0.2.29 배포 후보 증거 — 2026-07-23
+
+- 스피커와 OBS 음량은 설정 안에서 별도 프로필로 저장된다. 운영 연결 브라우저 검증에서 Speaker `0.34`, OBS 초기 `0.61`, OBS 확정 변경 `0.60`이 실제 media element 값으로 확인됐고 새로고침 뒤 `34/60`이 유지됐다.
+- 설정 슬라이더 preview는 WebSocket 명령을 보내지 않았고 commit 한 번에 volume 명령 정확히 1개만 발생했다. 비활성 출력 설정은 현재 run에 전달되지 않는다.
+- OBS STOP이 물리적으로 성공했지만 UI가 `폐기 중`에 남는 결함을 운영 Worker 격리 세션에서 재현했다. 로컬 `discardRequested` 보존과 root/player strong-stop snapshot 통합 관찰로 수정했으며 같은 전체 흐름에서 재생 카드 종료, Speaker 전환, 세션 410 정리까지 통과했다.
+- 스피커 로컬 재생은 Worker session HTTP, WebSocket, 송신 frame이 모두 0이었다. 스피커는 경로 검증이나 OBS 상태로 중단되지 않는 일반 플레이어 경계를 유지한다.
+- 번역은 `appMessageCatalog + outputMessageCatalog`의 실제 병합 surface를 기준으로 한국어/영어 648개 key, 비어 있지 않은 값과 placeholder parity를 자동 검증한다. 새 음량 UI도 양 언어 key를 동시에 추가했다.
+- 전체 자동 근거는 733/733, pseudo-locale overflow 0, 30곡 Blob 예산, production browser smoke, OBS bundle budget 통과다. 실제 방송·녹화는 시작하지 않았다.
+- 아직 목표 전체 완료로 판정하지 않는다. 실제 모바일 백그라운드/PiP·물리 출력 장치 청취, OBS monitoring 청취, 명시 승인 뒤 G5, 같은 clock 경로의 G6가 남아 있다.

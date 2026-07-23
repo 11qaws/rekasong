@@ -85,6 +85,23 @@ const stopChild = async (child) => {
   if (child.exitCode === null) child.kill('SIGKILL');
 };
 
+const setRangeValueAndBlur = async (page, locator, value) => {
+  await locator.focus();
+  await locator.evaluate((input, nextValue) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, String(nextValue));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+  const mode = await locator.evaluate((input) => (
+    input.closest('[data-output-mode]')?.dataset.outputMode
+  ));
+  await page.waitForFunction(({ outputMode, expected }) => (
+    document.querySelector(`.output-volume-profile-row[data-output-mode="${outputMode}"] output`)
+      ?.textContent?.trim() === `${expected}%`
+  ), { outputMode: mode, expected: value });
+  await locator.blur();
+};
+
 const requestedUrl = process.argv[2] ? new URL(process.argv[2]).href : null;
 const port = requestedUrl ? null : await reservePort();
 const appUrl = requestedUrl || `http://127.0.0.1:${port}/`;
@@ -243,6 +260,20 @@ try {
     storedSession: null,
   }, 'An idle Speaker page must not create a media session or OBS control socket.');
 
+  await page.locator('.output-settings-button').click();
+  await page.locator('#obs-setup-dialog').waitFor({ state: 'visible' });
+  await setRangeValueAndBlur(
+    page,
+    page.locator('.output-volume-profile-row[data-output-mode="speaker"] input'),
+    34,
+  );
+  await setRangeValueAndBlur(
+    page,
+    page.locator('.output-volume-profile-row[data-output-mode="obs"] input'),
+    61,
+  );
+  await page.locator('#obs-setup-dialog > header .btn-icon').click();
+
   await page.locator('.song-composer input[type="file"][accept]').setInputFiles({
     name: 'speaker-local-first.wav',
     mimeType: 'audio/wav',
@@ -271,6 +302,10 @@ try {
     sessionSocketFramesSent,
     mediaPaused: await localAudio.evaluate((audio) => audio.paused),
     mediaTime: await localAudio.evaluate((audio) => audio.currentTime),
+    mediaVolume: await localAudio.evaluate((audio) => audio.volume),
+    outputVolumeProfiles: await page.evaluate(() => JSON.parse(
+      localStorage.getItem('rekasong.output-volume-profiles.v1') || 'null',
+    )),
     persistedBlobUrls: (persistedAfterLocalPlay.match(/blob:/g) || []).length,
     localPlaybackChunks: localPlayResources.filter((url) => LOCAL_SPEAKER_CHUNK.test(url)).length,
     remoteMediaChunks: localPlayResources.filter((url) => REMOTE_MEDIA_CHUNK.test(url)).length,
@@ -279,6 +314,12 @@ try {
   assert.equal(localFileEvidence.sessionSockets, 0, 'Speaker local-file play must not create a control socket.');
   assert.equal(localFileEvidence.sessionSocketFramesSent, 0);
   assert.equal(localFileEvidence.mediaPaused, false);
+  assert.equal(localFileEvidence.mediaVolume, 0.34);
+  assert.deepEqual(localFileEvidence.outputVolumeProfiles, {
+    version: 1,
+    speaker: 34,
+    obs: 61,
+  });
   assert.equal(localFileEvidence.persistedBlobUrls, 0, 'Page Blob URLs must stay out of durable storage.');
   assert.ok(
     localFileEvidence.localPlaybackChunks >= 2,

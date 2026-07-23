@@ -1686,3 +1686,26 @@ G4 전에는 `카라오케 싱크 보장`이라고 쓰지 않는다.
 7. Phase 8의 stable OBS URL/pairing
 
 실제 OBS G3, streaming output G3-S, mic/monitor G4가 끝나기 전까지 계획 완료와 각 검증 완료를 같은 말로 쓰지 않는다.
+
+## 33. 곡 경계 동기화와 30초 관찰 정책 — 2026-07-23 확정
+
+30초 주기 검사는 재생 위치를 다시 쓰는 동기화 명령이 아니다. 노래 중간의 hard seek는 반주를 건너뛰거나 반복하고, playbackRate 보정은 가수에게 들리는 박자를 움직이므로 카라오케에서는 측정 오차보다 더 큰 사고를 만든다.
+
+채택 계약:
+
+1. 곡을 완전히 준비한 뒤 새 run의 LOAD 위치를 `0`으로 시작한다.
+2. 재생 중 실제 오디오 clock을 master로 두며 Dashboard timer가 media 위치를 지휘하지 않는다.
+3. 약 30초 간격 표본은 진행·정지·역행·큰 점프를 관찰할 뿐 seek, restart, rate 변경, route 재연결을 만들지 않는다.
+4. 작은 offset/drift는 현재 곡에서 자동 보정하지 않고 advisory 증거로만 남긴다.
+5. 명백한 stall이나 물리 재생 실패도 자동 경로 절단·다른 출력 fallback으로 확대하지 않는다. 사용자가 누를 수 있는 정지·재시도 행동을 제시한다.
+6. 자연 종료의 exact strong-stop 뒤 다음 곡을 다시 `0`에 LOAD하여 곡 사이 누적 오차를 제거한다.
+7. 한 곡 기준 합격 판정은 endpoint-inclusive 5분 창으로 하며, 10분은 장치 조합의 stress 진단값으로만 사용한다.
+
+현재 자동 fixture는 5분 동안 30초 관찰 9회를 허용하며, 관찰 자체가 seek/restart/rate/reconnect 명령을 만들지 않는 계약을 고정한다. 실제 OBS CEF 302.5초 측정에서도 position report 10회 동안 해당 명령은 0회였다.
+
+## 34. 출력별 음량과 정지 확정의 제품 경계 — 2026-07-23
+
+- Speaker volume과 OBS player gain은 별도 로컬 프로필이다. 설정 preview는 재생 명령이 아니며 commit 뒤에도 해당 출력이 현재 run의 실제 소유자일 때만 적용한다.
+- OBS 정지는 로컬 사용자 의도와 정확한 strong-stop 증거의 두 조건으로 확정한다. 두 이벤트는 어느 순서로 와도 되지만 둘 중 하나를 정규화 과정에서 잃어서는 안 된다.
+- strong-stop은 `status=stopped`, 동일 entry/run, paused, source detached, autoplay cancelled, non-audible을 모두 만족해야 한다. 성공 relay를 놓쳐도 같은 authoritative snapshot이 있으면 UI를 복구한다.
+- 이 검증은 연결을 유지하는 정상 재생 정책과 분리된다. 30초 관찰, scene hide/show, streaming telemetry는 정상 MR을 자동 중단하지 않는다.

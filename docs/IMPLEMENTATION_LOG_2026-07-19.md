@@ -311,3 +311,10 @@ OBS v2가 선택하는 production artifact:
 ## 9. 완료 판정
 
 현재 완료된 것은 안전 기반과 자동 계약이다. 사용자가 처음 설정할 때 “리모컨과 OBS가 같은 동작을 하고 실제 방송에 정확한 반주가 들어간다”고 판정하려면 UI bridge, 실제 OBS mixer·artifact, 카라오케 sync 증거가 모두 추가로 필요하다.
+
+## 10. 2026-07-23 정지 확정 race와 출력별 음량 구현
+
+- OBS discard는 `사용자 폐기 의도`와 `동일 run strong-stop snapshot`이 독립적으로 도착하는 두 증거 전이다. state 정규화가 전자를 제거하거나 effect가 후자 하나만 dependency로 삼으면, 오디오는 멈췄는데 UI만 영구 전이 상태에 남는다.
+- `normaliseState()`가 탭 메모리의 `discardRequested`를 보존하고, Dashboard는 root/player 위치를 정규화한 `confirmedObsPlayback`과 active/current identity 변화를 모두 재평가한다. storage payload에는 current run 자체가 저장되지 않으므로 reload ghost run을 만들지 않는다.
+- 출력별 음량은 `{version:1,speaker,obs}` 로컬 프로필을 그대로 사용한다. 설정의 비활성 프로필은 저장만 하고 현재 entry/run/output identity가 모두 일치할 때만 physical command를 보낸다.
+- 브라우저 통합 검사는 preview/commit 명령 수, 실제 media volume, reload persistence, STOP 뒤 idle, route 재선택과 session 410을 한 흐름에서 검증한다. 운영 연결 시험은 명시 환경 변수와 별도 production 허용 플래그가 없으면 시작하지 않는다.

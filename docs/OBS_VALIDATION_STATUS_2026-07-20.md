@@ -398,3 +398,35 @@ npm run test:obs:v2:idle-soak
 ```
 
 remote staging credential이 준비되기 전에는 production Worker에 장애·부하·duplicate 자동 시험을 실행하지 않는다.
+
+## 8. v0.2.29 연결 UI·음량·폐기 복구 검증 — 2026-07-23
+
+최신 staging Worker가 현재 프런트의 protocol 협상을 완료하지 못해 이번 증거로 사용하지 않았다. production Worker에는 장애·부하 시험을 하지 않고, 새 격리 세션 하나의 정상 연결·재생·정지·정리 흐름만 실행했다.
+
+| 검증 | 결과 |
+|---|---|
+| OBS binding 안전 상태 | `streaming=false`, `recording=false`, 실제 송출 시작 0 |
+| 연결 UI | OBS 선택, `Broadcasting through OBS`, player 1개 ready, mixer 확인 다음 행동 표시 |
+| 출력별 초기 음량 | Speaker `0.34`, OBS `0.61` 실제 media 값 |
+| OBS 음량 preview | 350ms 동안 volume command 0 |
+| OBS 음량 commit | command 정확히 1, media `0.60` |
+| 새로고침 지속성 | Speaker `34`, OBS `60` |
+| OBS 폐기 | exact strong-stop 뒤 Dashboard idle 복귀 |
+| 후속 전환 | Speaker 선택 성공, silent OBS 재개방 시 자동 재생 0 |
+| 세션 정리 | status HTTP `410` |
+| page error | 0 |
+
+실행 도중 물리 정지는 이미 성공했지만 Dashboard가 계속 `폐기 중`에 남는 결함을 처음 재현했다. `useSyncState`가 로컬 `discardRequested`를 제거했고 Dashboard가 strong-stop의 실제 snapshot 위치와 의도 도착 순서를 모두 관찰하지 않은 것이 원인이었다. 두 경계를 수정한 뒤 동일 시나리오가 통과했다.
+
+재현은 의도하지 않은 production 사용을 막기 위해 환경을 명시해야 한다.
+
+```powershell
+$env:REKASONG_WORKER='https://rekasong-session.11qaws.workers.dev'
+$env:REKASONG_ALLOW_PRODUCTION_WORKER='1'
+npm run test:dashboard:obs-connected
+Remove-Item Env:REKASONG_WORKER, Env:REKASONG_ALLOW_PRODUCTION_WORKER
+```
+
+이 명령은 CI에 포함하지 않는다. 실제 방송·녹화·stream key를 조작하지 않으며 가상 OBS binding은 off 상태만 보고한다.
+
+30초 cadence는 observation-only다. 곡 중간 자동 seek/restart/rate/reconnect를 금지하고, 자연 종료와 다음 LOAD에서만 위치를 0으로 다시 고정한다.

@@ -95,6 +95,14 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
           : {}),
         ...(typeof source.active.failureDetail === 'string' && source.active.failureDetail
           ? { failureDetail: source.active.failureDetail }
+          : {}),
+        // OBS discard is a two-evidence transition: the local user intent and
+        // the exact strong-stop snapshot may arrive in either order. Keep the
+        // intent in tab runtime state until that snapshot finalizes the run;
+        // dropping it here leaves an already silent player stuck forever in
+        // the discarding phase.
+        ...(source.active.discardRequested === true
+          ? { discardRequested: true }
           : {})
       }
     : null;

@@ -73,6 +73,28 @@ test('cross-tab sync preserves each tab\'s current Speaker run and queue', () =>
   assert.deepEqual(merged.setlinkCatalog, incoming.setlinkCatalog);
 });
 
+test('tab runtime normalization preserves an in-flight OBS discard intent', () => {
+  const currentEntry = entry('discard-entry', 'Discard fixture');
+  const local = {
+    currentEntry,
+    active: {
+      entryId: currentEntry.entryId,
+      runId: 'discard-run',
+      phase: 'discarding',
+      outputMode: 'obs',
+      discardRequested: true,
+    },
+    queue: [],
+    history: [],
+  };
+
+  const merged = mergeCrossTabSyncState(local, { history: [] });
+
+  assert.equal(merged.active?.phase, 'discarding');
+  assert.equal(merged.active?.outputMode, 'obs');
+  assert.equal(merged.active?.discardRequested, true);
+});
+
 test('another tab cannot create a phantom current song in an idle Speaker tab', () => {
   const incomingEntry = entry('incoming-entry');
   const merged = mergeCrossTabSyncState(

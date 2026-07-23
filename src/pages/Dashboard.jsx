@@ -2649,12 +2649,22 @@ export default function Dashboard() {
   useEffect(() => {
     const latest = activeRef.current;
     if (!isConfirmedDiscardSnapshot({
-      confirmedPlayback: outputControl.snapshot?.confirmedPlayback,
+      // Some coordinator snapshots expose the strong-stop proof at the root,
+      // while the production driver keeps it in playerSnapshot. Use the same
+      // normalized authoritative observation as remote-control feedback so a
+      // missed relay cannot leave the UI stuck after audio is already stopped.
+      confirmedPlayback: confirmedObsPlayback,
       active: latest,
       currentEntry: stateRef.current?.currentEntry
     })) return;
     finalizeDiscardRef.current?.({ entryId: latest.entryId, runId: latest.runId });
-  }, [outputControl.snapshot?.confirmedPlayback]);
+  }, [
+    active?.discardRequested,
+    active?.entryId,
+    active?.runId,
+    confirmedObsPlayback,
+    currentEntry?.entryId,
+  ]);
 
   // failed 재시도(§4-5): 같은 entry를 새 runId로 다시 재생한다.
   const handleRetryCurrent = () => {
@@ -2779,16 +2789,27 @@ export default function Dashboard() {
       : activeRef.current?.outputMode === 'speaker'
         ? 'speaker'
         : outputModePreference === 'obs' ? 'obs' : 'speaker';
+    handleOutputVolumeChange(targetMode, clamped);
+  };
+
+  const handleOutputVolumeChange = (targetMode, nextVolume) => {
+    if (!['speaker', 'obs'].includes(targetMode)) return;
+    const clamped = Math.max(0, Math.min(100, Number(nextVolume) || 0));
     setVolumeProfiles((previous) => updateOutputVolumeProfile(previous, targetMode, clamped));
-    if (useOnAirPlayer && currentEntry) {
+    const current = stateRef.current?.currentEntry;
+    const activeRun = activeRef.current;
+    // An inactive profile is only a saved preference. Apply a command when
+    // this exact output owns the current run; never let an OBS setting touch a
+    // Speaker run (or vice versa).
+    if (useOnAirPlayer && current && activeRun?.outputMode === targetMode) {
       try {
         const dispatchResult = dispatchPlaybackCommand({
           type: 'volume',
-          sessionId: currentEntry.entryId,
-          runId: activeRef.current?.runId,
+          sessionId: current.entryId,
+          runId: activeRun.runId,
           volume: clamped
-        });
-        trackObsRemoteControlRequest('volume', dispatchResult);
+        }, targetMode);
+        if (targetMode === 'obs') trackObsRemoteControlRequest('volume', dispatchResult);
         Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
       } catch (error) {
         showToast(error.message, 'error');
@@ -3291,6 +3312,8 @@ export default function Dashboard() {
             volume={volume}
             volumeOutputMode={volumeOutputMode}
             onVolumeChange={handleVolumeChange}
+            outputVolumes={volumeProfiles}
+            onOutputVolumeChange={handleOutputVolumeChange}
             speakerOutputDevice={speakerOutputDevice}
             onChooseSpeakerOutputDevice={handleChooseSpeakerOutputDevice}
             onResetSpeakerOutputDevice={handleResetSpeakerOutputDevice}
