@@ -70,6 +70,7 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
     let disposed = false;
     let sourcePipeline = null;
     let controller = null;
+    let removeLifecycleObservers = null;
     try {
       sourcePipeline = createSpeakerSourcePipeline({
         baseUrl: apiBaseUrl,
@@ -87,6 +88,26 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
       controllerRef.current = controller;
       setState('ready');
       callbacksRef.current.onStateChange?.('ready');
+
+      // Page/OS suspension may physically pause audio without delivering the
+      // original pause event before JavaScript is frozen. On return, observe
+      // the existing graph so the UI offers one-click resume. Observation is
+      // read-only: it never plays, pauses, reloads, detaches, or reconnects.
+      const observeAfterResume = () => {
+        if (document.visibilityState !== 'visible') return;
+        controller.observePhysicalState();
+      };
+      document.addEventListener('visibilitychange', observeAfterResume);
+      document.addEventListener('resume', observeAfterResume);
+      window.addEventListener('pageshow', observeAfterResume);
+      window.addEventListener('focus', observeAfterResume);
+
+      removeLifecycleObservers = () => {
+        document.removeEventListener('visibilitychange', observeAfterResume);
+        document.removeEventListener('resume', observeAfterResume);
+        window.removeEventListener('pageshow', observeAfterResume);
+        window.removeEventListener('focus', observeAfterResume);
+      };
     } catch (error) {
       setState('failed');
       callbacksRef.current.onStateChange?.('failed', error);
@@ -94,6 +115,7 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
 
     return () => {
       disposed = true;
+      removeLifecycleObservers?.();
       if (controllerRef.current === controller) controllerRef.current = null;
       controller?.dispose();
       sourcePipeline?.dispose();

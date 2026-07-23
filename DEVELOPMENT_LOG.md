@@ -818,3 +818,14 @@
 - 공개 URL smoke도 같은 계약을 통과했다. 기본 출력은 Speaker였고 YouTube/Setlink/Meloming, Search/Playlist, 한국어→영어→reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼과 3px 금발 선이 유지됐다. HTTP 오류·legacy ntfy 요청·warm long task는 0, warm DCL은 `24.1ms`, 최종 JS heap은 약 `7.98MiB`였다.
 - 공개 로컬 WAV 재생 중 `visibilitychange`와 `pagehide(persisted=true)` 뒤에도 같은 source가 유지되고 media time이 증가했으며 `paused=false`였다. 유휴·재생·검색 모두 session HTTP/WebSocket/frame과 Worker host 요청은 0이었다. 썸네일 없는 검색 결과는 로컬 SVG data URL과 `Thumbnail for Speaker demand fixture` 영어 대체 텍스트를 사용했다.
 - 30초 position은 OBS player가 보내는 절대 위치 관찰값이며 Dashboard 표시 시계만 다시 기대게 한다. 회귀 테스트는 5분 동안 30초 위치 9건, lifecycle 즉시 전달, playback command 0건을 고정한다. 곡 중 seek·restart·playbackRate·route/reconnect를 만들지 않고 새 run만 기본 `position: 0`으로 시작한다.
+
+## 2026-07-23 (Codex) — v0.2.32 Speaker 기기 일시정지의 사용자 복구 행동
+
+- 모바일 OS·브라우저가 페이지 JavaScript를 동결한 동안 실제 `<audio>`만 멈추고 원래 `pause` 이벤트를 전달하지 않으면 화면은 계속 재생 중으로 남아 첫 클릭이 반대로 일시정지가 되는 교착이 있었다. 페이지가 다시 visible이 되거나 `resume`·`pageshow`·focus를 받으면 기존 `PlaybackEngine`의 물리 snapshot을 읽어 이 불일치를 관찰한다.
+- 최근 명령 의도 `wantsPlayback=true`인데 같은 run·source가 물리적으로 paused이면 곡과 위치를 그대로 보존하고 작은 `계속 재생` 행동을 표시한다. 사용자가 누른 뒤에만 표준 PLAY를 한 번 보내며, 자동 PLAY·LOAD·SEEK·STOP·detach, 새 run, 출력 전환, Worker session 요청, WebSocket 또는 heartbeat를 만들지 않는다. 명시적 사용자 pause와 자연 종료는 기존 의미를 유지한다.
+- 페이지 복귀 관측 뒤 동결 중 밀린 native `pause` 이벤트가 늦게 도착해 행동을 지우는 순서 경쟁도 제거했다. 로컬 Speaker의 모든 pause 증거가 같은 보존된 사용자 의도를 포함하므로 전달 순서와 무관하게 기기 pause는 복구 행동, 사용자 pause는 일반 일시정지로 수렴한다.
+- 사용자 문구 `계속 재생 필요`, 기기 일시정지 설명, `계속 재생` 행동은 한국어·영어 semantic key로 함께 추가했다. 320px에서는 행동 높이 44px, 가로 overflow 0이며 큰 설명 패널을 추가하지 않는다.
+- 실제 production-build Chrome 로컬 WAV에서 물리 pause→복귀 관측→행동 표시→사용자 클릭을 실행했다. 같은 source가 유지되고 클릭 뒤 media time이 증가했으며 유휴·일반 수명·복구 전 구간의 session HTTP/WebSocket/frame은 모두 0이었다. 30곡 자연 종료 수명 시험도 재실행해 이 변경이 auto-next·이력 회수 계약을 바꾸지 않음을 확인했다.
+- Graphify로 `PlaybackEngine`→`localSpeakerController`→`DashboardLocalSpeaker`→Dashboard/PlaybackPanel의 상태 전달을 추적해 UI 표시가 transport 명령이나 서버 경로로 역류하지 않는 경계를 대조했다. 전체 `735/735` 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2), Worker 문법, production build, pseudo-locale 3화면×4폭, Speaker network/lifecycle/interruption smoke, 30곡 Blob 수명과 OBS bundle 예산을 통과했다.
+- build는 Dashboard `376.62kB raw / 103.15kB gzip`, CSS `63.21kB / 11.89kB`, 로컬 Speaker lazy chunk `7.83kB / 2.69kB`다. OBS 정적 closure는 `384,105B raw / 118,428B gzip / 103,822B brotli`로 기존 예산 안이며 OBS runtime·Worker는 변경하지 않았다.
+- 30초 정책은 강제 동기화가 아니라 관찰 전용으로 유지한다. 곡 도중 seek·restart·playbackRate·route 재연결을 하지 않고, 자연 종료 뒤 다음 곡의 새 run만 `position: 0`에서 다시 시작한다. 실제 모바일 OS 정책과 출력 장치 청취는 이 브라우저 합성 검증과 별도 수동 관문이다.

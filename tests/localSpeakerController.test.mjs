@@ -2,16 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createLocalSpeakerController } from '../src/lib/localSpeakerController.js';
+import { SPEAKER_INTERRUPTION_REASONS } from '../src/lib/speakerInterruption.js';
 
 function createHarness() {
   const calls = [];
+  const observed = [];
   const resolved = [];
   let emitEvidence = null;
   let insideEvidenceObserver = false;
+  let engineSnapshot = {
+    status: 'ready',
+    runId: null,
+    sourceAttached: false,
+    mediaPaused: true,
+    wantsPlayback: false,
+    position: 0,
+    duration: 0,
+    readyState: 0,
+    seeking: false,
+  };
   const engine = {
     execute() {},
     snapshot() {
-      return { status: 'ready', position: 0, duration: 0 };
+      return engineSnapshot;
     },
     load(command) {
       calls.push(['load', command]);
@@ -29,7 +42,7 @@ function createHarness() {
     dispose() { calls.push(['dispose']); },
   };
   const controller = createLocalSpeakerController({
-    audio: {},
+    audio: { ended: false },
     resolveSource(context) {
       resolved.push(context);
       return Promise.resolve({ kind: 'url', url: 'blob:test' });
@@ -41,6 +54,9 @@ function createHarness() {
     engineFactory(options) {
       emitEvidence = options.onEvidence;
       return engine;
+    },
+    onEvidence(evidence) {
+      observed.push(evidence);
     },
   });
   return {
@@ -54,7 +70,11 @@ function createHarness() {
         insideEvidenceObserver = false;
       }
     },
+    observed,
     resolved,
+    setEngineSnapshot(next) {
+      engineSnapshot = { ...engineSnapshot, ...next };
+    },
   };
 }
 
@@ -135,4 +155,73 @@ test('prefetch remains a media optimization and does not create playback authori
   const { calls, controller } = createHarness();
   await controller.sendCommand({ type: 'prefetch', videoIds: ['abcdefghijk'] });
   assert.deepEqual(calls, [['prefetch', ['abcdefghijk']]]);
+});
+
+test('page resume observes a system pause without issuing a transport command', () => {
+  const harness = createHarness();
+  harness.setEngineSnapshot({
+    status: 'paused',
+    runId: 'run-resume',
+    sourceAttached: true,
+    mediaPaused: true,
+    wantsPlayback: true,
+    position: 42.5,
+    duration: 180,
+    readyState: 4,
+  });
+
+  const interrupted = harness.controller.observePhysicalState();
+  assert.equal(interrupted.type, 'paused');
+  assert.equal(interrupted.runId, 'run-resume');
+  assert.equal(interrupted.mediaTime, 42.5);
+  assert.equal(
+    interrupted.interruptionReason,
+    SPEAKER_INTERRUPTION_REASONS.SYSTEM_PAUSE,
+  );
+  assert.deepEqual(harness.calls, []);
+
+  harness.emitEvidence({
+    type: 'paused',
+    runId: 'run-resume',
+    mediaTime: 42.5,
+  });
+  const delayedSystemPause = harness.observed.at(-1);
+  assert.equal(delayedSystemPause.wantsPlayback, true);
+  assert.equal(
+    delayedSystemPause.interruptionReason,
+    SPEAKER_INTERRUPTION_REASONS.SYSTEM_PAUSE,
+    'a delayed native pause event must not erase the required resume action',
+  );
+
+  harness.setEngineSnapshot({ wantsPlayback: false });
+  const intentionalPause = harness.controller.observePhysicalState();
+  assert.equal(intentionalPause.type, 'paused');
+  assert.equal(intentionalPause.interruptionReason, null);
+  harness.emitEvidence({
+    type: 'paused',
+    runId: 'run-resume',
+    mediaTime: 42.5,
+  });
+  const delayedIntentionalPause = harness.observed.at(-1);
+  assert.equal(delayedIntentionalPause.wantsPlayback, false);
+  assert.equal(delayedIntentionalPause.interruptionReason, null);
+  assert.deepEqual(harness.calls, []);
+
+  harness.setEngineSnapshot({
+    status: 'playing',
+    mediaPaused: false,
+    wantsPlayback: true,
+    position: 43,
+  });
+  const playing = harness.controller.observePhysicalState();
+  assert.equal(playing.type, 'playing');
+  assert.equal(playing.interruptionReason, null);
+  assert.deepEqual(harness.calls, []);
+  assert.deepEqual(harness.observed, [
+    interrupted,
+    delayedSystemPause,
+    intentionalPause,
+    delayedIntentionalPause,
+    playing,
+  ]);
 });

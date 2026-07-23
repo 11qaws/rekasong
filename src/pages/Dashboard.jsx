@@ -72,6 +72,7 @@ import {
   supportsSpeakerOutputDeviceSelection,
 } from '../lib/speakerOutputDevice';
 import { createSpeakerMediaSessionController } from '../lib/speakerMediaSession';
+import { isSpeakerResumeRequiredEvidence } from '../lib/speakerInterruption';
 import {
   OBS_REMOTE_CONTROL_FEEDBACK_DELAY_MS,
   createObsRemoteControlFeedback,
@@ -528,6 +529,7 @@ export default function Dashboard() {
 
   // Audio Controls
   const [isPlaying, setIsPlaying] = useState(false);
+  const [speakerResumeRequiredRunId, setSpeakerResumeRequiredRunId] = useState(null);
   const [volumeProfiles, setVolumeProfiles] = useState(() => (
     loadOutputVolumeProfiles(typeof window === 'undefined' ? null : window.localStorage)
   ));
@@ -2943,13 +2945,25 @@ export default function Dashboard() {
     const marker = { entryId: act.entryId, runId: act.runId };
     if (Number.isFinite(evidence.mediaTime)) setCurrentTime(evidence.mediaTime);
     if (Number.isFinite(evidence.duration)) setDuration(evidence.duration);
-    if (evidence.type === 'playing') handleConfirmedPlaying(marker);
-    if (evidence.type === 'paused') handleConfirmedPaused(marker);
+    if (evidence.type === 'playing') {
+      setSpeakerResumeRequiredRunId(null);
+      handleConfirmedPlaying(marker);
+    }
+    if (evidence.type === 'paused') {
+      setSpeakerResumeRequiredRunId(
+        isSpeakerResumeRequiredEvidence(evidence) ? marker.runId : null,
+      );
+      handleConfirmedPaused(marker);
+    }
     if (evidence.type === 'buffering') {
       handlePlaybackDelay(marker, t('playback.localSpeaker.source'));
     }
-    if (evidence.type === 'ended') handleConfirmedEnded(marker, 'natural');
+    if (evidence.type === 'ended') {
+      setSpeakerResumeRequiredRunId(null);
+      handleConfirmedEnded(marker, 'natural');
+    }
     if (evidence.type === 'error') {
+      setSpeakerResumeRequiredRunId(null);
       const actionMessageKey = evidence.code === 'play_rejected'
         ? 'playback.localSpeaker.autoplayBlocked'
         : evidence.code === 'media_postcondition_failed'
@@ -2962,6 +2976,12 @@ export default function Dashboard() {
       );
     }
   };
+
+  useEffect(() => {
+    setSpeakerResumeRequiredRunId((runId) => (
+      active?.outputMode === 'speaker' && active?.runId === runId ? runId : null
+    ));
+  }, [active?.outputMode, active?.runId]);
 
   // A v2 LOAD transition is fail-closed. If its authoritative route proof is
   // lost while the UI is still waiting for the first PLAY confirmation, make
@@ -3308,6 +3328,10 @@ export default function Dashboard() {
             onDiscardCurrent={handleDiscardCurrent}
             onRetryCurrent={handleRetryCurrent}
             isPlaying={isPlaying}
+            speakerResumeRequired={
+              active?.outputMode === 'speaker'
+              && speakerResumeRequiredRunId === active?.runId
+            }
             onTogglePlay={handleTogglePlayback}
             volume={volume}
             volumeOutputMode={volumeOutputMode}

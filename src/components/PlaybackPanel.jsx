@@ -52,6 +52,7 @@ export default function PlaybackPanel({
   activePhase,
   failureDetail,
   isPlaying,
+  speakerResumeRequired = false,
   onTogglePlay,
   onSkip,
   onDiscardCurrent,
@@ -281,6 +282,7 @@ export default function PlaybackPanel({
     : isFinishing ? t('playback.phase.skipping')
     : isDiscarding ? t('playback.phase.discarding')
     : isFailed ? t('playback.phase.failed')
+    : speakerResumeRequired ? t('playback.phase.resumeRequired')
     : isPlaying ? t('playback.phase.onAir') : t('playback.phase.paused');
   const outputModeLabel = (mode) => mode === 'speaker'
     ? t('onair.output.selector.mode.speaker')
@@ -812,7 +814,7 @@ export default function PlaybackPanel({
           </div>
           <div className="playback-controls">
             {/* finishing/discarding/failed 중 일반 재생 조작 잠금(§4-3, §4-5). */}
-            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={transportControlsLocked} title={transportControlsLocked ? t('playback.control.locked') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
+            <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={transportControlsLocked} title={transportControlsLocked ? t('playback.control.locked') : speakerResumeRequired ? t('playback.localSpeaker.resumeAction') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
             <button type="button" onClick={toggleMute} className="btn-icon" disabled={transportControlsLocked} title={isMuted ? t('playback.control.unmute') : t('playback.control.mute')}>
@@ -853,6 +855,20 @@ export default function PlaybackPanel({
               <span>{formatTime(currentTime)}</span>
               <input aria-label={t('playback.control.seek')} type="range" min="0" max={duration || 100} value={seekDraft ?? currentTime} onChange={(event) => setSeekDraft(Number(event.target.value))} onPointerUp={commitSeek} onKeyUp={commitSeek} onBlur={commitSeek} className="progress-slider" disabled={transportControlsLocked} />
               <span>{formatTime(duration)}</span>
+            </div>
+          )}
+          {speakerResumeRequired && !isFailed && (
+            <div className="speaker-resume-notice" role="status">
+              <span>{t('playback.localSpeaker.interrupted')}</span>
+              <button
+                type="button"
+                className="speaker-resume-action"
+                onClick={onTogglePlay}
+                disabled={transportControlsLocked}
+              >
+                <Play size={14} />
+                {t('playback.localSpeaker.resumeAction')}
+              </button>
             </div>
           )}
         </div>

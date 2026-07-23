@@ -77,18 +77,39 @@ test('production Speaker keeps local files page-owned until explicit OBS demand'
   );
 });
 
-test('Speaker transport never treats tab visibility or OBS proof as playback authority', async () => {
+test('Speaker lifecycle observers report physical state but never own playback authority', async () => {
   const [dashboard, localSpeaker, localController] = await Promise.all([
     readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/DashboardLocalSpeaker.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/localSpeakerController.js', import.meta.url), 'utf8'),
   ]);
 
+  assert.match(
+    localSpeaker,
+    /const observeAfterResume = \(\) => \{[\s\S]*?controller\.observePhysicalState\(\)/,
+  );
+  assert.match(
+    localSpeaker,
+    /addEventListener\('visibilitychange', observeAfterResume\)[\s\S]*?addEventListener\('resume', observeAfterResume\)[\s\S]*?addEventListener\('pageshow', observeAfterResume\)[\s\S]*?addEventListener\('focus', observeAfterResume\)/,
+  );
+  const observationStart = localController.indexOf('const observePhysicalState =');
+  const observationEnd = localController.indexOf('return Object.freeze({', observationStart);
+  const observationFlow = localController.slice(observationStart, observationEnd);
+  assert.match(observationFlow, /engine\.snapshot\(\)/);
+  assert.doesNotMatch(
+    observationFlow,
+    /engine\.(?:load|play|pause|seek|stop|detach)|resolveSource|prefetchSources|WebSocket|lease|heartbeat/,
+    'returning to a page may observe the existing graph but cannot mutate or reconnect it',
+  );
   assert.doesNotMatch(
     `${localSpeaker}\n${localController}`,
-    /addEventListener\(['"]visibilitychange|document\.hidden|addEventListener\(['"]pagehide|new WebSocket|leaseTarget|heartbeatTimer|sendHeartbeat/,
+    /addEventListener\(['"]pagehide|new WebSocket|leaseTarget|heartbeatTimer|sendHeartbeat/,
   );
   assert.match(dashboard, /const outputRouteStable = speakerPlayerMode \? true : establishedObsRouteConnected/);
+  assert.match(
+    dashboard,
+    /isSpeakerResumeRequiredEvidence\(evidence\)[\s\S]*?speakerResumeRequiredRunId === active\?\.runId/,
+  );
   assert.match(
     dashboard,
     /if \(mode === 'speaker'\) \{[\s\S]*?setOutputModePreference\('speaker'\)[\s\S]*?return;/,

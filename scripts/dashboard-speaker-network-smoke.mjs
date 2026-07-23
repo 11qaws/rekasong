@@ -329,6 +329,82 @@ try {
     sessionSockets: 0,
     sessionSocketFramesSent: 0,
   }, 'Visibility and persisted pagehide signals must not pause, detach, or reconnect Speaker playback.');
+
+  const interruptionBefore = await localAudio.evaluate((audio) => ({
+    currentTime: audio.currentTime,
+    source: audio.currentSrc || audio.src,
+  }));
+  await localAudio.evaluate((audio) => audio.pause());
+  await page.waitForFunction(() => (
+    document.querySelector('[data-local-speaker-state="ready"] audio')?.paused === true
+  ));
+  await page.evaluate(() => document.dispatchEvent(new Event('resume')));
+  const resumeNotice = page.locator('.speaker-resume-notice');
+  await resumeNotice.waitFor({ state: 'visible' });
+  const resumeAction = page.locator('.speaker-resume-action');
+  assert.equal(await resumeAction.isEnabled(), true);
+  assert.equal(
+    (await resumeNotice.locator('span').textContent())?.trim(),
+    'Your device paused playback. The track and playback position are preserved.',
+  );
+  await page.setViewportSize({ width: 320, height: 900 });
+  const mobileResumeLayout = await page.evaluate(() => {
+    const action = document.querySelector('.speaker-resume-action');
+    const notice = document.querySelector('.speaker-resume-notice');
+    const actionRect = action?.getBoundingClientRect();
+    const noticeRect = notice?.getBoundingClientRect();
+    return {
+      overflowPx: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+      actionHeight: actionRect?.height ?? 0,
+      noticeWithinViewport: Boolean(
+        noticeRect && noticeRect.left >= 0 && noticeRect.right <= window.innerWidth,
+      ),
+    };
+  });
+  assert.equal(mobileResumeLayout.overflowPx, 0);
+  assert.ok(mobileResumeLayout.actionHeight >= 44);
+  assert.equal(mobileResumeLayout.noticeWithinViewport, true);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const interruptionPaused = await localAudio.evaluate((audio) => ({
+    currentTime: audio.currentTime,
+    paused: audio.paused,
+    source: audio.currentSrc || audio.src,
+  }));
+  await resumeAction.click();
+  await page.waitForFunction((pausedAt) => {
+    const audio = document.querySelector('[data-local-speaker-state="ready"] audio');
+    return audio && audio.paused === false && audio.currentTime > pausedAt + 0.05;
+  }, interruptionPaused.currentTime);
+  await resumeNotice.waitFor({ state: 'detached' });
+  const interruptionAfter = await localAudio.evaluate((audio) => ({
+    currentTime: audio.currentTime,
+    paused: audio.paused,
+    source: audio.currentSrc || audio.src,
+  }));
+  const speakerInterruptionRecoveryEvidence = {
+    pausedAfterSystemSignal: interruptionPaused.paused,
+    resumeActionVisible: true,
+    mediaAdvancedAfterAction: interruptionAfter.currentTime > interruptionPaused.currentTime,
+    mediaPausedAfterAction: interruptionAfter.paused,
+    sourcePreserved: interruptionAfter.source === interruptionBefore.source,
+    mobileOverflowPx: mobileResumeLayout.overflowPx,
+    mobileActionHeight: mobileResumeLayout.actionHeight,
+    sessionHttpRequests: sessionHttpRequests.length,
+    sessionSockets: sessionSockets.length,
+    sessionSocketFramesSent,
+  };
+  assert.deepEqual(speakerInterruptionRecoveryEvidence, {
+    pausedAfterSystemSignal: true,
+    resumeActionVisible: true,
+    mediaAdvancedAfterAction: true,
+    mediaPausedAfterAction: false,
+    sourcePreserved: true,
+    mobileOverflowPx: 0,
+    mobileActionHeight: mobileResumeLayout.actionHeight,
+    sessionHttpRequests: 0,
+    sessionSockets: 0,
+    sessionSocketFramesSent: 0,
+  }, 'A system pause must converge to one visible local resume action without reconnecting.');
   const persistedAfterLocalPlay = await page.evaluate(({ sharedKey, tabKey }) => (
     `${localStorage.getItem(sharedKey) || ''}${sessionStorage.getItem(tabKey) || ''}`
   ), {
@@ -503,6 +579,7 @@ try {
     idleEvidence,
     localFileEvidence,
     speakerLifecycleEvidence,
+    speakerInterruptionRecoveryEvidence,
     searchOnly: {
       sessionHttpRequests: 0,
       sessionSockets: 0,

@@ -1311,6 +1311,33 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .playback-progress { min-width: 235px; display: flex; align-items: center; gap: 0.45rem; color: var(--text-muted); font-size: 0.72rem; }
 .playback-progress input { flex: 1; min-width: 80px; }
 .progress-slider { accent-color: var(--chr-vest); } /* 볼륨 슬라이더와 톤 통일 (기본 파랑 제거) */
+.speaker-resume-notice {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.speaker-resume-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid rgba(23, 92, 71, 0.35);
+  border-radius: 7px;
+  color: var(--chr-vest);
+  background: rgba(23, 92, 71, 0.07);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.speaker-resume-action:hover { background: rgba(23, 92, 71, 0.12); }
+.speaker-resume-action:disabled { cursor: not-allowed; opacity: 0.55; }
 .playback-idle { display: flex; align-items: center; gap: 0.45rem; min-height: 42px; padding: 0.65rem 0.8rem; border: 1px dashed var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 0.87rem; }
 .obs-setup-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1rem; background: rgba(24, 38, 49, 0.48); backdrop-filter: blur(3px); }
 .obs-setup-dialog { width: min(590px, 100%); max-height: min(700px, calc(100vh - 2rem)); overflow: auto; padding: 1.2rem; border: 1px solid var(--glass-border); border-radius: 14px; background: var(--bg-mid); box-shadow: 0 24px 60px rgba(30, 50, 65, 0.28); }
@@ -1533,6 +1560,8 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
   .obs-mixer-verification-actions .btn-secondary { min-height: 44px; }
   .playback-controls .volume-slider { width: 86px; }
   .playback-progress { width: 100%; }
+  .speaker-resume-notice { align-items: stretch; flex-direction: column; }
+  .speaker-resume-action { min-height: 44px; }
   .queue-panel { padding: 0.85rem; }
   .queue-panel .queue-list { min-height: 0; max-height: 200px; }
   .queue-panel .queue-empty { min-height: 62px; }

@@ -1,4 +1,8 @@
 import { PLAYBACK_EVIDENCE_TYPES, PlaybackEngine } from './playbackEngine.js';
+import {
+  annotateSpeakerEvidenceWithIntent,
+  observeSpeakerLifecycleSnapshot,
+} from './speakerInterruption.js';
 
 export const LOCAL_SPEAKER_CODES = Object.freeze({
   INVALID_CONFIGURATION: 'local_speaker_invalid_configuration',
@@ -76,7 +80,12 @@ export function createLocalSpeakerController({
   };
 
   const playWhenReady = (evidence) => {
-    safeNotify(onEvidence, evidence);
+    const annotatedEvidence = annotateSpeakerEvidenceWithIntent(
+      evidence,
+      engine?.snapshot(),
+      { mediaEnded: audio.ended === true },
+    );
+    safeNotify(onEvidence, annotatedEvidence);
     if (disposed || evidence?.type !== PLAYBACK_EVIDENCE_TYPES.READY
       || evidence.runId !== pendingAutoplayRunId
       || scheduledAutoplayRunId === evidence.runId) return;
@@ -190,8 +199,18 @@ export function createLocalSpeakerController({
     }
   };
 
+  const observePhysicalState = () => {
+    assertAvailable();
+    const evidence = observeSpeakerLifecycleSnapshot(engine.snapshot(), {
+      mediaEnded: audio.ended === true,
+    });
+    if (evidence) safeNotify(onEvidence, evidence);
+    return evidence;
+  };
+
   return Object.freeze({
     sendCommand,
+    observePhysicalState,
     snapshot() {
       return Object.freeze({
         ...engine.snapshot(),
