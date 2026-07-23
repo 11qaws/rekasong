@@ -6,6 +6,11 @@ import {
   derivePlaybackOutputNextAction,
   derivePlaybackOutputStatus,
 } from '../lib/playbackOutputStatus';
+import {
+  createOutputUnmuteMemory,
+  outputVolumeForMode,
+  rememberOutputUnmuteVolume,
+} from '../lib/outputVolumeProfiles';
 
 // 위젯 연결 칩 — 서버가 중계하는 **일반 브라우저 페이지 presence**에만 근거한다.
 // 이 값만으로 OBS CEF, 오디오 믹서, 녹화/송출 경로를 확인했다고 말하면 안 된다.
@@ -106,7 +111,7 @@ export default function PlaybackPanel({
   locale = 'ko',
   onLocaleChange,
 }) {
-  const [previousVolume, setPreviousVolume] = useState(100);
+  const previousVolumeByOutputRef = useRef(createOutputUnmuteMemory(outputVolumes));
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
   // 미리보기(로컬 상태)만 갱신하고 놓을 때 한 번만 실제 명령을 보낸다 — On-Air
   // seek/volume 명령 연발이 DO 쓰기 폭풍(무료 티어 한도)과 재생 재요청을 일으키던
@@ -174,6 +179,14 @@ export default function PlaybackPanel({
     setOutputRoutePortalTarget(document.getElementById('dashboard-output-route-bar'));
   }, []);
   const isMuted = volume === 0;
+  const normalizedVolumeOutputMode = volumeOutputMode === 'obs' ? 'obs' : 'speaker';
+  useEffect(() => {
+    let nextMemory = previousVolumeByOutputRef.current;
+    for (const mode of ['speaker', 'obs']) {
+      nextMemory = rememberOutputUnmuteVolume(nextMemory, mode, outputVolumes?.[mode]);
+    }
+    previousVolumeByOutputRef.current = nextMemory;
+  }, [outputVolumes]);
   const playerUrl = onAirPlayerUrl || preparedPlayerUrl;
   const displayUrl = onAirDisplayUrl || preparedDisplayUrl;
   // N-01 (Stage 5): 직접 재생 모드(On-Air 미설정)의 화면 정보 위젯 주소.
@@ -727,11 +740,19 @@ export default function PlaybackPanel({
   };
 
   const toggleMute = () => {
-    if (isMuted) onVolumeChange(previousVolume || 50);
-    else {
-      setPreviousVolume(volume);
-      onVolumeChange(0);
+    if (isMuted) {
+      onVolumeChange(outputVolumeForMode(
+        previousVolumeByOutputRef.current,
+        normalizedVolumeOutputMode,
+      ));
+      return;
     }
+    previousVolumeByOutputRef.current = rememberOutputUnmuteVolume(
+      previousVolumeByOutputRef.current,
+      normalizedVolumeOutputMode,
+      volume,
+    );
+    onVolumeChange(0);
   };
 
   const outputRoutePortal = outputRoutePortalTarget

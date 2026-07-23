@@ -43,4 +43,11 @@ test('PlaybackPanel announces which output volume is being adjusted', async () =
   assert.match(source, /onPointerUp=\{\(\) => commitOutputVolume\(mode\)\}/);
   assert.match(source, /onBlur=\{\(\) => commitOutputVolume\(mode\)\}/);
   assert.match(source, /aria-valuetext=\{`\$\{Math\.round\(displayedVolume\)\}%`\}/);
+  assert.match(source, /previousVolumeByOutputRef = useRef\(createOutputUnmuteMemory\(outputVolumes\)\)/);
+  assert.match(source, /rememberOutputUnmuteVolume\([\s\S]*?normalizedVolumeOutputMode[\s\S]*?volume/);
+  assert.match(
+    source,
+    /outputVolumeForMode\([\s\S]*?previousVolumeByOutputRef\.current[\s\S]*?normalizedVolumeOutputMode/,
+    'unmute must restore the remembered volume for the current output only',
+  );
 });

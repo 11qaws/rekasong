@@ -5,9 +5,11 @@ import {
   DEFAULT_OUTPUT_VOLUME,
   LEGACY_OUTPUT_VOLUME_STORAGE_KEY,
   OUTPUT_VOLUME_PROFILES_STORAGE_KEY,
+  createOutputUnmuteMemory,
   createOutputVolumeProfiles,
   loadOutputVolumeProfiles,
   outputVolumeForMode,
+  rememberOutputUnmuteVolume,
   saveOutputVolumeProfiles,
   updateOutputVolumeProfile,
 } from '../src/lib/outputVolumeProfiles.js';
@@ -43,6 +45,22 @@ test('Speaker and OBS volume profiles change independently', () => {
   assert.deepEqual(obsChanged, { version: 1, speaker: 42, obs: 73 });
   assert.equal(outputVolumeForMode(obsChanged, 'speaker'), 42);
   assert.equal(outputVolumeForMode(obsChanged, 'obs'), 73);
+});
+
+test('mute restore memory remains independent for Speaker and OBS', () => {
+  let memory = createOutputUnmuteMemory({ speaker: 0, obs: 0 });
+  assert.deepEqual(memory, { version: 1, speaker: 100, obs: 100 });
+
+  memory = rememberOutputUnmuteVolume(memory, 'speaker', 34);
+  memory = rememberOutputUnmuteVolume(memory, 'obs', 61);
+  memory = rememberOutputUnmuteVolume(memory, 'speaker', 0);
+
+  assert.equal(outputVolumeForMode(memory, 'speaker'), 34);
+  assert.equal(outputVolumeForMode(memory, 'obs'), 61);
+
+  memory = rememberOutputUnmuteVolume(memory, 'speaker', 47);
+  assert.equal(outputVolumeForMode(memory, 'speaker'), 47);
+  assert.equal(outputVolumeForMode(memory, 'obs'), 61);
 });
 
 test('stored profiles take precedence over legacy volume and remain bounded', () => {

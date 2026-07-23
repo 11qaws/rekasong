@@ -71,3 +71,30 @@ export function outputVolumeForMode(profiles, mode) {
   const normalized = createOutputVolumeProfiles(profiles);
   return mode === 'obs' ? normalized.obs : normalized.speaker;
 }
+
+/**
+ * Non-zero values remembered for the mute button. This is deliberately kept
+ * per output: muting Speaker must never decide which gain OBS restores, and
+ * vice versa. A profile that starts at zero has no prior audible value, so it
+ * uses the ordinary full-volume default until the user chooses one.
+ */
+export function createOutputUnmuteMemory(candidate = null, fallback = DEFAULT_OUTPUT_VOLUME) {
+  const safeFallback = Math.max(1, clampOutputVolume(fallback, DEFAULT_OUTPUT_VOLUME));
+  const normalized = createOutputVolumeProfiles(candidate, safeFallback);
+  return Object.freeze({
+    version: 1,
+    speaker: normalized.speaker > 0 ? normalized.speaker : safeFallback,
+    obs: normalized.obs > 0 ? normalized.obs : safeFallback,
+  });
+}
+
+export function rememberOutputUnmuteVolume(memory, mode, volume) {
+  const normalized = createOutputUnmuteMemory(memory);
+  if (!OUTPUT_MODES.has(mode)) return normalized;
+  const nextVolume = clampOutputVolume(volume, 0);
+  if (nextVolume <= 0) return normalized;
+  return createOutputUnmuteMemory({
+    ...normalized,
+    [mode]: nextVolume,
+  });
+}
