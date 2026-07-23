@@ -9,6 +9,7 @@
 - 새 production-preview smoke는 클릭→검토, 취소 durable mutation 0, 이력 drop 재생 0, 대기열 끝 audio request 0, 준비 응답 보류 중 queue 1/current 0/audio 0, 응답 해제 뒤 정확한 곡 audio 1회, 현재 로컬 곡 위 `다음 재생`의 source·전진 시간 보존을 실제 Chrome에서 검증한다. 모든 Speaker 시나리오의 OBS control WebSocket·송신 frame은 0이며 이 관문을 Pages clean-Ubuntu 배포 전에 실행하도록 고정했다.
 - 첫 smoke는 제품 동작을 끝까지 통과한 뒤 로컬 파일 표시 제목에 `.wav`가 보존되는 기존 UI를 test가 잘못 기대해 실패했다. 실제 화면 계약에 맞게 oracle만 고쳤고 재실행은 통과했다.
 - 후보는 전체 `754/754` 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2), Worker·새 smoke 문법, production build, 기존/신규 drag smoke, Speaker network/lifecycle, pseudo-locale 3화면×4폭, 30곡 Blob 수명, 1,000곡 이력, OBS bundle 예산을 통과했다. production cold/warm longest task는 `69/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 7.85MiB다. Dashboard는 `386.14kB raw / 105.64kB gzip`, OBS closure는 기존과 같은 `384,105B raw / 118,422B gzip / 103,718B brotli`다. 실제 OBS·방송·녹화는 시작하지 않았다.
+- release commit `e81d3dc74249d1359359333a5622e04cb15eb92c`의 Pages workflow `29989210860`, build `89147912549`, deploy `89148162009`, deployment `5568798585`가 성공했다. clean Ubuntu에서 새 production drag 관문을 포함한 모든 단계가 통과했고 Actions artifact와 GitHub Pages는 `21/21` exact match다. Cloudflare Pages도 같은 artifact와 Functions로 배포했으며 고유 주소는 `c30206bc.rekasong.pages.dev`다. Cloudflare 대표·고유 정적 파일 모두 artifact와 `21/21` exact match이고 `extract-local` CORS preflight는 두 주소 모두 `204 / POST, OPTIONS / Content-Type`이다. 공개 GitHub Pages smoke는 cold/warm longest task `68/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 7.85MiB, HTTP 오류·legacy ntfy 요청 0으로 통과했다.
 
 ## 2026-07-23 (Codex) — v0.2.38 모바일 곡 검토 조작면 복구
 

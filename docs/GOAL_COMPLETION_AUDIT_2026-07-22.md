@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.38이다. Speaker는 탭마다 독립적인 일반 웹 플레이어이며 모바일형 창 전환·BFCache 복귀와 브라우저/기기 pause가 OBS 경로 검사나 서버 연결로 재생을 잠그지 않는다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. OBS 곡 경계는 같은 run의 강한 정지를 확인한 뒤에만 현재 곡을 완료·폐기하고 다음 곡을 시작하며, 정지 증거가 늦어져도 목록이나 경로를 자동 절단하지 않는다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.39이다. Speaker는 탭마다 독립적인 일반 웹 플레이어이며 모바일형 창 전환·BFCache 복귀와 브라우저/기기 pause가 OBS 경로 검사나 서버 연결로 재생을 잠그지 않는다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. OBS 곡 경계는 같은 run의 강한 정지를 확인한 뒤에만 현재 곡을 완료·폐기하고 다음 곡을 시작하며, 정지 증거가 늦어져도 목록이나 경로를 자동 절단하지 않는다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -30,12 +30,12 @@
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | v0.2.26 공개 배포·긴 문구 시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
-| 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
+| 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·production Chrome 검증 | v0.2.39 clean-Ubuntu 관문·artifact exact match | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.35 공개 언어 전환·reload·내부 오류 번역 경계·3화면×4폭 통과 | 없음 |
-| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.38 공개 artifact exact match·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.39 공개 artifact exact match·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.38` / release commit `470336d26b590a894f211c2f8bec0c046226bc7d`까지 성공적으로 배포됐다. Pages workflow `29986334214`, build job `89138906346`, deploy job `89139151813`, deployment `5568189673`가 success이며 clean Ubuntu에서 752개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 `21/21` exact match를 확인했다. 공개 Speaker는 390px 곡 검토의 overflow 0·44px 일반 클릭 재생을 통과했고, 같은 모바일형 브라우저의 세 탭에서 두 독립 Blob 곡과 한 유휴 탭을 동시에 유지했다. 창 전환과 hidden/visible·persisted pagehide/pageshow 뒤 같은 source와 위치가 계속 전진했고, 기기 pause 모사 뒤에는 자동 재생하지 않은 채 같은 곡의 44px `계속 재생`만 제시했다. 세 탭 전체의 Worker host 요청, session HTTP, session WebSocket, 송신 frame, page error, console error, 경로 경고와 가로 overflow는 모두 0이었다. 로컬 제목 분석 API의 GitHub Pages CORS도 `204 / POST, OPTIONS / Content-Type`으로 복구됐다. OBS 곡 경계와 확립 lease 보존은 v0.2.36 실제 OBS 증거를 그대로 유지하며 v0.2.38은 OBS runtime과 production Worker를 변경하지 않았다. 30초 cadence도 계속 observation-only라 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. 이번 검증은 실제 OBS·방송·녹화를 시작하지 않았고, 남은 실물 관문은 사용자 청취·G5·같은 clock 경로 G6와 실제 Android/iOS 백그라운드·PiP·장치 조합이다.
+현재 공개 Pages는 `0.2.39` / release commit `e81d3dc74249d1359359333a5622e04cb15eb92c`까지 성공적으로 배포됐다. Pages workflow `29989210860`, build job `89147912549`, deploy job `89148162009`, deployment `5568798585`가 success이며 clean Ubuntu에서 754개 테스트·production UI/성능·준비 지연 drag 재생·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 GitHub Pages와 Cloudflare Pages 대표·고유 주소 모두 바이트·SHA-256 `21/21` exact match를 확인했다. 새 drag 관문은 준비 응답을 보류한 동안 queue 1/current 0/audio request 0, ready 뒤 정확한 곡 audio request 1, 대기열 끝 무재생, 현재곡 source·전진 시간 보존, OBS control socket/frame 0을 직접 확인한다. 공개 Speaker의 기존 390px 곡 검토·모바일형 3탭·창 전환·BFCache·기기 pause 명시 복구 증거도 유지된다. 공개 production smoke는 cold/warm longest task `68/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 7.85MiB, HTTP 오류·legacy ntfy 요청 0으로 통과했다. Cloudflare Functions CORS는 `204 / POST, OPTIONS / Content-Type`이다. OBS 곡 경계와 확립 lease 보존은 v0.2.36 실제 OBS 증거를 그대로 유지하며 v0.2.39는 OBS runtime과 production Worker를 변경하지 않았다. 30초 cadence도 계속 observation-only라 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. 이번 검증은 실제 OBS·방송·녹화를 시작하지 않았고, 남은 실물 관문은 사용자 청취·G5·같은 clock 경로 G6와 실제 Android/iOS 백그라운드·PiP·장치 조합이다.
 
 ### v0.2.36 실제 OBS 3곡 경계 인수 — 2026-07-23
 
@@ -375,9 +375,9 @@
 | 노래책 글자를 어두운 녹색으로 표시하고 에메랄드는 장식에만 사용 | 코드·시각 회귀 확인 | 노래책 본문 `--chr-vest`, 장식용 emerald 분리; source/UI 회귀와 공개 smoke 통과. |
 | Rekasong 부제목 제거, 금발 선과 흰 hairpin 유지 | 코드·공개본 확인 | 제목만 렌더링, 3px 금발 선과 compact hairpin이 320/375/768/1100px에서 유지됨. |
 | 곡 클릭에 즉시 상호작용 제공 | 공개본 확인 | 공개 노래책 행 클릭이 review panel을 열고, 검색 결과 클릭도 review 단계로 이동함. |
-| 곡을 지금 재생/대기열/이전 재생곡으로 drag | 공개본 확인 | 공개 drag smoke에서 review, 취소 mutation 0, 이전 재생곡 drop 재생 0, 320px overflow 0을 확인함. 현재 곡은 drop으로 갑자기 끊지 않음. |
+| 곡을 지금 재생/대기열/이전 재생곡으로 drag | production artifact 확인 | v0.2.39 clean-Ubuntu Chrome에서 review, 취소 mutation 0, 이력 drop 재생 0, 대기열 audio 0, 준비 전 audio 0→ready 뒤 정확한 곡 1회, 현재곡 source·시간 보존, 320px overflow 0을 확인함. |
 | 모든 새 텍스트를 번역 가능한 구조로 설계 | 코드·자동 확인 | 한국어/영어 병합 catalog key·placeholder parity, source literal guard, pseudo-locale 3화면×4폭 통과. |
-| 앱이 무거워지지 않음 | build·공개본 확인 | Dashboard `382.37kB raw / 104.62kB gzip`, CSS `63.85kB / 12.00kB`, OBS closure `384,105B raw / 118,426B gzip`; 30곡 Blob 수명과 공개 artifact 21/21 exact match. |
+| 앱이 무거워지지 않음 | build·공개본 확인 | Dashboard `386.14kB raw / 105.64kB gzip`, CSS `63.85kB / 12.00kB`, OBS closure `384,105B raw / 118,422B gzip`; DOM 125·warm long task 0, 30곡 Blob 수명과 공개 artifact 21/21 exact match. |
 | 30초 단위 관찰이 반주를 흔들거나 경로를 재연결하지 않음 | 코드·자동 확인 | position만 30초 cadence로 관찰하며 command 0. 곡 중 seek·restart·playbackRate·route 전환·reconnect 금지, 다음 run만 0초에서 시작. |
 
 ### OBS 절단 조건 감사
@@ -448,3 +448,13 @@
 - 현재 빌드는 Dashboard `382.37kB raw / 104.62kB gzip`, CSS `63.85kB / 12.00kB`, Speaker lazy chunk `8.34kB / 2.85kB`, OBS closure `384,105B raw / 118,426B gzip / 103,743B brotli`다. 전체 `752/752`, lint 신규 오류 0, Functions/Worker 문법, build, pseudo-locale 3화면×4폭 overflow 0을 통과했다.
 - 검증 커밋 `16a573ddcdcfa2e85c91414791277f51013036e8`의 Pages workflow `29987857926`, build `89143658803`, deploy `89143872896`, deployment `5568496455`가 성공했다. 새 Linux production UI/성능 단계부터 artifact upload·Pages deploy까지 모두 통과했고, Actions artifact의 실제 게시 파일은 공개 CDN과 바이트·SHA-256 `21/21` exact match였다. 배포 후 공개 smoke도 cold/warm longest task `63/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 8.26MiB로 통과했다.
 - 남은 관문은 실제 Android/iOS background·PiP·잠금 화면, 물리 출력 장치 전환·청취, 사용자 OBS monitoring 청취, 별도 명시 승인 뒤 G5, 같은 audio clock 또는 저지연 performer-monitoring 경로의 G6다. 이 미검증 상태는 Speaker 재생이나 established OBS route를 자동 차단하지 않는다. 이번 재감사에서는 실제 OBS 연결·음악·점검음·방송·녹화를 시작하지 않았다.
+
+## 19. v0.2.39 준비 지연 drag 재생 계약 — 2026-07-23
+
+- 기존 증거는 drag의 클릭→검토·취소·이력·모바일 배치만 최신 공개본에서 직접 확인했고, `지금 재생`·`대기열 끝`·현재곡 보존은 단위/이전 증거에 의존했다. 소스를 다시 추적하자 새 검색 결과의 준비 상태는 drop 전까지 항상 미확정인데 영문 트레이가 준비 완료 뒤 자동 시작을 약속하면서 실제 코드는 대기열 맨 앞에만 두는 모순이 있었다.
+- Speaker의 `준비 후 재생`은 정확한 `entryId + src`가 계속 대기열 첫 항목이고 현재 곡·출력이 바뀌지 않았을 때만 실제 `ready` 증거를 소비한다. reload, 출력 전환, 다른 곡 시작, 제거·재정렬은 탭 메모리 intent만 폐기하고 대기열을 손상시키지 않는다.
+- OBS는 이 지연 자동 시작 authority를 받지 않는다. 준비 중 또는 route 미확정 drop은 `방송 대기`로 대기열 맨 앞에 남고 사용자가 직접 재생해야 한다. 준비 완료와 route 확립이 이미 확인된 상태에서의 명시적 `지금 재생`만 기존 OBS safety gate를 통과한다.
+- production Chrome 관문은 준비 POST를 의도적으로 보류해 `queue=1 / current=0 / audio request=0`을 먼저 증명하고 응답을 ready로 풀었을 때 같은 곡만 audio request 1회로 시작되는지 확인한다. 대기열 끝은 audio 0, 재생 중 `다음 재생`은 현재 source와 전진 시간을 유지하고 새 곡만 queue front에 둔다. click review, cancel mutation 0, history 재생 0, 320px containment도 같은 관문에 포함되며 OBS control socket/frame은 전부 0이다.
+- 전체 `754/754`, lint 신규 오류 0, Worker·smoke 문법, production build, 기존/신규 drag, Speaker network/lifecycle, pseudo-locale 3화면×4폭, 30곡 Blob 수명, 1,000곡 이력, OBS bundle을 통과했다. Dashboard는 `386.14kB raw / 105.64kB gzip`, OBS closure는 `384,105B raw / 118,422B gzip / 103,718B brotli`다.
+- release commit `e81d3dc74249d1359359333a5622e04cb15eb92c`, Pages workflow `29989210860`, build `89147912549`, deploy `89148162009`, deployment `5568798585`가 성공했다. Actions artifact와 GitHub Pages, Cloudflare 대표 주소, 고유 주소 `c30206bc.rekasong.pages.dev`의 정적 파일은 각각 `21/21` exact match다. 공개 smoke는 cold/warm longest task `68/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 7.85MiB, HTTP 오류·legacy ntfy 0으로 통과했다.
+- 이 변경은 OBS player·Worker protocol·30초 cadence를 바꾸지 않는다. 실제 OBS·음악·점검 신호·방송·녹화를 시작하지 않았고, 남은 실물 관문도 Speaker/established OBS를 자동 차단하지 않는다.
