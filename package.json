@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.38",
+  "version": "0.2.39",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,7 +31,8 @@
     "test:dashboard:obs-connected": "node scripts/dashboard-obs-connected-smoke.mjs",
     "test:dashboard:local-files": "node scripts/dashboard-local-file-recovery-smoke.mjs",
     "test:dashboard:blob-budget": "npm run build && node scripts/dashboard-local-blob-budget-smoke.mjs",
-    "test:dashboard:drag": "node scripts/dashboard-song-drag-smoke.mjs"
+    "test:dashboard:drag": "node scripts/dashboard-song-drag-smoke.mjs",
+    "test:dashboard:drag-playback": "node scripts/dashboard-song-drag-playback-smoke.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",

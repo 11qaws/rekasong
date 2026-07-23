@@ -10,9 +10,17 @@ export const SONG_DROP_DESTINATIONS = Object.freeze({
 
 export const SONG_DROP_ACTIONS = Object.freeze({
   PLAY_NOW: 'play_now',
+  PLAY_WHEN_READY: 'play_when_ready',
   QUEUE_FRONT: 'queue_front',
   QUEUE_END: 'queue_end',
   HISTORY: 'history',
+});
+
+export const DEFERRED_SONG_DROP_PLAY_STATES = Object.freeze({
+  NONE: 'none',
+  WAITING: 'waiting',
+  READY: 'ready',
+  CANCELLED: 'cancelled',
 });
 
 const cleanText = (value) => typeof value === 'string' ? value.trim() : '';
@@ -56,11 +64,67 @@ export const stagedItemFromSongDragCandidate = (candidate, stagingId) => {
   };
 };
 
-export const planSongDropAction = ({ destination, hasCurrentSong, prepareKind }) => {
+export const planSongDropAction = ({
+  destination,
+  hasCurrentSong,
+  prepareKind,
+  outputMode = 'speaker',
+  outputReady = true,
+}) => {
   if (destination === SONG_DROP_DESTINATIONS.HISTORY) return SONG_DROP_ACTIONS.HISTORY;
   if (destination === SONG_DROP_DESTINATIONS.QUEUE) return SONG_DROP_ACTIONS.QUEUE_END;
   if (destination !== SONG_DROP_DESTINATIONS.PLAY) return null;
-  return !hasCurrentSong && prepareKind === 'ready'
-    ? SONG_DROP_ACTIONS.PLAY_NOW
-    : SONG_DROP_ACTIONS.QUEUE_FRONT;
+  if (hasCurrentSong) return SONG_DROP_ACTIONS.QUEUE_FRONT;
+  if (prepareKind === 'ready' && (outputMode !== 'obs' || outputReady)) {
+    return SONG_DROP_ACTIONS.PLAY_NOW;
+  }
+  if (outputMode === 'speaker' && !['blocked', 'unavailable'].includes(prepareKind)) {
+    return SONG_DROP_ACTIONS.PLAY_WHEN_READY;
+  }
+  return SONG_DROP_ACTIONS.QUEUE_FRONT;
+};
+
+/**
+ * Resolve one tab-local "play this exact prepared song" intent.
+ *
+ * The first queue position is part of the identity contract: if the user
+ * reorders the queue, removes the item, starts something else, or switches
+ * output, an old async prepare result must not surprise-start audio later.
+ */
+export const resolveDeferredSongDropPlay = ({
+  intent,
+  currentEntry,
+  queue,
+  prepareKind,
+  outputMode,
+}) => {
+  if (!intent?.entryId || !intent?.sourceId || intent.outputMode !== 'speaker') {
+    return { state: DEFERRED_SONG_DROP_PLAY_STATES.NONE, reason: 'missing_intent' };
+  }
+  if (outputMode !== intent.outputMode) {
+    return { state: DEFERRED_SONG_DROP_PLAY_STATES.CANCELLED, reason: 'output_changed' };
+  }
+  if (currentEntry) {
+    return { state: DEFERRED_SONG_DROP_PLAY_STATES.CANCELLED, reason: 'current_started' };
+  }
+
+  const firstEntry = Array.isArray(queue) ? queue[0] : null;
+  if (firstEntry?.entryId !== intent.entryId || firstEntry?.song?.src !== intent.sourceId) {
+    return { state: DEFERRED_SONG_DROP_PLAY_STATES.CANCELLED, reason: 'queue_changed' };
+  }
+  if (['blocked', 'unavailable'].includes(prepareKind)) {
+    return { state: DEFERRED_SONG_DROP_PLAY_STATES.CANCELLED, reason: 'source_unavailable' };
+  }
+  if (prepareKind === 'ready') {
+    return {
+      state: DEFERRED_SONG_DROP_PLAY_STATES.READY,
+      reason: 'source_ready',
+      entry: firstEntry,
+    };
+  }
+  return {
+    state: DEFERRED_SONG_DROP_PLAY_STATES.WAITING,
+    reason: 'source_preparing',
+    entry: firstEntry,
+  };
 };

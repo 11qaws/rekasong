@@ -197,7 +197,7 @@ try {
   assert.deepEqual(
     await page.locator('[data-song-drop-destination]').allTextContents(),
     [
-      'Play nowStart immediately when preparation is complete',
+      'Play nowStart this prepared track now',
       'End of queueAdd it last to play later',
       'Previous tracksAdd to completed tracks without playing',
     ],

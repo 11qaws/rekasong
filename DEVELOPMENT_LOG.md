@@ -1,5 +1,15 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.39 준비 지연 곡의 정직한 드래그 재생
+
+- 목표 전체 재감사에서 공개 drag smoke가 클릭→검토, 취소 mutation 0, 이력 drop 무재생만 직접 증명하고 `지금 재생`·`대기열 끝`·현재곡 보존은 단위/이전 증거에 의존하는 약점을 다시 확인했다. 더 깊게 추적하자 새 검색 결과는 drop 전 prepare 감시 대상이 아니어서 거의 항상 `preparing`인데, 영문 트레이는 “준비 완료 후 바로 시작”을 약속하면서 실제 구현은 대기열 맨 앞에만 두고 자동 시작하지 않는 계약·UI 모순이 있었다.
+- Speaker의 `준비 후 재생`을 탭 메모리의 명시적 intent로 만들었다. 새 `entryId + src + 요청 당시 Speaker`가 계속 대기열 첫 항목이고 현재 곡이 없을 때만 기다리며, 같은 곡의 실제 `ready` 증거가 오면 기존 `beginPlaybackRun`을 정확히 한 번 사용한다. reload·출력 변경·다른 곡 시작·항목 제거/재정렬은 오래된 intent를 폐기하고 곡 자체는 대기열에 남긴다.
+- OBS는 지연 자동 시작 권한을 받지 않는다. 준비 중이거나 route가 미확정이면 트레이가 `방송 대기`라고 표시하고 대기열 맨 앞에 둔 뒤 사용자가 직접 시작한다. 준비 완료·route 확립 뒤의 명시적 `지금 재생`만 기존 OBS gate를 통과할 수 있다. 연결 회복이나 늦은 prepare 응답이 방송 오디오를 기습 시작하는 경로는 만들지 않았다.
+- 트레이는 실제 결과에 따라 `지금 재생 / 준비 후 재생 / 다음 재생 / 방송 대기`를 한국어·영어 동일 semantic key로 표시한다. 320px에서는 세 목적지가 각각 viewport 안에 있고 document 폭도 정확히 320px였다.
+- 새 production-preview smoke는 클릭→검토, 취소 durable mutation 0, 이력 drop 재생 0, 대기열 끝 audio request 0, 준비 응답 보류 중 queue 1/current 0/audio 0, 응답 해제 뒤 정확한 곡 audio 1회, 현재 로컬 곡 위 `다음 재생`의 source·전진 시간 보존을 실제 Chrome에서 검증한다. 모든 Speaker 시나리오의 OBS control WebSocket·송신 frame은 0이며 이 관문을 Pages clean-Ubuntu 배포 전에 실행하도록 고정했다.
+- 첫 smoke는 제품 동작을 끝까지 통과한 뒤 로컬 파일 표시 제목에 `.wav`가 보존되는 기존 UI를 test가 잘못 기대해 실패했다. 실제 화면 계약에 맞게 oracle만 고쳤고 재실행은 통과했다.
+- 후보는 전체 `754/754` 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2), Worker·새 smoke 문법, production build, 기존/신규 drag smoke, Speaker network/lifecycle, pseudo-locale 3화면×4폭, 30곡 Blob 수명, 1,000곡 이력, OBS bundle 예산을 통과했다. production cold/warm longest task는 `69/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 7.85MiB다. Dashboard는 `386.14kB raw / 105.64kB gzip`, OBS closure는 기존과 같은 `384,105B raw / 118,422B gzip / 103,718B brotli`다. 실제 OBS·방송·녹화는 시작하지 않았다.
+
 ## 2026-07-23 (Codex) — v0.2.38 모바일 곡 검토 조작면 복구
 
 - v0.2.37 공개 API 복구 뒤 실제 제목 분석이 계속 진행되는 동안 390px 모바일 곡 검토 화면을 재검증하자, 제목 입력란과 AI 카드의 고유 최소 너비가 패널보다 넓어져 브라우저 layout viewport를 390px에서 463px로 확장했다. 화면 밖 입력란이 `재생` 버튼의 정상 포인터 판정을 가로막아 버튼은 활성으로 보이면서도 일반 클릭이 30초 넘게 전달되지 않았다.

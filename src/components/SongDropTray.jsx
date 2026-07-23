@@ -3,6 +3,7 @@ import { History, ListPlus, Play, SkipForward } from 'lucide-react';
 import { getAppMessage as t } from '../copy/appMessages';
 import {
   SONG_DRAG_DATA_TYPE,
+  SONG_DROP_ACTIONS,
   SONG_DROP_DESTINATIONS,
 } from '../lib/songDragAction';
 
@@ -11,16 +12,44 @@ const hasSongDragType = (event) => {
   return Boolean(types && Array.from(types).includes(SONG_DRAG_DATA_TYPE));
 };
 
-export default function SongDropTray({ candidate, hasCurrentSong, onDrop }) {
+export default function SongDropTray({
+  candidate,
+  hasCurrentSong,
+  outputMode,
+  playAction,
+  onDrop,
+}) {
   const [activeDestination, setActiveDestination] = useState(null);
   if (!candidate) return null;
+
+  const playTarget = hasCurrentSong
+    ? {
+        icon: SkipForward,
+        label: t('songDrag.target.playNext'),
+        help: t('songDrag.target.playNextHelp'),
+      }
+    : playAction === SONG_DROP_ACTIONS.PLAY_WHEN_READY
+      ? {
+          icon: Play,
+          label: t('songDrag.target.playWhenReady'),
+          help: t('songDrag.target.playWhenReadyHelp'),
+        }
+      : outputMode === 'obs' && playAction === SONG_DROP_ACTIONS.QUEUE_FRONT
+        ? {
+            icon: ListPlus,
+            label: t('songDrag.target.obsQueueFirst'),
+            help: t('songDrag.target.obsQueueFirstHelp'),
+          }
+        : {
+            icon: Play,
+            label: t('songDrag.target.playNow'),
+            help: t('songDrag.target.playNowHelp'),
+          };
 
   const destinations = [
     {
       id: SONG_DROP_DESTINATIONS.PLAY,
-      icon: hasCurrentSong ? SkipForward : Play,
-      label: t(hasCurrentSong ? 'songDrag.target.playNext' : 'songDrag.target.playNow'),
-      help: t(hasCurrentSong ? 'songDrag.target.playNextHelp' : 'songDrag.target.playNowHelp'),
+      ...playTarget,
     },
     {
       id: SONG_DROP_DESTINATIONS.QUEUE,

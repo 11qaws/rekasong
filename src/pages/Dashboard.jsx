@@ -120,8 +120,11 @@ import SongComposer from '../components/SongComposer';
 import SongDropTray from '../components/SongDropTray';
 import ErrorBoundary from '../components/ErrorBoundary';
 import {
+  DEFERRED_SONG_DROP_PLAY_STATES,
   SONG_DROP_ACTIONS,
+  SONG_DROP_DESTINATIONS,
   planSongDropAction,
+  resolveDeferredSongDropPlay,
   stagedItemFromSongDragCandidate,
 } from '../lib/songDragAction';
 import './Dashboard.css';
@@ -230,6 +233,10 @@ export default function Dashboard() {
     });
   }
   const beginPlaybackRunRef = useRef(null);
+  // A drag-to-play request may outlive YouTube preparation, but never this tab,
+  // the exact queue entry, or the selected output. OBS intentionally never
+  // receives this delayed auto-start authority.
+  const deferredSongDropPlayRef = useRef(null);
   const playbackOutputTransferRef = useRef(null);
   const preparedSpeakerLoadQueueRef = useRef(null);
   if (!preparedSpeakerLoadQueueRef.current) {
@@ -2059,6 +2066,10 @@ export default function Dashboard() {
     if (useOnAirPlayer && runOutputMode === 'obs' && !outputRouteStable) {
       throw new UserActionError('onair.output.playback.routeNotConfirmed');
     }
+    // Any real run supersedes a previously delayed drag intent. Clearing only
+    // after every gate passed means a failed manual attempt cannot erase a
+    // still-recoverable queued request.
+    deferredSongDropPlayRef.current = null;
     const runId = newId();
     setCurrentTime(initialPosition);
     setDuration(0);
@@ -2112,6 +2123,74 @@ export default function Dashboard() {
     // emit a duplicate LOAD for the same playback run.
     dispatchPreparedPlaybackLoadRef.current?.(preparedLoad);
   }, [active?.entryId, active?.outputMode, active?.runId]);
+
+  // Speaker-only delayed drag intent. Preparation may finish seconds after the
+  // drop, so re-resolve every authority boundary against the latest state. The
+  // exact entry must still be first, the tab must still be idle, and Speaker
+  // must still be selected. OBS never receives delayed automatic start.
+  useEffect(() => {
+    const intent = deferredSongDropPlayRef.current;
+    if (!intent) return;
+
+    const snapshot = stateRef.current || {};
+    const firstEntry = (snapshot.queue || [])[0] || null;
+    const prepareState = firstEntry
+      ? songPrepareState(firstEntry.song, prepareStatesRef.current)
+      : { kind: 'preparing' };
+    const resolution = resolveDeferredSongDropPlay({
+      intent,
+      currentEntry: snapshot.currentEntry,
+      queue: snapshot.queue,
+      prepareKind: prepareState.kind,
+      outputMode: outputModePreference,
+    });
+
+    if (resolution.state === DEFERRED_SONG_DROP_PLAY_STATES.WAITING) return;
+    deferredSongDropPlayRef.current = null;
+
+    if (resolution.state === DEFERRED_SONG_DROP_PLAY_STATES.CANCELLED) {
+      if (resolution.reason === 'output_changed') {
+        showToast(t('dashboard.drag.deferredCancelledOutput'), 'info');
+      } else if (resolution.reason === 'source_unavailable') {
+        showToast(t(prepareBlockMessageKey(prepareState)), 'error');
+      }
+      return;
+    }
+    if (resolution.state !== DEFERRED_SONG_DROP_PLAY_STATES.READY) return;
+
+    let nextActive;
+    try {
+      nextActive = beginPlaybackRunRef.current?.(resolution.entry, { outputMode: 'speaker' });
+      if (!nextActive) throw new UserActionError('playback.localSpeaker.loadFailed');
+    } catch (error) {
+      showToast(
+        userActionErrorMessage(error, t, 'dashboard.playback.startFailed'),
+        'error',
+      );
+      return;
+    }
+
+    setSharedState((previous) => {
+      const queue = previous.queue || [];
+      if (previous.currentEntry
+        || queue[0]?.entryId !== intent.entryId
+        || queue[0]?.song?.src !== intent.sourceId) return previous;
+      return {
+        ...previous,
+        currentEntry: queue[0],
+        active: nextActive,
+        queue: queue.slice(1),
+      };
+    });
+    showToast(t('dashboard.queue.playing'), 'success');
+  }, [
+    currentEntry?.entryId,
+    outputModePreference,
+    prepareStates,
+    setSharedState,
+    showToast,
+    state?.queue,
+  ]);
 
   // 재생 출력 정지(다음 곡 없음). On-Air 명령 실패는 호출자가 처리한다.
   const stopPlaybackOutput = ({
@@ -2369,6 +2448,7 @@ export default function Dashboard() {
     insertAtTop = false,
     forceQueue = false,
     clearStagedItem = false,
+    playWhenReady = false,
   } = {}) => {
     if (!sourceItem) return false;
     // 진실성 게이트는 beginPlaybackRun 안에 있다(player 위젯 실제 연결 여부) —
@@ -2453,6 +2533,11 @@ export default function Dashboard() {
     const hadCurrentEntry = Boolean(stateRef.current?.currentEntry);
     const deferredByPrepare = !hadCurrentEntry && stagedPrepare.kind !== 'ready';
     const willPlayImmediately = !forceQueue && !hadCurrentEntry && !deferredByPrepare;
+    const willPlayWhenReady = playWhenReady
+      && forceQueue
+      && insertAtTop
+      && !hadCurrentEntry
+      && outputModePreference === 'speaker';
     let nextActive = null;
     if (willPlayImmediately) {
       try {
@@ -2483,9 +2568,19 @@ export default function Dashboard() {
       };
     });
 
+    if (willPlayWhenReady) {
+      deferredSongDropPlayRef.current = {
+        entryId: entry.entryId,
+        sourceId: entry.song.src,
+        outputMode: 'speaker',
+      };
+    }
+
     showToast(
       willPlayImmediately
         ? t('dashboard.queue.playing')
+        : willPlayWhenReady
+          ? t('dashboard.queue.playWhenReady')
         : deferredByPrepare
           ? (stagedPrepare.kind === 'failed'
             ? t('dashboard.queue.prepareFailed')
@@ -2557,6 +2652,8 @@ export default function Dashboard() {
       destination,
       hasCurrentSong: Boolean(stateRef.current?.currentEntry),
       prepareKind,
+      outputMode: outputModePreference,
+      outputReady: outputModePreference !== 'obs' || outputRouteStable,
     });
 
     if (action === SONG_DROP_ACTIONS.HISTORY) {
@@ -2565,6 +2662,14 @@ export default function Dashboard() {
     }
     if (action === SONG_DROP_ACTIONS.PLAY_NOW) {
       commitStagedItem(sourceItem);
+      return;
+    }
+    if (action === SONG_DROP_ACTIONS.PLAY_WHEN_READY) {
+      commitStagedItem(sourceItem, {
+        insertAtTop: true,
+        forceQueue: true,
+        playWhenReady: true,
+      });
       return;
     }
     if (action === SONG_DROP_ACTIONS.QUEUE_FRONT) {
@@ -3568,6 +3673,19 @@ export default function Dashboard() {
   const stagedPrepareState = stagedItem?.type === 'youtube'
     ? songPrepareState({ type: 'youtube', src: stagedItem.src }, prepareStates)
     : null;
+  const draggedPrepareKind = songDragCandidate
+    ? songPrepareState(
+        { type: 'youtube', src: songDragCandidate.id || songDragCandidate.src },
+        prepareStates,
+      ).kind
+    : 'ready';
+  const songDropPlayAction = planSongDropAction({
+    destination: SONG_DROP_DESTINATIONS.PLAY,
+    hasCurrentSong: Boolean(currentEntry),
+    prepareKind: draggedPrepareKind,
+    outputMode: selectedOutputMode,
+    outputReady: selectedOutputMode !== 'obs' || outputRouteStable,
+  });
   const shouldMountLocalSpeaker = useOnAirPlayer && Boolean(
     onAirSession
       || (stagedItem?.type === 'local' && stagedItem.src?.startsWith('blob:'))
@@ -3716,6 +3834,8 @@ export default function Dashboard() {
       <SongDropTray
         candidate={songDragCandidate}
         hasCurrentSong={Boolean(currentEntry)}
+        outputMode={selectedOutputMode}
+        playAction={songDropPlayAction}
         onDrop={handleSongDrop}
       />
 
