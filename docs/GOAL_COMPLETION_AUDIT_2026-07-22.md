@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.28이다. v0.2.26의 제품 runtime과 바이트가 같은 상태에서 실제 OBS CEF 30초 cadence 관문과 Speaker 로컬 파일 30곡 수명 관문을 배포 필수 검증으로 고정했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.29다. 출력별 음량과 OBS strong-stop 뒤 폐기 UI 복구를 추가하고, 실제 운영 Worker의 격리 세션과 공개 Pages에서 검증했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -15,24 +15,24 @@
 | 잠금 화면·알림·헤드셋의 Speaker 제어 | 자동 계약 완료 | v0.2.26 공개 배포됨 | 실제 지원 모바일에서 수동 확인 |
 | Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | v0.2.18 실제 3탭 통과 | v0.2.18 실제 3탭·재생·reload 통과 | 모바일 OS별 백그라운드·PiP 수동 확인 |
 | Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | v0.2.26 공개 배포·자동 재확인 | 없음 |
-| Speaker 감상 볼륨과 OBS 방송 gain 분리 | 완료 | v0.2.26 공개 배포됨 | 두 모드 값 유지 수동 smoke |
+| Speaker 감상 볼륨과 OBS 방송 gain 분리 | 운영 연결 자동 검증 완료 | v0.2.29 공개 배포·34/60 reload 유지 | 물리 OBS mixer 청취 |
 | Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 없음 |
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택·탈착 복구 | v0.2.22 자동·모사 브라우저 검증 완료 | v0.2.22 배포·공개 자산 확인 | 실제 지원 장치에서 물리 청취 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | v0.2.26 공개 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작·활성 곡 control socket 단절 후 조작 복구 완료 | v0.2.26 공개 배포됨 | 없음 |
-| OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | v0.2.26 공개 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
+| OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 운영 Worker 연결 자동 검증 완료 | v0.2.29 공개 배포됨 | 실제 OBS 화면 수동 확인 |
 | OBS 오디오를 건드리지 않고 평상시 위치 관측만 30초로 제한 | 5분·4Hz 모사 1,200→9 + 실제 CEF 302.5초 position 10회, 자동 media 명령 0 | v0.2.26 공개 player 실제 OBS 통과 | 없음 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | v0.2.26 공개 배포·긴 문구 시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.26 공개 언어 전환·reload·3화면×4폭 긴 문구 통과 | 없음 |
-| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.28 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.29 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.28` / release commit `1346be0d5eef6e8ac680d2d9b6bd46eb134bea49`까지 성공적으로 배포됐다. Pages workflow `29970083896`와 deployment `5565152862`가 success이며 clean Ubuntu에서 730개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256이 전부 일치한다. 핵심 runtime 자산은 v0.2.26과 동일한 hash이며 이번 버전은 test·workflow·문서만 바꾼다. 일반 재생의 위치 telemetry는 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. 공개 Speaker 30곡 반복은 최근 5개 유지·25개 선회수·Dashboard 종료 뒤 30/30 회수, 저장 Blob URL·Worker 요청 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.29` / release commit `03a062a190994a62c17c2b8307b9b7d52d9e78aa`까지 성공적으로 배포됐다. Pages workflow `29972538959`와 deployment `5565613740`가 success이며 clean Ubuntu에서 733개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 출력별 음량 reload, 한영 전환, 320~1100px, 320px 영문 설정, 금발 선을 통과했고 HTTP 오류·ntfy 요청·warm long task는 0이었다. 운영 Worker 격리 연결에서는 실제 방송·녹화 없이 OBS 재생·음량 확정 1회·strong-stop 뒤 UI 종료·Speaker 복귀·세션 410을 통과했다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker runtime은 변경·재배포하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
 
 ### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 
@@ -285,7 +285,7 @@
 7. v0.2.17의 새-ID 완전 초기화는 로컬과 production 실제 브라우저+Worker에서 무자동재생까지 통과했다.
 8. v0.2.18의 탭별 대기열·auto-next는 로컬과 공개 실제 세 탭, 새로고침, A 단독 실제 재생을 통과했다.
 
-## 8. v0.2.29 배포 후보 증거 — 2026-07-23
+## 8. v0.2.29 배포 증거 — 2026-07-23
 
 - 스피커와 OBS 음량은 설정 안에서 별도 프로필로 저장된다. 운영 연결 브라우저 검증에서 Speaker `0.34`, OBS 초기 `0.61`, OBS 확정 변경 `0.60`이 실제 media element 값으로 확인됐고 새로고침 뒤 `34/60`이 유지됐다.
 - 설정 슬라이더 preview는 WebSocket 명령을 보내지 않았고 commit 한 번에 volume 명령 정확히 1개만 발생했다. 비활성 출력 설정은 현재 run에 전달되지 않는다.
@@ -293,4 +293,5 @@
 - 스피커 로컬 재생은 Worker session HTTP, WebSocket, 송신 frame이 모두 0이었다. 스피커는 경로 검증이나 OBS 상태로 중단되지 않는 일반 플레이어 경계를 유지한다.
 - 번역은 `appMessageCatalog + outputMessageCatalog`의 실제 병합 surface를 기준으로 한국어/영어 648개 key, 비어 있지 않은 값과 placeholder parity를 자동 검증한다. 새 음량 UI도 양 언어 key를 동시에 추가했다.
 - 전체 자동 근거는 733/733, pseudo-locale overflow 0, 30곡 Blob 예산, production browser smoke, OBS bundle budget 통과다. 실제 방송·녹화는 시작하지 않았다.
+- release commit `03a062a190994a62c17c2b8307b9b7d52d9e78aa`, Pages workflow `29972538959`, deployment `5565613740`가 성공했다. 공개 파일 21/21이 Actions artifact와 exact match이며 공개 smoke의 HTTP 오류·ntfy 요청·warm long task는 0이었다.
 - 아직 목표 전체 완료로 판정하지 않는다. 실제 모바일 백그라운드/PiP·물리 출력 장치 청취, OBS monitoring 청취, 명시 승인 뒤 G5, 같은 clock 경로의 G6가 남아 있다.

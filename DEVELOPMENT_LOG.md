@@ -797,3 +797,4 @@
 - 연결 브라우저 검사는 우발적인 운영 트래픽을 막기 위해 `REKASONG_WORKER`를 명시해야 하며, production은 `REKASONG_ALLOW_PRODUCTION_WORKER=1`도 함께 요구한다. CI에는 넣지 않는다. 검증 중 OBS binding은 streaming/recording 모두 false였고 실제 방송·녹화는 시작하지 않았다.
 - 30초 카라오케 타이머는 위치 보정기가 아니라 관찰자로 유지한다. 곡 중간에는 자동 seek·restart·playbackRate 보정을 하지 않고, 시작점과 다음 곡 LOAD에서 0초 기준을 다시 잡는다. 작은 관측 오차는 안내만 하며 established route를 끊지 않는다.
 - 사전 검증: 733/733 단위 테스트, pseudo-locale 3화면×4폭 overflow 0, production build, 로컬 Dashboard smoke, Speaker 재생 중 Worker HTTP/socket/frame 0, 30곡 Blob 수명, OBS 정적 closure `384,105B raw / 118,425B gzip / 103,671B brotli`를 통과했다. Dashboard는 `374.58kB raw / 102.47kB gzip`, CSS는 `62.57kB raw / 11.79kB gzip`이다.
+- release commit `03a062a190994a62c17c2b8307b9b7d52d9e78aa`의 Pages workflow `29972538959`와 deployment `5565613740`가 성공했다. 공개 새 브라우저 smoke는 기본 Speaker·출력별 음량 reload·한영·320~1100px·금발 선을 통과했고 HTTP 오류·ntfy·warm long task는 0이었다. Actions artifact의 실제 배포 파일 21/21은 공개 CDN과 바이트·SHA-256 exact match였다.
