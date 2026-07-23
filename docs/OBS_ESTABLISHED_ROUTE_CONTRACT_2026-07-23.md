@@ -84,11 +84,11 @@ v0.2.33 후보에서 다음을 확인했다.
 - 두 OBS 페이지가 연결된 동안 곡 LOAD→PLAY→PAUSE→PLAY→VOLUME→STOP을 완료했다. lease 대상만 재생·정지했고 추가 페이지는 source-detached·paused 상태를 유지했다.
 - 테스트 세션은 HTTP `410`으로 종료됐다. 실제 방송과 녹화는 시작하지 않았다.
 
-## 8. 배포 뒤 확인할 항목
+## 8. 배포 확인 결과와 남은 수동 관문
 
-1. 공개 Pages가 v0.2.33 product commit과 일치하는지 확인한다.
-2. GitHub Actions의 clean install·전체 테스트·build·pseudo-locale·30곡 Blob·OBS bundle 관문을 확인한다.
-3. Actions artifact와 공개 CDN 파일의 크기·SHA-256 exact match를 확인한다.
-4. 공개 Speaker smoke에서 session HTTP·WebSocket·Worker host 요청 0과 transport 활성 상태를 재확인한다.
-5. 공개 OBS 설정 문구가 한국어·영어에서 연결 유지와 다음 행동을 정확히 표시하는지 확인한다.
+1. 공개 Pages는 v0.2.33 product commit `99a621b5352027d20075a7776481769dda3ea7ca`를 배포했다. workflow `29977321000`, build `89111772404`, deploy `89111947797`, deployment `5566498219`가 모두 성공했다.
+2. GitHub Actions의 clean install·`742/742`·build·pseudo-locale·30곡 Blob·OBS bundle 관문이 모두 통과했다.
+3. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
+4. 공개 Speaker smoke는 session HTTP·WebSocket·송신 frame·Worker host 요청이 모두 0인 상태에서 로컬 재생과 기기-pause 복구를 완료했다.
+5. 한국어·영어 연결 유지 문구는 catalog parity와 pseudo-locale을 통과했고, 배포된 Dashboard bundle은 검증 artifact와 정확히 같다.
 6. 실제 사용자 OBS에서 동일 주소의 임시 두 번째 Browser Source를 만들 수 있을 때, 방송·녹화 OFF 상태에서 같은 결과를 수동 확인한다. 이 수동 항목은 자동 근거와 별도 기록한다.
