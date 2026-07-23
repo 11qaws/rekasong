@@ -38,7 +38,7 @@
 
 - production build 브라우저에서 기본 Speaker로 로컬 WAV 30개를 UI 선택→재생→종료까지 반복했다. 완료 기록 30개는 유지하면서 최근 5개만 즉시 재생 가능한 Blob으로 남고 오래된 25개는 복구 가능한 메타데이터로 만료됐다.
 - Dashboard가 열린 동안 Object URL은 생성 30·회수 25·유지 5였고 Dashboard unmount 뒤에는 30개 전부 회수·유지 0이었다. 저장소 `blob:` URL, Worker session/WebSocket/ntfy 요청, page error는 모두 0이었다.
-- 최종 배포 후보 run의 강제 GC 뒤 JS heap 증가는 `4,194,504B`, 30회 UI 전이 p95는 `1,365.8ms`였다. byte 상한과 현재/대기열 보호는 단위 계약으로 함께 재확인했다.
+- Linux와 같은 `en-US` locale로 고정한 최종 배포 후보 run의 강제 GC 뒤 JS heap 증가는 `4,200,944B`, 30회 UI 전이 p95는 `1,342.4ms`였다. byte 상한과 현재/대기열 보호는 단위 계약으로 함께 재확인했다.
 - 이 관문은 새 재생 제한이나 서버 검사를 추가하지 않는다. 기존 수명 정책을 실제 제품 UI에서 검증하고 Pages workflow에 넣은 test-only 변경이며, 공개 배포 전까지 표의 공개 증거는 후보로 구분한다.
 
 ### v0.2.27 실제 CEF cadence 검증 안전화 — 2026-07-23

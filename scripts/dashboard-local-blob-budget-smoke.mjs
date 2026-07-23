@@ -113,7 +113,10 @@ let browser;
 try {
   await waitForServer(appUrl, preview, previewLogs);
   browser = await chromium.launch({ executablePath, headless: true });
-  const context = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+  const context = await browser.newContext({
+    viewport: { width: 1100, height: 900 },
+    locale: 'en-US',
+  });
   await context.addInitScript(() => {
     window.__rekasongBlobBudget = { created: [], revoked: [] };
     const createObjectURL = URL.createObjectURL.bind(URL);
@@ -157,7 +160,7 @@ try {
 
   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.locator('.composer-file-import').waitFor({ state: 'visible', timeout: 20_000 });
-  assert.match(await page.locator('.output-route-live-status').innerText(), /스피커|Speaker/);
+  assert.match(await page.locator('.output-route-live-status').innerText(), /스피커|speaker/i);
   await cdp.send('HeapProfiler.collectGarbage');
   const baselineHeap = await readHeap();
 
