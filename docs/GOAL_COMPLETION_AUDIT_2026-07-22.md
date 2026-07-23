@@ -436,3 +436,13 @@
 - release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`, Pages workflow `29982114310`, build `89125971819`, deploy `89126157653`, deployment `5567403732`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
 - 공개 production smoke는 기본 Speaker, YouTube/Setlink/Meloming과 Search/Playlist, 한·영 reload, 320/375/768/1100px, 320px 영문 설정, 금발 선을 통과했다. HTTP 오류·legacy ntfy 요청·warm long task는 0이고 warm DCL은 `21ms`, JS heap은 `8,355,732B`였다.
 - 공개 Speaker 유휴·로컬 재생·페이지 수명·기기 pause 복구에서 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다. 이 release 검증은 실제 OBS route·음악·점검음·방송·녹화를 시작하지 않았으며, 실제 OBS에서 방송·녹화 OFF 상태의 자연 종료·스킵·증거 지연 수동 확인은 운영 관문으로 남긴다.
+
+## 18. v0.2.38 목표 전체 재감사와 경량성 배포 관문 — 2026-07-23
+
+- 원래 사용자 요구를 12개 항목으로 다시 펼쳐 현재 코드, 752개 자동 계약, 공개 v0.2.38, 실제 OBS v0.2.36 증거에 각각 연결했다. Speaker 일반 플레이어, established OBS 보존·same-player 복구, YouTube 묶음과 순서, 어두운 녹색 노래책, 부제목 제거·금발 선·hairpin, 클릭→검토, 세 drag 목적지, 번역 가능한 copy 구조, 30초 observation-only는 소프트웨어 범위에서 모두 직접 증거가 있다.
+- 공개 production UI는 기본 Speaker, `YouTube → Setlink → Meloming`, `Search → Playlist`, 한국어→영어→reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼의 비잠금, 3px 금발 선을 다시 통과했다. HTTP 오류와 legacy ntfy 요청은 0이었다.
+- cache-disabled Chrome 3회의 DOMContentLoaded는 `91.5~101.2ms`, DOM은 125개였다. 초기 전송량은 `294,306B`, decoded 리소스는 `1,039,051B`, JS heap은 약 `8.2~8.4MB`였다. cold 최초 평가 long task는 실행마다 1개, `64~81ms`였고 warm reload는 `20.4~21.7ms`, long task 0이었다. 이 결과는 앱이 지속적으로 무겁다는 증거는 아니지만 최초 작업을 0이라고 기록하지 않는다.
+- 경량성은 이제 보고서만이 아니라 배포 차단 조건이다. production smoke는 DOM `<500`, cold/warm decoded 리소스 `<2MiB`, heap `<32MiB`, cold longest task `<250ms`, warm longest task `<150ms`를 요구한다. GitHub Pages workflow는 build 직후 Linux Chrome에서 기본 출력·주요 UI·번역·반응형·버튼 잠금·금발 선과 이 예산을 통과해야 다음 검증과 배포를 실행한다.
+- 공개 Speaker network smoke는 로컬 파일 재생, persisted pagehide/pageshow, 기기 pause 뒤 명시적 44px 복구, 검색 전 구간에서 Worker host 요청·session HTTP·WebSocket·송신 frame 0을 다시 확인했다. 공개 drag smoke는 검색 결과 click→review, cancel의 durable mutation 0, history drop의 재생 0, 320px 세 목적지 containment를 통과했다.
+- 현재 빌드는 Dashboard `382.37kB raw / 104.62kB gzip`, CSS `63.85kB / 12.00kB`, Speaker lazy chunk `8.34kB / 2.85kB`, OBS closure `384,105B raw / 118,426B gzip / 103,743B brotli`다. 전체 `752/752`, lint 신규 오류 0, Functions/Worker 문법, build, pseudo-locale 3화면×4폭 overflow 0을 통과했다.
+- 남은 관문은 실제 Android/iOS background·PiP·잠금 화면, 물리 출력 장치 전환·청취, 사용자 OBS monitoring 청취, 별도 명시 승인 뒤 G5, 같은 audio clock 또는 저지연 performer-monitoring 경로의 G6다. 이 미검증 상태는 Speaker 재생이나 established OBS route를 자동 차단하지 않는다. 이번 재감사에서는 실제 OBS 연결·음악·점검음·방송·녹화를 시작하지 않았다.

@@ -926,3 +926,13 @@
 - 합격 결과는 `D:\Agents\rekasong\Codex\artifacts\obs-dashboard-duplicate-v0236-20260723-152400\status.json`에 credential 없이 보존했다. 원래 scene collection은 시험 전 백업과 전체 SHA-256 `6c56fe4804fa0fc65cf50fc65fa64525562a4ef8d65152681bee0f0fe94050d0`으로 바이트 exact match 복원했고 Browser URL도 길이 `214`·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`, source/visible item 각각 1개, `Control audio via OBS=true`를 재확인했다. handoff와 harness process 잔여는 0건이다.
 - 시험 전·중 runtime은 `streaming=false`, `recording=false`였다. 완료 로그 `2026-07-23 15-22-55.txt`의 Streaming/Recording Start·Stop은 모두 0건이다. OBS는 원래 source로 다시 열어 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00` 상태로 두었다.
 - 이번 단계는 공개 v0.2.36의 외부 인수와 문서 갱신이며 source·version·Worker·배포 artifact를 바꾸지 않는다. 30초 cadence도 observation-only이고 곡 중 seek·restart·playbackRate·route 재연결을 만들지 않는다.
+
+## 2026-07-23 (Codex) — v0.2.38 목표 전체 재감사와 production UI 성능 배포 관문
+
+- 원래 목표를 Speaker, OBS, 번역, YouTube 묶음·순서, 노래책 색, 부제목·hairpin, 클릭·드래그, 경량성으로 다시 나누고 Graphify의 실제 코드 관계와 현재 source·테스트·공개 Pages 증거를 항목별로 대조했다. 소프트웨어 요구사항의 반증이나 누락은 발견하지 못했고, 실제 Android/iOS 정책·물리 출력 장치·사용자 OBS monitoring·별도 승인 G5·같은-clock G6만 코드 밖 관문으로 남겼다.
+- 공개 v0.2.38 production smoke는 기본 Speaker, 상위 `YouTube → Setlink → Meloming`, YouTube 내부 `Search → Playlist`, 한국어→영어→reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼의 비잠금, 흰 hairpin과 3px 금발 선을 통과했다. HTTP 오류·legacy ntfy 요청은 0이었다.
+- cache-disabled 새 브라우저 3회에서 DOMContentLoaded는 `91.5~101.2ms`, DOM은 125개였다. 공개 초기 리소스는 전송 `294,306B`, decoded `1,039,051B`, JS heap은 약 `8.2~8.4MB`였다. Dashboard 최초 평가 때 `64~81ms` long task가 1회 있었고 warm reload는 `20.4~21.7ms`, long task 0이었다. 지속적인 main-thread 정체나 메모리 증가 증거는 없지만 최초 작업의 존재를 숨기지 않고 회귀 기준에 포함했다.
+- `dashboard-production-smoke.mjs`에 Linux Chrome 탐색과 배포 전 상한을 추가했다. 초기 DOM `<500`, cold/warm decoded 리소스 `<2MiB`, heap `<32MiB`, 가장 긴 cold task `<250ms`, warm task `<150ms`를 넘으면 실패한다. `.github/workflows/deploy-pages.yml`은 build 뒤 이 production UI smoke를 실행해야 pseudo-locale·Blob 수명·OBS bundle과 배포 단계로 진행한다.
+- 갱신한 smoke는 로컬 production build와 공개 Pages에서 모두 통과했다. 로컬은 cold/warm longest task `64/0ms`, 공개는 `75/0ms`, 양쪽 모두 DOM 125개·decoded 약 1.04MiB·heap 약 8.27MiB였다. 이 검증 관문은 script/workflow만 바꾸며 v0.2.38 앱·Worker·OBS runtime 바이트와 동작은 바꾸지 않는다.
+- 전체 `752/752`, lint 신규 오류 0(기존 `functions/api/gemini.js` escape 경고 2), Functions/Worker 10개 문법, production build, pseudo-locale 3화면×4폭 overflow 0, 공개 Speaker 로컬 재생·page lifecycle·기기 pause 복구, 공개 click→review·drag cancel/history, OBS 정적 closure `384,105B raw / 118,426B gzip / 103,743B brotli`를 통과했다. Speaker 유휴·로컬 재생·검색·복구의 Worker host/session HTTP/WebSocket/frame은 모두 0이었다.
+- 이번 재감사와 성능 관문 검증은 실제 OBS 연결·음악 송출·점검음·방송·녹화를 시작하지 않았다. 30초 cadence도 표시 기준 관찰만 수행하며 곡 중 seek·restart·playbackRate·route 재연결을 만들지 않는다.

@@ -11,6 +11,10 @@ const requestedTargetUrl = !localPreviewRequested && process.argv[2]
   : null;
 const executableCandidates = [
   process.env.REKASONG_CHROMIUM_PATH,
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -340,15 +344,26 @@ try {
 
   const { metrics } = await cdp.send('Performance.getMetrics');
   const cdpMetrics = Object.fromEntries(metrics.map(({ name, value }) => [name, value]));
+  const longestTaskMs = (runtime) => Math.max(
+    0,
+    ...runtime.longTasks.map(({ duration: taskDuration }) => Number(taskDuration) || 0),
+  );
+  const coldLongestTaskMs = longestTaskMs(coldRuntime);
+  const warmLongestTaskMs = longestTaskMs(warmRuntime);
 
-  // These are deliberately roomy regression ceilings, not network-speed gates.
-  assert.ok(coldRuntime.domNodes < 2_000, `Initial Dashboard DOM is too large (${coldRuntime.domNodes} nodes).`);
-  assert.ok(coldRuntime.resources.decodedBytes < 6 * 1024 * 1024,
-    `Initial decoded resources exceed 6 MiB (${coldRuntime.resources.decodedBytes} bytes).`);
-  assert.ok(warmRuntime.resources.decodedBytes < 6 * 1024 * 1024,
-    `Warm decoded resources exceed 6 MiB (${warmRuntime.resources.decodedBytes} bytes).`);
-  assert.ok((cdpMetrics.JSHeapUsedSize || 0) < 64 * 1024 * 1024,
-    `Initial JS heap exceeds 64 MiB (${cdpMetrics.JSHeapUsedSize} bytes).`);
+  // These remain tolerant of shared CI runners while turning the public
+  // lightweight-player promise into an actual pre-deploy regression gate.
+  assert.ok(coldRuntime.domNodes < 500, `Initial Dashboard DOM is too large (${coldRuntime.domNodes} nodes).`);
+  assert.ok(coldRuntime.resources.decodedBytes < 2 * 1024 * 1024,
+    `Initial decoded resources exceed 2 MiB (${coldRuntime.resources.decodedBytes} bytes).`);
+  assert.ok(warmRuntime.resources.decodedBytes < 2 * 1024 * 1024,
+    `Warm decoded resources exceed 2 MiB (${warmRuntime.resources.decodedBytes} bytes).`);
+  assert.ok((cdpMetrics.JSHeapUsedSize || 0) < 32 * 1024 * 1024,
+    `Initial JS heap exceeds 32 MiB (${cdpMetrics.JSHeapUsedSize} bytes).`);
+  assert.ok(coldLongestTaskMs < 250,
+    `Initial Dashboard has a task at or above 250ms (${coldLongestTaskMs}ms).`);
+  assert.ok(warmLongestTaskMs < 150,
+    `Warm Dashboard has a task at or above 150ms (${warmLongestTaskMs}ms).`);
   assert.equal(pageErrors.length, 0, `Page errors: ${pageErrors.join(' | ')}`);
 
   const benignConsoleError = /favicon|ERR_BLOCKED_BY_CLIENT/i;
@@ -380,6 +395,10 @@ try {
     runtime: {
       cold: coldRuntime,
       warm: warmRuntime,
+      longestTaskMs: {
+        cold: coldLongestTaskMs,
+        warm: warmLongestTaskMs,
+      },
       jsHeapUsedBytes: cdpMetrics.JSHeapUsedSize,
       jsHeapTotalBytes: cdpMetrics.JSHeapTotalSize,
       cdpNodeCount: cdpMetrics.Nodes,
