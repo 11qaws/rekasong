@@ -29,10 +29,17 @@
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.26 공개 언어 전환·reload·3화면×4폭 긴 문구 통과 | 없음 |
-| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.26 공개 예산 통과·기존 60분 CEF 통과 | 로컬 Blob 장시간 상한 |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.26 공개 예산 통과·기존 60분 CEF 통과, v0.2.28 후보 30곡 Blob 수명 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
 현재 공개 Pages는 `0.2.27` / release commit `b23ca23d69ca61c823d85c0a91b7aa0145e78064`까지 성공적으로 배포됐다. Pages workflow `29968661755`와 deployment `5564872415`가 success이며 clean Ubuntu에서 730개 테스트·pseudo-locale layout·OBS bundle 예산을 통과했다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256이 전부 일치한다. 핵심 runtime 자산은 v0.2.26과 동일한 hash이며 이번 버전은 검증 harness·테스트·문서만 바꾼다. 일반 재생의 위치 telemetry는 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 새 player를 받은 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+
+### v0.2.28 후보 Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
+
+- production build 브라우저에서 기본 Speaker로 로컬 WAV 30개를 UI 선택→재생→종료까지 반복했다. 완료 기록 30개는 유지하면서 최근 5개만 즉시 재생 가능한 Blob으로 남고 오래된 25개는 복구 가능한 메타데이터로 만료됐다.
+- Dashboard가 열린 동안 Object URL은 생성 30·회수 25·유지 5였고 Dashboard unmount 뒤에는 30개 전부 회수·유지 0이었다. 저장소 `blob:` URL, Worker session/WebSocket/ntfy 요청, page error는 모두 0이었다.
+- 최종 배포 후보 run의 강제 GC 뒤 JS heap 증가는 `4,194,504B`, 30회 UI 전이 p95는 `1,365.8ms`였다. byte 상한과 현재/대기열 보호는 단위 계약으로 함께 재확인했다.
+- 이 관문은 새 재생 제한이나 서버 검사를 추가하지 않는다. 기존 수명 정책을 실제 제품 UI에서 검증하고 Pages workflow에 넣은 test-only 변경이며, 공개 배포 전까지 표의 공개 증거는 후보로 구분한다.
 
 ### v0.2.27 실제 CEF cadence 검증 안전화 — 2026-07-23
 

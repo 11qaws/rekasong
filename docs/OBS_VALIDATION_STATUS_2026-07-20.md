@@ -297,10 +297,11 @@ CDP의 전체 `Nodes` 계수는 297→162로 감소했지만 live document Mutat
 - Chrome/CEF 30분: post-GC heap warm baseline 대비 +16MiB 이내
 - hint churn·곡 전환 100회: stale fetch 0, cache 1개, retained 128MiB 이하
 - 단일 탭 Speaker↔OBS 500회: OBS control socket 1개, 같은 탭에서 중복 audible output 0. 별도 Speaker 탭들은 각자 재생 가능해야 하므로 전역 audible player 1개 제한을 두지 않는다.
-- Dashboard history 1,000곡: render row 100 이하, 조작 p95 100ms 이하, localStorage 1MiB 이하
+- [완료] Dashboard history 1,000곡: render row 100 이하, 조작 p95 100ms 이하, localStorage 1MiB 이하
+- [완료] Speaker local Blob 장시간 수명: 완료 이력 최근 5개·합계 256MiB 상한. production-browser 30곡 반복에서 열린 화면 25개 회수·최근 5개 유지·unmount 뒤 30/30 회수, 저장 Blob URL·Worker 요청 0
 - [완료] 실제 OBS CEF 60분: renderer crash, 중복 player, unsafe route, identity 전환, 지속 working-set 증가 0. 물리 mixer의 60분 독립 녹음은 G5/G6와 별도다.
 
-history는 닫힌 상태에서 행을 만들지 않고, 열면 최근 100곡부터 100곡씩 점진 렌더한다. 1,000곡 window·원본 보존 계약은 자동 통과했다. 실제 브라우저 조작 p95·localStorage 크기와 로컬 Blob의 전역 count·byte cap은 아직 `not-run`이다.
+history는 닫힌 상태에서 행을 만들지 않고, 열면 최근 100곡부터 100곡씩 점진 렌더한다. 1,000곡 window·원본 보존·실제 브라우저 조작 p95·localStorage 크기를 통과했다. 로컬 Blob은 완료 이력 최근 5개·합계 256MiB 상한이며, 30곡 production-browser 반복에서 count 상한의 실제 React 적용과 URL 회수, 단위 계약에서 byte 상한을 통과했다.
 
 ### P1 — 리모컨 신뢰성·편의성
 

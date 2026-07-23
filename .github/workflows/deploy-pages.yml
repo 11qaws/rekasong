@@ -37,6 +37,8 @@ jobs:
         run: npm run build
       - name: Pseudo-locale layout
         run: npm run test:dashboard:pseudo
+      - name: Local file lifetime budget
+        run: npm run test:dashboard:blob-budget
       - name: Check OBS bundle
         run: npm run check:obs:bundle
       - name: Upload Pages artifact

@@ -208,7 +208,7 @@
 현재 남은 성능 한계:
 
 - 실제 OBS CEF의 fetch backing store와 decoder 메모리는 헤드리스 Chrome으로 증명할 수 없다. active `64MiB` + prefetch `64MiB`, 100곡 전환, 60분 soak를 실제 OBS에서 측정해야 한다.
-- Dashboard history는 1,000곡 원본을 보존하면서 고정 100행 window와 production-browser 예산을 통과했다. local Blob 소유권의 최근 3~5개/합계 byte cap은 아직 없으므로 로컬 파일을 반복 재생하는 장시간 메모리 안전성은 별도 관문으로 남는다.
+- Dashboard history는 1,000곡 원본을 보존하면서 고정 100행 window와 production-browser 예산을 통과했다. 이후 v0.2.28에서 local Blob 완료 이력의 최근 5개·합계 256MiB 상한을 실제 production-browser 30곡 반복으로 검증했다. 열린 화면에서 25개를 회수하고 최근 5개만 유지했으며, unmount 뒤 30/30 회수·저장 Blob URL 0·Worker 요청 0이었다.
 - DisplayWidget의 fullscreen blur·particle·animation은 오디오 v2 route에는 들어오지 않지만 실제 OBS display source의 GPU 부하는 별도로 측정해야 한다.
 
 ## 4. UI에서 지켜야 할 진실 계층

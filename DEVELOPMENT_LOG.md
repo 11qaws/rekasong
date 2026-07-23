@@ -1,5 +1,13 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.28 Speaker 로컬 파일 장시간 수명 관문
+
+- 기존 제품에는 완료 이력의 로컬 `blob:` 원본을 최근 5개·합계 256MiB까지만 유지하고 현재 재생·대기열은 건드리지 않는 수명 정책이 있었지만, 순수 함수와 2개 파일 복구 smoke만으로는 장시간 반복 사용에서 React 적용→최신 참조 재확인→`URL.revokeObjectURL` 순서까지 증명하지 못했다. 제품 차단을 추가하지 않고 실제 production build 브라우저 검증을 배포 관문으로 승격했다.
+- 새 `dashboard-local-blob-budget-smoke.mjs`는 기본 Speaker 화면에서 로컬 WAV 30개를 UI로 차례로 선택하고 실제 media 종료 전이를 거친다. 완료 이력 30개는 그대로 보존하면서 최근 5개만 즉시 다시 재생 가능했고, 오래된 25개는 `파일 다시 선택` 상태로 바뀐 뒤 해당 Object URL이 모두 회수됐다. 같은 URL을 일부 행만 만료시키거나 현재 곡·대기열을 끊는 경로는 사용하지 않는다.
+- Dashboard가 열린 동안 생성 30·회수 25·유지 5를 확인했고, Dashboard를 닫자 30개가 전부 회수되어 유지 0이 됐다. localStorage/sessionStorage의 `blob:` URL은 0개, Worker session·WebSocket·ntfy 요청은 0개였다. 최종 배포 후보 run의 30곡 뒤 강제 GC 기준 JS heap 증가는 `4,194,504B`, 곡 1회 UI 전이 p95는 `1,365.8ms`였다.
+- byte 상한·동일 src 원자 만료·현재/대기열 보호·구버전 unknown 크기 보수 계산은 기존 단위 계약을 다시 통과했다. 30초 OBS 위치 관측도 함께 추적해 `position`은 표시 기준만 갱신하고 seek·restart·playback-rate·route·media 명령을 만들지 않는다는 기존 계약을 유지한다.
+- 새 검증은 `scripts/`와 Pages workflow에만 있으며 사용자 runtime·문구·번역 catalog·OBS player bundle을 바꾸지 않는다. 배포 workflow는 build와 pseudo-locale 뒤 이 30곡 수명 시험까지 통과한 artifact만 게시한다.
+
 ## 2026-07-23 (Codex) — v0.2.27 실제 OBS CEF 30초 관측 검증 안전화
 
 - 실제 OBS 외부 CEF harness가 control WebSocket의 원본 `playback_event`를 읽기 전용으로 관찰해 lifecycle과 `position` cadence를 직접 계수하도록 보강했다. 보관 값은 event/run/entry/media time/duration/수신 시각뿐이며 credential, URL, 곡 정보와 오류 상세는 버린다. 관측기는 제품 player에 seek·restart·playback-rate·route·media 명령을 보낼 수 없다.

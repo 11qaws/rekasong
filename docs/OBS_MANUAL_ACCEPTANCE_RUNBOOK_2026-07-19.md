@@ -112,7 +112,7 @@ git diff --check
 6. active/prefetch `64MiB`씩, hint churn 100회와 곡 전환 100회에서 stale fetch 0, cache 1개, retained `128MiB` 이하를 확인한다.
 7. 실제 OBS CEF에서 60분 재생하며 renderer crash, audio dropout, 중복 player, 지속 working-set 증가가 0인지 기록한다.
 
-Dashboard 장시간 검사는 별도다. 1,000곡 fixture에서 실제 history row 100 이하 또는 virtualization, 조작 p95 100ms 이하, localStorage payload 1MiB 이하, local Blob count·byte 예산 준수를 확인한다. 이 기준을 아직 구현하지 않았다면 장시간 리모컨 메모리 안정성은 `not-run`으로 둔다.
+Dashboard 장시간 검사는 별도다. 1,000곡 fixture에서 실제 history row 100 이하 또는 virtualization, 조작 p95 100ms 이하, localStorage payload 1MiB 이하, local Blob count·byte 예산 준수를 확인한다. v0.2.28 자동 관문은 30곡 반복에서 최근 5개 유지·25개 회수·unmount 뒤 30/30 회수·저장 Blob URL 0을 확인하며, 이 관문이 실패하면 장시간 리모컨 메모리 안정성을 `not-run`으로 되돌린다.
 
 Chrome 통과만으로 OBS CEF 성능을 합격시키지 않는다. 측정마다 CPU, RAM, OBS/CEF 버전, source 크기와 codec을 함께 기록한다.
 

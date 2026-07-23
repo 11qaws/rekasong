@@ -1593,7 +1593,7 @@ G4 전에는 `카라오케 싱크 보장`이라고 쓰지 않는다.
 - [ ] 모바일·키보드·screen reader·reduced-motion 기준을 통과한다.
 - [ ] OBS v2 cold-route raw/gzip 예산과 heavy-module·외부-font 0건 검사를 통과한다.
 - [ ] PREFETCH 64MiB, 100곡 전환, 30분 heap, 60분 OBS CEF soak에서 자원 상한과 무누수를 증명한다.
-- [ ] Dashboard 1,000곡 history와 local Blob 예산에서 row·localStorage·메모리 상한을 증명한다.
+- [x] Dashboard 1,000곡 history와 local Blob 예산에서 row·localStorage·메모리 상한을 증명한다. v0.2.28 production-browser 30곡 반복에서 최근 5개 유지·25개 회수·unmount 뒤 30/30 회수·저장 Blob URL 0·Worker 요청 0을 확인했다.
 - [ ] 신규·수정 사용자 copy가 semantic key를 사용하고 pseudo-locale/missing-key 검사를 통과한다.
 - [ ] token과 OBS password가 cloud/log에 노출되지 않는다.
 - [ ] deployment/rollback smoke가 문서화되고 재현 가능하다.
