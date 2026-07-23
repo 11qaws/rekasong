@@ -193,6 +193,7 @@ let browser = null;
 let context = null;
 let dashboard = null;
 let player = null;
+let standbyPlayer = null;
 let session = null;
 const pageErrors = [];
 const consoleErrors = [];
@@ -357,6 +358,37 @@ try {
   assert.equal(connectedUiEvidence.selectedObs, 'true');
   assert.match(connectedUiEvidence.actualStatus, /OBS/i);
   assert.ok(connectedUiEvidence.nextAction.length > 10);
+
+  // Candidate cardinality is strict before activation, but a second standby
+  // source must not revoke an already established exact lease. Keep the
+  // duplicate connected through a full media-control cycle and prove that it
+  // never receives or plays the leased target's media.
+  standbyPlayer = await context.newPage();
+  standbyPlayer.on('pageerror', (error) => pageErrors.push(`standby:${error.message}`));
+  standbyPlayer.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(`standby:${message.text()}`);
+  });
+  await installObsBinding(standbyPlayer);
+  await standbyPlayer.goto(playerUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  const standbyAudio = standbyPlayer.locator('[data-on-air-player-v2-state] audio');
+  await standbyAudio.waitFor({ state: 'attached', timeout: 20_000 });
+  await dashboard.locator('.obs-player-status.is-error').waitFor({
+    state: 'visible',
+    timeout: 20_000,
+  });
+  const duplicateUiEvidence = {
+    actualStatus: (await dashboard.locator('#output-route-live-status').innerText()).trim(),
+    detail: (await dashboard.locator('.output-route-authoritative-detail').innerText()).trim(),
+    nextAction: (await dashboard.locator('.output-route-next-action').innerText()).trim(),
+    obsRouteEnabled: await routeButtons.nth(1).isEnabled(),
+    settingsNeedsAttention: await dashboard.locator('.output-settings-button')
+      .evaluate((button) => button.classList.contains('has-attention')),
+  };
+  assert.match(duplicateUiEvidence.actualStatus, /OBS/i);
+  assert.match(duplicateUiEvidence.detail, /stay connected|remain connected/i);
+  assert.match(duplicateUiEvidence.nextAction, /keep using|remove only/i);
+  assert.equal(duplicateUiEvidence.obsRouteEnabled, true);
+  assert.equal(duplicateUiEvidence.settingsNeedsAttention, false);
   await dashboard.locator('#obs-setup-dialog > header .btn-icon').click();
 
   await dashboard.locator('.song-composer input[type="file"][accept]').setInputFiles({
@@ -373,6 +405,32 @@ try {
     return audio && !audio.paused && audio.currentTime > 0.05;
   }, null, { timeout: 30_000 });
   assert.equal(await obsAudio.evaluate((audio) => audio.volume), 0.61);
+  assert.deepEqual(
+    await standbyAudio.evaluate((audio) => ({
+      paused: audio.paused,
+      hasSource: Boolean(audio.currentSrc || audio.getAttribute('src')),
+    })),
+    { paused: true, hasSource: false },
+    'The additional OBS source must remain silent and source-detached.',
+  );
+
+  const playbackToggle = dashboard.locator('.playback-controls .playback-primary');
+  await dashboard.waitForFunction(() => {
+    const button = document.querySelector('.playback-controls .playback-primary');
+    return button instanceof HTMLButtonElement && button.disabled === false;
+  }, null, { timeout: 10_000 });
+  assert.equal(await playbackToggle.isEnabled(), true);
+  await playbackToggle.click();
+  await player.waitForFunction(() => {
+    const audio = document.querySelector('[data-on-air-player-v2-state] audio');
+    return audio?.paused === true;
+  }, null, { timeout: 10_000 });
+  assert.equal(await standbyAudio.evaluate((audio) => audio.paused), true);
+  await playbackToggle.click();
+  await player.waitForFunction(() => {
+    const audio = document.querySelector('[data-on-air-player-v2-state] audio');
+    return audio && !audio.paused;
+  }, null, { timeout: 10_000 });
 
   const readVolumeCommands = async () => dashboard.evaluate(() => (
     (window.__rekasongConnectedSmokeSentFrames || []).flatMap((payload) => {
@@ -484,6 +542,24 @@ try {
     process.stderr.write(`DISCARD_DIAGNOSTIC ${JSON.stringify(discardDiagnostic, null, 2)}\n`);
     throw error;
   }
+  const duplicatePlaybackEvidence = {
+    leasedPlayerStopped: await obsAudio.evaluate((audio) => (
+      audio.paused && !audio.getAttribute('src')
+    )),
+    standbyPlayerSilent: await standbyAudio.evaluate((audio) => (
+      audio.paused && !audio.getAttribute('src')
+    )),
+    routeStayedObs: /OBS/i.test(
+      (await dashboard.locator('#output-route-live-status').innerText()).trim(),
+    ),
+  };
+  assert.deepEqual(duplicatePlaybackEvidence, {
+    leasedPlayerStopped: true,
+    standbyPlayerSilent: true,
+    routeStayedObs: true,
+  });
+  await standbyPlayer.close();
+  standbyPlayer = null;
   await dashboard.locator('.output-settings-button').click();
   await routeButtons.nth(0).click();
   await dashboard.locator('#output-route-live-status.is-speaker').waitFor({
@@ -550,6 +626,8 @@ try {
       actualBroadcastStarted: false,
     },
     connectedUiEvidence,
+    duplicateUiEvidence,
+    duplicatePlaybackEvidence,
     volumeEvidence: {
       speakerMediaVolume: 0.34,
       obsInitialMediaVolume: 0.61,
@@ -561,6 +639,7 @@ try {
     pageErrors,
   }, null, 2)}\n`);
 } finally {
+  await standbyPlayer?.close().catch(() => {});
   await player?.close().catch(() => {});
   await context?.close().catch(() => {});
   await browser?.close().catch(() => {});

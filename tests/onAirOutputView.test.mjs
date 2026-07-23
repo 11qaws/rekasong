@@ -216,6 +216,72 @@ test('zero and multiple eligible candidates are explicit and block activation or
   assert.equal(duplicate.actions.switchOutput.allowed, false);
 });
 
+test('an established OBS lease survives duplicate or temporarily ineligible candidates', () => {
+  const duplicate = derive(makeSnapshot({
+    obsCandidates: ['player-obs', 'player-obs-standby'],
+  }));
+  const hidden = derive(makeSnapshot({
+    obsCandidates: [],
+    extra: {
+      players: [{
+        playerInstanceId: 'player-obs',
+        clientKind: 'obs-browser-source',
+      }],
+    },
+  }));
+  const hiddenSpeaker = derive(makeSnapshot({
+    mode: 'speaker',
+    speakerCandidates: [],
+    leaseTarget: 'player-speaker',
+    leaseClientKind: 'dashboard-speaker',
+    extra: {
+      players: [{
+        playerInstanceId: 'player-speaker',
+        clientKind: 'dashboard-speaker',
+      }],
+    },
+  }));
+
+  for (const view of [duplicate, hidden, hiddenSpeaker]) {
+    assert.equal(view.statusCode, 'route_ready');
+    assert.equal(view.lease.targetObserved, true);
+    assert.equal(view.actions.retry.allowed, false);
+    assert.equal(view.actions.deactivate.allowed, true);
+  }
+  assert.equal(duplicate.candidate.state, ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE);
+  assert.equal(hidden.candidate.state, ON_AIR_OUTPUT_CANDIDATE_STATES.NONE);
+});
+
+test('established OBS playback remains resumable while a standby candidate is present', () => {
+  const view = derive(makeSnapshot({
+    obsCandidates: ['player-obs', 'player-obs-standby'],
+    desiredTransport: { status: 'paused' },
+    confirmedPlayback: { status: 'paused' },
+    activeFamily: { entryId: 'entry-1', runId: 'run-1' },
+  }), {
+    adapterSnapshot: adapterSnapshot(),
+  });
+
+  assert.equal(view.statusCode, 'route_ready');
+  assert.equal(view.actions.resume.allowed, true);
+  assert.equal(view.actions.startTest.allowed, false);
+  assert.equal(
+    view.actions.startTest.reasonCode,
+    ON_AIR_OUTPUT_GATE_CODES.CANDIDATE_NOT_SINGLE,
+  );
+
+  const activeTestView = derive(makeSnapshot({
+    obsCandidates: ['player-obs', 'player-obs-standby'],
+    desiredTransport: { status: 'stopped' },
+    confirmedPlayback: strongStopped(),
+    activeCheckId: 'check-1',
+  }), {
+    adapterSnapshot: adapterSnapshot(),
+  });
+  assert.equal(activeTestView.actions.stopTest.allowed, true);
+  assert.equal(activeTestView.actions.startTest.allowed, false);
+});
+
 test('all lease phases derive stable locale-neutral states without inventing route proof', () => {
   const cases = [
     ['activating', { status: 'unknown', reasonCode: 'output_activating' }, 'output_activating'],

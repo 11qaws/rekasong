@@ -645,6 +645,13 @@ export function deriveOnAirOutputView(input = {}) {
   }
   const leaseStatus = normalizeLeaseStatus(rawLeaseStatus);
   const leaseMode = modeForClientKind(leaseClientKind);
+  const leaseTargetObserved = leaseTarget !== null && (
+    candidate.playerInstanceIds.includes(leaseTarget)
+    || (Array.isArray(protocol.players) && protocol.players.some((player) => (
+      player?.playerInstanceId === leaseTarget
+      && player?.clientKind === leaseClientKind
+    )))
+  );
   if (ACTIVE_LEASE_STATES.has(rawLeaseStatus) && (leaseTarget === null || leaseMode === null)) {
     addCode(criticalDiagnostics, 'invalid_active_lease_identity');
   }
@@ -689,9 +696,13 @@ export function deriveOnAirOutputView(input = {}) {
     && leaseMode !== selectedOutputMode;
   const candidateTargetMismatch = ['activating', 'ready', 'audible'].includes(rawLeaseStatus)
     && (selectedOutputMode === ON_AIR_OUTPUT_MODES.SPEAKER
-      ? !candidate.playerInstanceIds.includes(leaseTarget)
+      ? !candidate.playerInstanceIds.includes(leaseTarget) && !leaseTargetObserved
       : candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
-        && candidate.playerInstanceId !== leaseTarget);
+        && candidate.playerInstanceId !== leaseTarget
+        && !leaseTargetObserved);
+  const establishedRoute = ['ready', 'audible'].includes(rawLeaseStatus)
+    && leaseMode === selectedOutputMode
+    && leaseTargetObserved;
   const playbackInconsistent = (rawLeaseStatus === 'audible' && confirmedStatus !== 'playing')
     || (confirmedStatus === 'playing' && rawLeaseStatus !== 'audible');
   const adapterInconsistent = adapter.available && (
@@ -710,6 +721,10 @@ export function deriveOnAirOutputView(input = {}) {
     statusCode = 'state_unknown';
   } else if (leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.DEACTIVATING) {
     statusCode = 'output_deactivating';
+  } else if (establishedRoute && leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.AUDIBLE) {
+    statusCode = 'player_playing_confirmed';
+  } else if (establishedRoute && leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.READY) {
+    statusCode = 'route_ready';
   } else if (candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.NONE && selectedOutputMode !== null) {
     statusCode = 'candidate_missing';
   } else if (candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
@@ -755,7 +770,10 @@ export function deriveOnAirOutputView(input = {}) {
     ? candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
       || candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
     : candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE;
+  const candidateMatchesLease = candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.SINGLE
+    && candidate.playerInstanceId === leaseTarget;
   const currentRouteStable = leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
+    || (establishedRoute && !modeMismatch && !candidateTargetMismatch)
     || (candidateSingle && !modeMismatch && !candidateTargetMismatch);
   const alternateOutputMode = selectedOutputMode === ON_AIR_OUTPUT_MODES.SPEAKER
     ? ON_AIR_OUTPUT_MODES.OBS
@@ -798,11 +816,13 @@ export function deriveOnAirOutputView(input = {}) {
     && leaseStatus !== ON_AIR_OUTPUT_LEASE_STATES.INACTIVE
     && leaseStatus !== ON_AIR_OUTPUT_LEASE_STATES.EMERGENCY;
   const retryAllowed = unknownState
-    || candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.NONE
-    || candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE;
+    || (!establishedRoute && (
+      candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.NONE
+      || candidate.state === ON_AIR_OUTPUT_CANDIDATE_STATES.DUPLICATE
+    ));
   const resumeAllowed = !unknownState
     && leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.READY
-    && candidateSingle
+    && currentRouteStable
     && activeFamily.present === true
     && activeCheck.active === false
     && confirmedStatus === 'paused'
@@ -810,13 +830,13 @@ export function deriveOnAirOutputView(input = {}) {
   const startTestAllowed = !unknownState
     && selectedOutputMode === ON_AIR_OUTPUT_MODES.OBS
     && leaseStatus === ON_AIR_OUTPUT_LEASE_STATES.READY
-    && candidateSingle
+    && candidateMatchesLease
     && activeCheck.active === false
     && safeStopped
     && adapterSafeForActiveCommands;
   const stopTestAllowed = !unknownState
     && ['ready', 'audible'].includes(leaseStatus)
-    && candidateSingle
+    && currentRouteStable
     && activeCheck.active === true
     && adapterSafeForActiveCommands;
 
@@ -914,6 +934,8 @@ export function deriveOnAirOutputView(input = {}) {
       resumeAllowed,
       unknownState
         ? ON_AIR_OUTPUT_GATE_CODES.STATE_UNKNOWN
+        : !currentRouteStable
+          ? ON_AIR_OUTPUT_GATE_CODES.STATE_UNKNOWN
         : confirmedStatus !== 'paused'
           ? ON_AIR_OUTPUT_GATE_CODES.NOT_PAUSED
           : leaseStatus !== ON_AIR_OUTPUT_LEASE_STATES.READY
@@ -929,7 +951,9 @@ export function deriveOnAirOutputView(input = {}) {
           ? ON_AIR_OUTPUT_GATE_CODES.MODE_NOT_OBS
           : leaseStatus !== ON_AIR_OUTPUT_LEASE_STATES.READY
             ? ON_AIR_OUTPUT_GATE_CODES.LEASE_NOT_READY
-            : generalBlock,
+            : !candidateMatchesLease
+              ? ON_AIR_OUTPUT_GATE_CODES.CANDIDATE_NOT_SINGLE
+              : generalBlock,
     ),
     [ON_AIR_OUTPUT_ACTIONS.STOP_TEST]: gate(
       ON_AIR_OUTPUT_ACTIONS.STOP_TEST,
@@ -938,9 +962,11 @@ export function deriveOnAirOutputView(input = {}) {
         ? ON_AIR_OUTPUT_GATE_CODES.STATE_UNKNOWN
         : activeCheck.active !== true
           ? ON_AIR_OUTPUT_GATE_CODES.NO_ACTIVE_TEST
-          : !['ready', 'audible'].includes(leaseStatus)
-            ? ON_AIR_OUTPUT_GATE_CODES.LEASE_NOT_READY
-            : generalBlock,
+          : !currentRouteStable
+            ? ON_AIR_OUTPUT_GATE_CODES.STATE_UNKNOWN
+            : !['ready', 'audible'].includes(leaseStatus)
+              ? ON_AIR_OUTPUT_GATE_CODES.LEASE_NOT_READY
+              : generalBlock,
     ),
     [ON_AIR_OUTPUT_ACTIONS.EMERGENCY_STOP]: gate(
       ON_AIR_OUTPUT_ACTIONS.EMERGENCY_STOP,
@@ -990,6 +1016,7 @@ export function deriveOnAirOutputView(input = {}) {
       status: leaseStatus,
       targetPlayerInstanceId: leaseTarget,
       clientKind: leaseClientKind,
+      targetObserved: leaseTargetObserved,
       proofScope: 'player_route',
       routeEventConfirmed: ['ready', 'audible'].includes(rawLeaseStatus),
       playerPlayingConfirmed: rawLeaseStatus === 'audible' && confirmedStatus === 'playing',

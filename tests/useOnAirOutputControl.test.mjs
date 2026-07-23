@@ -1564,6 +1564,240 @@ test('keeps a queued next LOAD when an additional speaker candidate appears', ()
   });
 });
 
+test('keeps the exact OBS lease through a duplicate-source song boundary', () => {
+  const players = [
+    { playerInstanceId: 'obs-player', clientKind: 'obs-browser-source' },
+    { playerInstanceId: 'obs-standby', clientKind: 'obs-browser-source' },
+  ];
+  const candidates = { obs: ['obs-player', 'obs-standby'] };
+  const activeRun = {
+    entryId: 'entry-a',
+    runId: 'run-a',
+    targetPlayerInstanceId: 'obs-player',
+    leaseEpoch: 4,
+  };
+  const activeProtocol = readyRoute('obs', {
+    players,
+    eligibleCandidates: candidates,
+    activeFamily: { family: 'run', entryId: 'entry-a', runId: 'run-a' },
+    desiredTransport: {
+      status: 'playing',
+      song: { id: 'song-a' },
+      entryId: 'entry-a',
+      runId: 'run-a',
+    },
+    confirmedPlayback: {
+      status: 'playing',
+      entryId: 'entry-a',
+      runId: 'run-a',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      paused: false,
+      audible: true,
+    },
+  });
+  const { controller, coordinators } = createHarness(
+    coordinatorSnapshot(activeProtocol, { activeRun }),
+  );
+  const coordinator = coordinators[0];
+  const nextSong = { id: 'song-b', title: 'Song B', type: 'audio', src: 'asset-b' };
+
+  controller.sendCommand({
+    type: 'load',
+    sessionId: 'entry-b',
+    runId: 'run-b',
+    song: nextSong,
+  });
+  assert.deepEqual(coordinator.calls, [['stop']]);
+
+  const stoppedProtocol = readyRoute('obs', {
+    players,
+    eligibleCandidates: candidates,
+    activeFamily: null,
+    desiredTransport: {
+      status: 'stopped',
+      song: null,
+      entryId: null,
+      runId: null,
+    },
+    confirmedPlayback: {
+      status: 'stopped',
+      entryId: 'entry-a',
+      runId: 'run-a',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      paused: true,
+      sourceDetached: true,
+      autoplayCancelled: true,
+      audible: false,
+    },
+  });
+  coordinator.emit(coordinatorSnapshot(stoppedProtocol));
+  assert.deepEqual(coordinator.calls.map(([name]) => name), ['stop', 'load']);
+
+  const loadedProtocol = readyRoute('obs', {
+    players,
+    eligibleCandidates: candidates,
+    activeFamily: { family: 'run', entryId: 'entry-b', runId: 'run-b' },
+    desiredTransport: {
+      status: 'loading',
+      song: nextSong,
+      entryId: 'entry-b',
+      runId: 'run-b',
+    },
+    confirmedPlayback: {
+      status: 'ready',
+      entryId: 'entry-b',
+      runId: 'run-b',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      paused: true,
+    },
+  });
+  const nextActiveRun = {
+    entryId: 'entry-b',
+    runId: 'run-b',
+    targetPlayerInstanceId: 'obs-player',
+    leaseEpoch: 4,
+    acknowledged: true,
+    observed: true,
+  };
+  coordinator.emit(coordinatorSnapshot(loadedProtocol, { activeRun: nextActiveRun }));
+  assert.deepEqual(coordinator.calls.map(([name]) => name), ['stop', 'load', 'play']);
+
+  const playingProtocol = readyRoute('obs', {
+    players,
+    eligibleCandidates: candidates,
+    activeFamily: { family: 'run', entryId: 'entry-b', runId: 'run-b' },
+    desiredTransport: {
+      status: 'playing',
+      song: nextSong,
+      entryId: 'entry-b',
+      runId: 'run-b',
+    },
+    confirmedPlayback: {
+      status: 'playing',
+      entryId: 'entry-b',
+      runId: 'run-b',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      paused: false,
+      audible: true,
+    },
+  });
+  coordinator.emit(coordinatorSnapshot(playingProtocol, { activeRun: nextActiveRun }));
+  assert.equal(
+    controller.getState().playbackTransitionState.status,
+    ON_AIR_PLAYBACK_TRANSITION_STATUSES.IDLE,
+  );
+  assert.equal(
+    coordinator.calls.some(([name]) => ['activateOutput', 'deactivateOutput'].includes(name)),
+    false,
+  );
+});
+
+test('a connected but hidden OBS lease can finish LOAD while candidate count is zero', () => {
+  const hiddenPlayer = [{
+    playerInstanceId: 'obs-player',
+    clientKind: 'obs-browser-source',
+    runtime: { sourceActive: false, sourceVisible: false },
+  }];
+  const initial = readyRoute('obs', {
+    players: hiddenPlayer,
+    eligibleCandidates: { obs: [] },
+  });
+  const { controller, coordinators } = createHarness(coordinatorSnapshot(initial));
+  const coordinator = coordinators[0];
+  const song = { id: 'song-b', title: 'Song B', type: 'audio', src: 'asset-b' };
+
+  controller.sendCommand({
+    type: 'load',
+    sessionId: 'entry-b',
+    runId: 'run-b',
+    song,
+  });
+  const loaded = readyRoute('obs', {
+    players: hiddenPlayer,
+    eligibleCandidates: { obs: [] },
+    activeFamily: { family: 'run', entryId: 'entry-b', runId: 'run-b' },
+    desiredTransport: {
+      status: 'loading',
+      song,
+      entryId: 'entry-b',
+      runId: 'run-b',
+    },
+    confirmedPlayback: {
+      status: 'ready',
+      entryId: 'entry-b',
+      runId: 'run-b',
+      playerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+      paused: true,
+    },
+  });
+  coordinator.emit(coordinatorSnapshot(loaded, {
+    activeRun: {
+      entryId: 'entry-b',
+      runId: 'run-b',
+      targetPlayerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+    },
+  }));
+
+  assert.deepEqual(coordinator.calls.map(([name]) => name), ['load', 'play']);
+  assert.equal(
+    controller.getState().playbackTransitionState.status,
+    ON_AIR_PLAYBACK_TRANSITION_STATUSES.LOADING,
+  );
+});
+
+test('losing the exact leased OBS player still fails the pending transition', () => {
+  const { controller, coordinators } = createHarness(
+    coordinatorSnapshot(readyRoute('obs')),
+  );
+  const coordinator = coordinators[0];
+  const song = { id: 'song-b', title: 'Song B', type: 'audio', src: 'asset-b' };
+  controller.sendCommand({
+    type: 'load',
+    sessionId: 'entry-b',
+    runId: 'run-b',
+    song,
+  });
+
+  const wrongTarget = readyRoute('obs', {
+    players: [{
+      playerInstanceId: 'obs-standby',
+      clientKind: 'obs-browser-source',
+    }],
+    eligibleCandidates: { obs: ['obs-standby'] },
+    activeFamily: { family: 'run', entryId: 'entry-b', runId: 'run-b' },
+    confirmedPlayback: {
+      status: 'ready',
+      entryId: 'entry-b',
+      runId: 'run-b',
+      playerInstanceId: 'obs-standby',
+      leaseEpoch: 4,
+      paused: true,
+    },
+  });
+  coordinator.emit(coordinatorSnapshot(wrongTarget, {
+    activeRun: {
+      entryId: 'entry-b',
+      runId: 'run-b',
+      targetPlayerInstanceId: 'obs-player',
+      leaseEpoch: 4,
+    },
+  }));
+
+  assert.deepEqual(controller.getState().playbackTransitionState, {
+    status: ON_AIR_PLAYBACK_TRANSITION_STATUSES.FAILED,
+    entryId: 'entry-b',
+    runId: 'run-b',
+    reasonCode: ON_AIR_PLAYBACK_TRANSITION_REASONS.OUTPUT_ROUTE_LOST,
+  });
+  assert.deepEqual(coordinator.calls.map(([name]) => name), ['load']);
+});
+
 test('requires exact load identity and rejects stale legacy run targeting', () => {
   const activeRun = { entryId: 'entry-a', runId: 'run-a' };
   const { controller } = createHarness(coordinatorSnapshot(readyRoute('speaker'), { activeRun }));

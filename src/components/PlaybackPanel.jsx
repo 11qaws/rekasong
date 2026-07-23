@@ -6,6 +6,7 @@ import {
   derivePlaybackOutputNextAction,
   derivePlaybackOutputStatus,
 } from '../lib/playbackOutputStatus';
+import { deriveEstablishedObsRouteNotice } from '../lib/establishedObsRouteNotice';
 import {
   createOutputUnmuteMemory,
   outputVolumeForMode,
@@ -232,7 +233,14 @@ export default function PlaybackPanel({
     : 'blocked';
   const isObsSetupPending = selectedOutputMode === 'obs'
     && normalizedOutputSwitchState === 'connecting';
+  const establishedObsRouteNotice = deriveEstablishedObsRouteNotice({
+    confirmedOutputMode,
+    isRouteStable: outputRouteStable,
+    candidateState: outputView?.candidates?.obs?.state ?? null,
+    sourceInactive: obsSourceInactive,
+  });
   const outputRouteDetailMessageKey = obsSetupWaitMessageKey
+    ?? establishedObsRouteNotice?.messageKey
     ?? (isObsSetupPending ? 'onair.output.status.connecting' : outputView?.messageKey);
   const outputSelectionLocked = ['conflict', 'switching'].includes(normalizedOutputSwitchState)
     || (normalizedOutputSwitchState === 'connecting' && !allowOutputSelectionWhileConnecting)
@@ -349,12 +357,13 @@ export default function PlaybackPanel({
     activeSourceInactive: selectedOutputMode === 'obs' && obsSourceInactive,
     reasonCode: outputSwitchReasonCode,
   });
-  const outputNextActionKey = derivePlaybackOutputNextAction({
-    statusKey: activeOutputStatus.key,
-    targetMode: failedSelectionMode ?? transitionTargetMode ?? selectedOutputMode,
-    confirmedOutputMode,
-    controlRecoveryRequired: outputControlRecoveryRequired,
-  });
+  const outputNextActionKey = establishedObsRouteNotice?.nextActionKey
+    ?? derivePlaybackOutputNextAction({
+      statusKey: activeOutputStatus.key,
+      targetMode: failedSelectionMode ?? transitionTargetMode ?? selectedOutputMode,
+      confirmedOutputMode,
+      controlRecoveryRequired: outputControlRecoveryRequired,
+    });
   const outputNeedsAttention = isSelectedRouteInvalid
     || outputRouteStateUnknown
     || normalizedOutputSwitchState === 'blocked'

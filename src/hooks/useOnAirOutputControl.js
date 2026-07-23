@@ -1091,7 +1091,7 @@ export class OnAirOutputController {
     if (!snapshot.ready || !snapshot.writable) {
       return ON_AIR_PLAYBACK_TRANSITION_REASONS.CONNECTION_LOST;
     }
-    if (!ACTIVE_LEASE_STATES.has(leaseStatus) || !this.#currentRouteCandidateStable()) {
+    if (!ACTIVE_LEASE_STATES.has(leaseStatus) || !this.#currentRouteTargetObserved()) {
       return ON_AIR_PLAYBACK_TRANSITION_REASONS.OUTPUT_ROUTE_LOST;
     }
     return null;
@@ -1136,26 +1136,32 @@ export class OnAirOutputController {
     const protocol = this.#snapshot?.playerSnapshot;
     const lease = protocol?.lease;
     const mode = modeForClientKind(lease?.clientKind);
-    const candidates = mode ? protocol?.eligibleCandidates?.[mode] : null;
     return lease?.status === 'ready'
       && mode !== null
-      && Array.isArray(candidates)
-      && (mode === ON_AIR_OUTPUT_MODES.SPEAKER
-        ? candidates.includes(lease.leaseTarget)
-        : candidates.length === 1 && candidates[0] === lease.leaseTarget)
-      ;
+      && this.#currentRouteTargetObserved();
   }
 
-  #currentRouteCandidateStable() {
+  #currentRouteTargetObserved() {
     const protocol = this.#snapshot?.playerSnapshot;
     const lease = protocol?.lease;
     const mode = modeForClientKind(lease?.clientKind);
     const candidates = mode ? protocol?.eligibleCandidates?.[mode] : null;
-    return mode !== null
-      && Array.isArray(candidates)
-      && (mode === ON_AIR_OUTPUT_MODES.SPEAKER
-        ? candidates.includes(lease.leaseTarget)
-        : candidates.length === 1 && candidates[0] === lease.leaseTarget);
+    if (mode === null || !isIdentifier(lease?.leaseTarget)) return false;
+
+    // Candidate cardinality is an activation-time safety gate. Once a lease
+    // is established, every media command already targets the exact leased
+    // player and epoch. A second standby OBS source, a scene transition, or a
+    // temporarily hidden source must therefore not invalidate the live route
+    // or strand a song-boundary LOAD. Only losing the leased target itself is
+    // a route loss.
+    const targetIsEligible = Array.isArray(candidates)
+      && candidates.includes(lease.leaseTarget);
+    const targetIsConnected = Array.isArray(protocol?.players)
+      && protocol.players.some((player) => (
+        player?.playerInstanceId === lease.leaseTarget
+        && player?.clientKind === lease.clientKind
+      ));
+    return targetIsEligible || targetIsConnected;
   }
 
   #reconcilePendingLoad() {
