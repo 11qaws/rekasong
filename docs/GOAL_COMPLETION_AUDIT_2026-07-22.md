@@ -333,3 +333,35 @@
 - 공개 Speaker smoke는 기본 Speaker, 한영 reload, 320/375/768/1100px, 320px 영문 설정, 흰 hairpin과 금발 선을 통과했다. HTTP 오류·ntfy 요청·warm long task는 0, warm DCL은 `20.3ms`, JS heap은 `8,348,012B`였다. 공개 Speaker 로컬 재생과 기기-pause 복구 동안 session HTTP·WebSocket·frame·Worker host 요청은 모두 0이었다.
 - release commit `99a621b5352027d20075a7776481769dda3ea7ca`, Pages workflow `29977321000`, build `89111772404`, deploy `89111947797`, deployment `5566498219`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다. 공개 `index.html`은 `485B`·SHA-256 `1b1f79f1422603a96855981045f38c8052e9560541a7a9958147336c3c532a57`, Dashboard는 `377,580B`·SHA-256 `045dca2660611fbced919ed8c3a295df94a52a7028f3df57795426c188ae40b3`, `OnAirPlayerV2-CAKaIqZG.js`는 `42,665B`·SHA-256 `c1b18e451469d8e82661cd809f05f9facf87f09b0f40ce595596b095b73c3208`이다.
 - 30초 cadence는 리모컨 표시와 실제 player 위치를 관찰하는 주기일 뿐이다. 곡 중간 seek·restart·playbackRate·route 전환·WebSocket 재연결을 하지 않고 이전 곡의 strong-stop 뒤 다음 run만 `position: 0`에서 시작한다. 실제 모바일 백그라운드/PiP·물리 출력 장치 청취, 사용자 OBS monitoring 청취, 방송·녹화 OFF의 실제 OBS 중복 소스 수동 확인, 별도 명시 승인 뒤 G5, 같은-clock/저지연 performer monitoring의 곡 단위 G6는 계속 별도 관문이다.
+
+## 13. 목표 요구사항별 최종 코드·공개본 감사 — 2026-07-23
+
+| 사용자 요구사항 | 현재 판정 | 직접 증거 |
+|---|---|---|
+| Speaker는 경로 확인이 필요 없는 일반 웹 플레이어 | 코드·공개본 확인 | 기본값 Speaker, 탭 소유 로컬 `PlaybackEngine`, 공개 재생 중 session HTTP·Worker WebSocket 0. 공개 3탭이 독립 재생했고 한 탭 reload 뒤 나머지 두 탭이 계속 전진했다. |
+| Speaker가 기기/페이지 전환 뒤 막히지 않고 사용자가 복구 가능 | 코드·공개본 확인 | 같은 source·위치를 보존한 `계속 재생` 행동, 자동 재생·새 run·Worker 연결 없음. 공개 Chrome 물리 pause→복귀→사용자 재개 통과. |
+| OBS는 한 번 확립된 연결을 관찰 오류가 끊지 않음 | 코드·자동 확인 | stale heartbeat, scene-inactive, 후보 0/2, control gap에서 기존 lease 보존. 집중 회귀 `18/18`; socket close도 상태만 unknown으로 기록하고 STOP·detach·deactivate·emergency-stop을 보내지 않음. |
+| OBS가 같은 player 복귀 시 스스로 회복 | 코드·자동 확인 | `player_hello`에서 같은 `playerInstanceId` lease 복원, LOAD/PLAY 재전송 없이 surviving playback proof 수용. |
+| YouTube 검색/목록을 하나로 묶고 Setlink·Meloming 순서 유지 | 코드·공개본 확인 | 상위 탭 `YouTube → Setlink → Meloming`, YouTube 내부 `검색 → 목록`; 공개 production smoke 통과. |
+| 노래책 글자를 어두운 녹색으로 표시하고 에메랄드는 장식에만 사용 | 코드·시각 회귀 확인 | 노래책 본문 `--chr-vest`, 장식용 emerald 분리; source/UI 회귀와 공개 smoke 통과. |
+| Rekasong 부제목 제거, 금발 선과 흰 hairpin 유지 | 코드·공개본 확인 | 제목만 렌더링, 3px 금발 선과 compact hairpin이 320/375/768/1100px에서 유지됨. |
+| 곡 클릭에 즉시 상호작용 제공 | 공개본 확인 | 공개 노래책 행 클릭이 review panel을 열고, 검색 결과 클릭도 review 단계로 이동함. |
+| 곡을 지금 재생/대기열/이전 재생곡으로 drag | 공개본 확인 | 공개 drag smoke에서 review, 취소 mutation 0, 이전 재생곡 drop 재생 0, 320px overflow 0을 확인함. 현재 곡은 drop으로 갑자기 끊지 않음. |
+| 모든 새 텍스트를 번역 가능한 구조로 설계 | 코드·자동 확인 | 한국어/영어 병합 catalog key·placeholder parity, source literal guard, pseudo-locale 3화면×4폭 통과. |
+| 앱이 무거워지지 않음 | build·공개본 확인 | Dashboard `377.58kB raw / 103.44kB gzip`, OBS closure `384,105B raw / 118,430B gzip`; warm long task 0, 공개 warm DCL `20.3ms`. |
+| 30초 단위 관찰이 반주를 흔들거나 경로를 재연결하지 않음 | 코드·자동 확인 | position만 30초 cadence로 관찰하며 command 0. 곡 중 seek·restart·playbackRate·route 전환·reconnect 금지, 다음 run만 0초에서 시작. |
+
+### OBS 절단 조건 감사
+
+- 자동 관찰 입력인 heartbeat warning/stale, source active/visible, scene visibility, streaming/recording telemetry는 STOP·detach·deactivate·emergency-stop 호출 경로로 연결되지 않는다.
+- 확립된 대상 socket이 실제로 닫히면 서버는 `unknown/target_disconnected`를 영속화하고 사용자에게 복구 필요를 알리지만 물리 출력을 중지했다는 거짓 확정을 만들지 않는다.
+- 파괴적 동작은 사용자의 명시적 STOP·출력 전환·완전 초기화·emergency-stop, 또는 현재 run의 자연 종료/명시적 폐기처럼 신원이 일치하는 terminal 경계에만 남는다.
+- OBS 점검음 실패의 강제 정리는 점검 전용 run에만 적용되고 일반 MR이 활성인 동안 새 점검 시작은 거부된다. 점검 결과가 정상 재생 run을 끊는 경로는 없다.
+
+### 코드 완료와 별도의 운영 관문
+
+- 실제 Android/iOS의 백그라운드·PiP·잠금 화면 정책과 물리 출력 장치 전환은 실기기에서 확인해야 한다.
+- 실제 스트리머가 OBS monitoring으로 반주를 듣고 마이크와의 고정 offset을 확인해야 한다.
+- 방송·녹화 OFF 상태의 실제 OBS 중복 Browser Source 수동 확인은 가짜 binding 회귀를 보강하는 운영 관문이다.
+- 플랫폼 비공개 방송/VOD G5는 별도 명시 승인 전 실행하지 않는다.
+- 같은 audio clock 또는 저지연 performer-monitoring 경로의 곡 단위 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계 결과를 대체할 새 물리 증거가 필요하다.

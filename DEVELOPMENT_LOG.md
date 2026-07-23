@@ -833,3 +833,14 @@
 - Actions artifact에서 manifest를 제외한 실제 게시 파일 21개를 내려받고 공개 CDN에서 각각 다시 수집해 크기와 SHA-256을 비교했다. `index.html`, Dashboard, 로컬 Speaker, OBS player를 포함해 `21/21` exact match였다.
 - 공개 URL의 실제 Chrome에서도 기본 Speaker, YouTube/Setlink/Meloming과 Search/Playlist, 한국어→영어→reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼, 흰 hairpin과 3px 금발 선을 통과했다. HTTP 오류·legacy ntfy 요청·warm long task는 0, warm DCL `23.4ms`, JS heap `8,332,676B`였다.
 - 공개 로컬 WAV를 물리 pause한 뒤 새 복구 행동을 확인하고 사용자가 클릭했다. 같은 source에서 media가 다시 진행했고 320px overflow `0`, 행동 높이 `44px`, 유휴·재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame과 Worker host 요청은 모두 0이었다. 실제 OBS 경로·방송·녹화는 시작하지 않았다.
+
+## 2026-07-23 (Codex) — v0.2.33 확립된 OBS 경로 보존과 최종 경계 감사
+
+- OBS 신규 선택과 점검음 시작에는 계속 활성 후보 정확히 1개를 요구한다. 반면 정확한 `playerInstanceId`와 `leaseEpoch`로 경로가 확립된 뒤에는 후보 수가 0개나 2개가 되어도 현재 곡, 리모컨, 다음 곡 LOAD를 유지한다. 후보 수는 새 대상을 고르는 조건이고 확립 뒤 명령 대상은 기존 lease 신원이다.
+- 장면 전환, source active/visible 변화, 늦은 heartbeat는 기존 media graph가 정지했다는 증거로 사용하지 않는다. 열린 대상 socket은 heartbeat warning/stale 경계를 지나도 계속 명령 가능하며, 관련 heartbeat는 durable storage write를 만들지 않는다.
+- 실제 대상 socket close는 lease와 transport를 `unknown/target_disconnected`로 기록하지만 STOP·detach·deactivate·emergency-stop을 자동 전송하지 않는다. 같은 OBS player가 다시 hello를 보내면 기존 lease를 `ready/output_reconnected`로 복원하고 살아 있는 playback 증거를 다시 받는다. 복구 과정에서 LOAD·PLAY를 재전송하지 않는다.
+- production Worker 격리 세션과 `streaming=false`·`recording=false` 가짜 OBS binding 두 개로 LOAD→PLAY→PAUSE→PLAY→VOLUME→STOP을 검증했다. lease 대상만 재생·정지했고 추가 페이지는 source-detached·paused로 남았다. 실제 방송·녹화·실제 OBS 조작은 시작하지 않았다.
+- 전체 자동 검증은 `742/742`였고, 최종 OBS 경계 집중 회귀 `18/18`도 통과했다. 집중 회귀는 stale heartbeat 무저장 처리, scene-inactive 경로 보존, 중복 후보 song boundary, hidden source LOAD, control gap 무재생 복구, active socket close의 상태-only 전이와 same-player 복원을 포함한다.
+- 공개 v0.2.33에서 검색 결과 drag→review, drag 취소의 durable mutation 0, 이전 재생곡 drop의 재생 0, 320px overflow 0을 확인했다. 노래책 행 클릭은 즉시 review panel을 열었고, 3개 Speaker 탭은 서로 독립적으로 재생했으며 한 탭 reload 뒤 나머지 두 탭의 시간이 계속 전진했다. 이 Speaker 검증의 session HTTP 요청과 Worker WebSocket은 모두 0이었다.
+- release commit `99a621b5352027d20075a7776481769dda3ea7ca`, Pages workflow `29977321000`, build job `89111772404`, deploy job `89111947797`, deployment `5566498219`가 성공했다. Actions artifact와 공개 CDN의 실제 게시 파일은 크기·SHA-256 `21/21` exact match다.
+- 30초 cadence는 표시와 player 위치의 관찰 전용이다. 곡 중 seek·restart·playbackRate·route 전환·WebSocket 재연결을 만들지 않고, 이전 곡의 strong-stop 뒤 다음 run만 `position: 0`에서 시작한다. 실제 모바일 OS background/PiP와 물리 장치 청취, 사용자 OBS monitoring 청취, 별도 명시 승인 뒤 G5, 같은-clock performer-monitoring G6는 코드 완료와 별도의 운영 관문이다.
