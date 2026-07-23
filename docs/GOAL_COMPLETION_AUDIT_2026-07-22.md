@@ -4,22 +4,22 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.36이다. Speaker 자연 종료는 성공한 재생을 내부 오류로 바꾸지 않고 완료 source만 비파괴적으로 정리하며, 사용자 화면은 브라우저·통신·플레이어 내부 코드 대신 현재 언어의 다음 행동을 표시한다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. OBS 곡 경계는 같은 run의 강한 정지를 확인한 뒤에만 현재 곡을 완료·폐기하고 다음 곡을 시작하며, 정지 증거가 늦어져도 목록이나 경로를 자동 절단하지 않는다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.38이다. Speaker는 탭마다 독립적인 일반 웹 플레이어이며 모바일형 창 전환·BFCache 복귀와 브라우저/기기 pause가 OBS 경로 검사나 서버 연결로 재생을 잠그지 않는다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. OBS 곡 경계는 같은 run의 강한 정지를 확인한 뒤에만 현재 곡을 완료·폐기하고 다음 곡을 시작하며, 정지 증거가 늦어져도 목록이나 경로를 자동 절단하지 않는다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
 | 사용자 목표 | 로컬 후보 | 공개 배포 | 남은 증거 |
 |---|---|---|---|
 | 앱을 열면 스피커로 바로 시작 | 완료 | v0.2.26 공개 배포됨 | 모바일 OS별 백그라운드 수동 확인 |
-| Speaker를 일반 웹 플레이어처럼 사용 | 완료 | v0.2.35 공개 자연 종료·비파괴 source 정리·내부 오류 비노출 통과 | 모바일 OS별 백그라운드 수동 확인 |
+| Speaker를 일반 웹 플레이어처럼 사용 | 완료 | v0.2.38 공개 3탭·모바일형 lifecycle·사용자 pause 복구·서버 경로 0 통과 | 모바일 OS별 백그라운드 수동 확인 |
 | 잠금 화면·알림·헤드셋의 Speaker 제어 | 자동 계약 완료 | v0.2.26 공개 배포됨 | 실제 지원 모바일에서 수동 확인 |
-| Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | v0.2.18 실제 3탭 통과 | v0.2.18 실제 3탭·재생·reload 통과 | 모바일 OS별 백그라운드·PiP 수동 확인 |
+| Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | v0.2.18 실제 3탭 통과 | v0.2.38 모바일형 3탭에서 두 독립 곡·유휴 탭·창 전환 통과 | 모바일 OS별 백그라운드·PiP 수동 확인 |
 | Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | v0.2.26 공개 배포·자동 재확인 | 없음 |
 | Speaker 감상 볼륨과 OBS 방송 gain 분리 | 운영 연결 자동 검증 완료 | v0.2.29 공개 배포·34/60 reload 유지 | 물리 OBS mixer 청취 |
 | Speaker 유휴·검색이 방송 세션/제어 연결을 만들지 않음 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 없음 |
 | Speaker 로컬 파일이 OBS 선택 전 서버 없이 즉시 재생 | production-browser 실측 완료 | v0.2.15 공개 URL 재확인 | 실제 OBS 업로드 뒤 Speaker 복귀 청취 |
 | 지원 브라우저에서 Speaker 출력 장치 선택·탈착 복구 | v0.2.22 자동·모사 브라우저 검증 완료 | v0.2.22 배포·공개 자산 확인 | 실제 지원 장치에서 물리 청취 확인 |
-| 기기·브라우저 일시정지 뒤 같은 Speaker 곡을 사용자가 복구 | 의도/물리 상태·이벤트 순서 계약 + production Chrome 통과 | v0.2.32 공개 Chrome 통과 | 실제 Android/iOS 백그라운드·잠금 화면 확인 |
+| 기기·브라우저 일시정지 뒤 같은 Speaker 곡을 사용자가 복구 | 의도/물리 상태·이벤트 순서 계약 + production Chrome 통과 | v0.2.38 공개 모바일형 3탭에서 같은 source·위치·44px 명시 복구 통과 | 실제 Android/iOS 백그라운드·잠금 화면 확인 |
 | OBS만 엄격한 단일 송출 경로 사용 | 자동 검증 + G3 기계 관측 + G4 완료 | v0.2.26 공개 배포됨 | 사용자 청취·G5, G6 장치 경로 개선·재검증 |
 | 확립된 OBS 경로가 추가 소스·장면 숨김 때문에 역으로 끊기지 않음 | 정확한 lease 대상 보존 계약 + production Worker 격리 2-player + 실제 OBS CEF 중복 후보 진입·이탈 완료 | v0.2.36 공개 Dashboard·production Worker·실제 OBS 통과 | 없음 |
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
@@ -32,10 +32,10 @@
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.35 공개 언어 전환·reload·내부 오류 번역 경계·3화면×4폭 통과 | 없음 |
-| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.29 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.38 공개 artifact exact match·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.36` / release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`까지 성공적으로 배포됐다. Pages workflow `29982114310`, build job `89125971819`, deploy job `89126157653`, deployment `5567403732`가 success이며 clean Ubuntu에서 751개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px와 금발 선을 통과했고 HTTP 오류와 warm long task는 0이었다. 공개 Speaker 유휴·로컬 재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame과 Worker host 요청도 모두 0이었다. OBS 곡 경계는 `정지 의도 → 동일 run STOP → strong-stop → 완료/폐기 → 다음 LOAD` 순서를 사용하고 8초 증거 지연이나 첫 STOP 유실 시 현재 곡과 다음 곡 예약을 보존한 채 명시적 재요청을 제시한다. 실제 OBS 30.2.0에서 공개 Dashboard와 production Worker를 사용해 A곡 스킵, B곡 자연 종료, C곡 폐기를 연속 실행했고 세 경로 모두 strong-stop 뒤에만 다음 LOAD 또는 idle을 확정했다. 같은 구성에서 A곡 재생 중 두 번째 OBS-compatible player를 연결했다가 닫아도 기존 lease target·audible 상태·곡 제목이 유지됐고, 추가 player는 standby·source-detached·media command 0건으로 남았다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 OBS player runtime은 변경·재배포하지 않았고 실제 방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 남은 실물 관문은 사용자 청취·G5·같은 clock 경로 G6와 실제 모바일 백그라운드·장치 조합이다.
+현재 공개 Pages는 `0.2.38` / release commit `470336d26b590a894f211c2f8bec0c046226bc7d`까지 성공적으로 배포됐다. Pages workflow `29986334214`, build job `89138906346`, deploy job `89139151813`, deployment `5568189673`가 success이며 clean Ubuntu에서 752개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 `21/21` exact match를 확인했다. 공개 Speaker는 390px 곡 검토의 overflow 0·44px 일반 클릭 재생을 통과했고, 같은 모바일형 브라우저의 세 탭에서 두 독립 Blob 곡과 한 유휴 탭을 동시에 유지했다. 창 전환과 hidden/visible·persisted pagehide/pageshow 뒤 같은 source와 위치가 계속 전진했고, 기기 pause 모사 뒤에는 자동 재생하지 않은 채 같은 곡의 44px `계속 재생`만 제시했다. 세 탭 전체의 Worker host 요청, session HTTP, session WebSocket, 송신 frame, page error, console error, 경로 경고와 가로 overflow는 모두 0이었다. 로컬 제목 분석 API의 GitHub Pages CORS도 `204 / POST, OPTIONS / Content-Type`으로 복구됐다. OBS 곡 경계와 확립 lease 보존은 v0.2.36 실제 OBS 증거를 그대로 유지하며 v0.2.38은 OBS runtime과 production Worker를 변경하지 않았다. 30초 cadence도 계속 observation-only라 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. 이번 검증은 실제 OBS·방송·녹화를 시작하지 않았고, 남은 실물 관문은 사용자 청취·G5·같은 clock 경로 G6와 실제 Android/iOS 백그라운드·PiP·장치 조합이다.
 
 ### v0.2.36 실제 OBS 3곡 경계 인수 — 2026-07-23
 
@@ -55,6 +55,15 @@
 - 추가 player를 닫은 뒤 player/후보 수는 다시 1이 됐고 동일 lease target·audible lease·playing run이 유지됐다. 이어 실행한 A 스킵은 STOP `26` → strong-stop `30` → B LOAD `32`, B 자연 종료는 ended `53` → STOP `54` → strong-stop `60` → C LOAD `62`, C 폐기는 STOP `80` → strong-stop `84` 순서로 통과했다.
 - page·console error는 0건이고 session은 HTTP 410으로 종료됐다. 합격 결과는 `D:\Agents\rekasong\Codex\artifacts\obs-dashboard-duplicate-v0236-20260723-152400\status.json`에 credential 없이 보존했다.
 - 시험 전·중 runtime은 `streaming=false`, `recording=false`였다. OBS 완료 로그 `2026-07-23 15-22-55.txt`의 Streaming/Recording Start·Stop은 모두 0건이다. 원래 scene collection은 백업과 전체 파일 SHA-256 `6c56fe4804fa0fc65cf50fc65fa64525562a4ef8d65152681bee0f0fe94050d0`으로 바이트 exact match 복원했고, Browser URL도 길이 `214`·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`, source 1개, visible item 1개, `Control audio via OBS=true`, handoff 잔여 0건을 재확인했다.
+
+### v0.2.37–v0.2.38 공개 Speaker 모바일형 lifecycle 인수 — 2026-07-23
+
+- v0.2.36 공개 검증에서 로컬 곡은 계속 재생됐지만 `rekasong.pages.dev/api/extract-local`의 JSON preflight가 `Content-Type` 허용 없이 거절되는 배포 결함을 발견했다. v0.2.37은 AI·KV·stream을 만들기 전에 OPTIONS를 204로 끝내고 실제 SSE에도 같은 CORS 계약을 적용했다. 대표 주소와 고유 배포 주소가 모두 `POST, OPTIONS`, `Content-Type`, max-age `86400`을 반환했다.
+- API가 정상 진행되자 390px 곡 검토 화면에서 제목 입력과 AI 카드의 고유 최소 폭이 페이지를 463px로 넓히고 활성 `재생` 버튼 클릭을 방해하는 UI 결함이 드러났다. v0.2.38은 정보·폼·입력·AI 카드를 부모 폭 안으로 축소하고 도움말 줄바꿈과 44px 조작면을 보장한다. 공개 검증은 viewport 390px, overflow 0, 모든 요소 containment와 10초 이내 일반 클릭→실제 재생을 통과했다.
+- 같은 공개 v0.2.38을 모바일 UA·touch·390×844의 같은-origin 세 탭으로 열었다. A와 B는 서로 다른 24초 Blob 곡을 동시에 재생했고 유휴 C는 media graph를 만들지 않았다. 다른 탭을 foreground로 바꿔도 A와 B의 source는 바뀌지 않고 둘 다 전진했다.
+- A에 hidden/visible, persisted pagehide/pageshow, resume, focus를 연속 전달해도 source가 유지되고 별도 PLAY 없이 시간이 전진했다. 이어 물리 pause를 모사하자 같은 위치에서 멈추고 복귀 이벤트가 자동 PLAY를 만들지 않았으며, 44px `계속 재생`을 눌렀을 때만 같은 source·run이 전진했다. 이 동안 B는 중단 없이 계속 재생됐다.
+- 세 탭의 Worker host 요청, session HTTP, session WebSocket, 송신 frame, page error, console error, `송출 경로 확인 필요` 계열 경고와 overflow는 전부 0이었다. 결과는 `D:\Agents\rekasong\Codex\artifacts\speaker-mobile-lifecycle-v0236-20260723-153403\status.json`, release exact match는 `D:\Agents\rekasong\Codex\artifacts\release-v0238-20260723-155400\public-exact-match.json`에 보존했다.
+- 이 검증은 앱 쪽 mobile lifecycle 계약의 자동 근거다. 실제 Android/iOS의 OS suspension, 잠금 화면, PiP, Bluetooth/유선 장치 전환을 대체하지 않으며 해당 수동 관문은 계속 열어 둔다. 실제 OBS·방송·녹화는 시작하지 않았다.
 
 ### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 
@@ -298,10 +307,10 @@
 
 ## 7. 배포 완료와 다음 관문
 
-1. 현재 공개 frontend는 `0.2.34` / `8d3e0cafa1b0fab6b48a0d976ab0b84c806ca4c4`다. Pages workflow `29979715853`의 build job `89118818558`과 deploy job `89118984303`이 성공하고 deployment `5566950851`가 같은 product SHA를 가리킨다.
-2. GitHub Pages clean install·744개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. Speaker 기기-pause 복구와 자연 종료, 내부 코드 비노출, 서버 경로 0을 확인했다. v0.2.34 Actions artifact와 공개 파일은 21/21 exact match다.
+1. 현재 공개 frontend는 `0.2.38` / `470336d26b590a894f211c2f8bec0c046226bc7d`다. Pages workflow `29986334214`의 build job `89138906346`과 deploy job `89139151813`이 성공하고 deployment `5568189673`가 같은 product SHA를 가리킨다.
+2. GitHub Pages clean install·752개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. Speaker 모바일 곡 검토 클릭, 3탭 독립 재생, lifecycle 유지, 기기-pause 명시 복구와 서버 경로 0을 확인했다. v0.2.38 Actions artifact와 공개 파일은 21/21 exact match다.
 3. 실제 OBS G3, G4, source hide/show, 5분 scene 전환, CEF 60분 재생을 통과했다.
-4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했고, 공개 3탭 독립 재생·reload도 v0.2.18에서 통과했다. 다음 수동 관문은 모바일 Speaker 백그라운드·잠금 화면/PiP 조작과 실제 출력 장치 전환·청취다.
+4. 공개 Speaker 기본값·출력 버튼·언어 전환·곡 클릭·drag와 3탭 독립 재생을 자동화했다. v0.2.38은 모바일형 hidden/visible·BFCache형 pagehide/pageshow·기기 pause의 무자동재생·명시 복구까지 통과했다. 다음 수동 관문은 실제 Android/iOS 백그라운드·잠금 화면/PiP 조작과 실제 출력 장치 전환·청취다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
 6. `graphify-out/`은 제품 커밋과 배포에 포함하지 않는다.
 7. v0.2.17의 새-ID 완전 초기화는 로컬과 production 실제 브라우저+Worker에서 무자동재생까지 통과했다.
@@ -358,8 +367,8 @@
 
 | 사용자 요구사항 | 현재 판정 | 직접 증거 |
 |---|---|---|
-| Speaker는 경로 확인이 필요 없는 일반 웹 플레이어 | 코드·공개본 확인 | 기본값 Speaker, 탭 소유 로컬 `PlaybackEngine`, 공개 재생 중 session HTTP·Worker WebSocket 0. 공개 3탭이 독립 재생했고 한 탭 reload 뒤 나머지 두 탭이 계속 전진했다. |
-| Speaker가 기기/페이지 전환 뒤 막히지 않고 사용자가 복구 가능 | 코드·공개본 확인 | 같은 source·위치를 보존한 `계속 재생` 행동, 자동 재생·새 run·Worker 연결 없음. 공개 Chrome 물리 pause→복귀→사용자 재개 통과. |
+| Speaker는 경로 확인이 필요 없는 일반 웹 플레이어 | 코드·공개본 확인 | 기본값 Speaker, 탭 소유 로컬 `PlaybackEngine`, 공개 모바일형 3탭의 Worker/session/WebSocket/frame 0. 두 곡이 독립 전진하고 유휴 탭은 media graph를 만들지 않았다. |
+| Speaker가 기기/페이지 전환 뒤 막히지 않고 사용자가 복구 가능 | 코드·공개본 확인 | hidden/visible·persisted pagehide/pageshow 뒤 같은 source·위치 유지. 기기 pause 뒤 자동 재생·새 run·Worker 연결 없이 44px `계속 재생`으로만 복구했다. |
 | OBS는 한 번 확립된 연결을 관찰 오류가 끊지 않음 | 코드·자동·실제 OBS 확인 | stale heartbeat, scene-inactive, 후보 0/2, control gap에서 기존 lease 보존. 실제 OBS 재생 중 두 번째 eligible 후보 진입·이탈에서도 lease·곡·리모컨 유지, 추가 player source-detached·media command 0. |
 | OBS가 같은 player 복귀 시 스스로 회복 | 코드·자동 확인 | `player_hello`에서 같은 `playerInstanceId` lease 복원, LOAD/PLAY 재전송 없이 surviving playback proof 수용. |
 | YouTube 검색/목록을 하나로 묶고 Setlink·Meloming 순서 유지 | 코드·공개본 확인 | 상위 탭 `YouTube → Setlink → Meloming`, YouTube 내부 `검색 → 목록`; 공개 production smoke 통과. |
@@ -368,7 +377,7 @@
 | 곡 클릭에 즉시 상호작용 제공 | 공개본 확인 | 공개 노래책 행 클릭이 review panel을 열고, 검색 결과 클릭도 review 단계로 이동함. |
 | 곡을 지금 재생/대기열/이전 재생곡으로 drag | 공개본 확인 | 공개 drag smoke에서 review, 취소 mutation 0, 이전 재생곡 drop 재생 0, 320px overflow 0을 확인함. 현재 곡은 drop으로 갑자기 끊지 않음. |
 | 모든 새 텍스트를 번역 가능한 구조로 설계 | 코드·자동 확인 | 한국어/영어 병합 catalog key·placeholder parity, source literal guard, pseudo-locale 3화면×4폭 통과. |
-| 앱이 무거워지지 않음 | build·공개본 확인 | Dashboard `377.58kB raw / 103.44kB gzip`, OBS closure `384,105B raw / 118,430B gzip`; warm long task 0, 공개 warm DCL `20.3ms`. |
+| 앱이 무거워지지 않음 | build·공개본 확인 | Dashboard `382.37kB raw / 104.62kB gzip`, CSS `63.85kB / 12.00kB`, OBS closure `384,105B raw / 118,426B gzip`; 30곡 Blob 수명과 공개 artifact 21/21 exact match. |
 | 30초 단위 관찰이 반주를 흔들거나 경로를 재연결하지 않음 | 코드·자동 확인 | position만 30초 cadence로 관찰하며 command 0. 곡 중 seek·restart·playbackRate·route 전환·reconnect 금지, 다음 run만 0초에서 시작. |
 
 ### OBS 절단 조건 감사

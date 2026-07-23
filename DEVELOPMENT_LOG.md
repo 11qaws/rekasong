@@ -4,7 +4,8 @@
 
 - v0.2.37 공개 API 복구 뒤 실제 제목 분석이 계속 진행되는 동안 390px 모바일 곡 검토 화면을 재검증하자, 제목 입력란과 AI 카드의 고유 최소 너비가 패널보다 넓어져 브라우저 layout viewport를 390px에서 463px로 확장했다. 화면 밖 입력란이 `재생` 버튼의 정상 포인터 판정을 가로막아 버튼은 활성으로 보이면서도 일반 클릭이 30초 넘게 전달되지 않았다.
 - 곡 정보·제목 폼·입력 래퍼·AI 카드가 부모 폭 안에서 축소되도록 `width/min-width/max-width` 경계를 명시하고, 도움말은 긴 번역에서도 줄바꿈되게 했다. 모바일 `재생` 조작면은 최소 44px로 고정했다. 공개 화면에 CSS를 임시 주입한 사전 검증에서 viewport가 정확히 390px로 복원되고 입력·AI 카드가 패널 안에 들어왔으며 Playwright 일반 클릭으로 즉시 같은 로컬 곡이 재생됐다.
-- `dashboard-speaker-network-smoke.mjs`는 이제 실제 390×844 곡 검토 화면에서 문서 overflow 0, 폼·AI 카드·입력 containment, 44px 조작면과 `elementFromPoint` 직접 클릭 가능성을 먼저 검사한 뒤에만 재생을 진행한다. 번역 문구·Speaker transport·OBS runtime·Worker protocol은 변경하지 않았다.
+- `dashboard-speaker-network-smoke.mjs`는 이제 실제 390×844 곡 검토 화면에서 문서 overflow 0, 폼·AI 카드·입력 containment, 44px 조작면을 검사하고 10초 안의 일반 사용자 클릭이 실제 재생으로 이어질 때만 통과한다. 제목 분석 문구가 갱신되며 버튼이 이동하는 단일 프레임의 `elementFromPoint` 결과는 진단값으로만 남기고 성공 판정으로 쓰지 않는다. 번역 문구·Speaker transport·OBS runtime·Worker protocol은 변경하지 않았다.
+- release commit `470336d26b590a894f211c2f8bec0c046226bc7d`의 Pages workflow `29986334214`, build `89138906346`, deploy `89139151813`, deployment `5568189673`가 성공했다. Cloudflare Pages 고유 배포는 `a9dff7d5.rekasong.pages.dev`다. 공개 artifact는 CDN과 `21/21` exact match이고, 공개 390px 일반 클릭 재생과 모바일형 3탭 독립 재생·창 전환·persisted pagehide/pageshow·기기 pause 무자동재생·44px 명시 복구를 통과했다. 세 탭의 Worker/session/WebSocket/frame, page/console error, 경로 경고와 overflow는 전부 0이었다. 실제 OBS·방송·녹화는 시작하지 않았다.
 
 ## 2026-07-23 (Codex) — v0.2.37 공개 로컬 파일 제목 추출 CORS 복구
 

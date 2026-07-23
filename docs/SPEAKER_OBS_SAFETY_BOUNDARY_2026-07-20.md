@@ -69,7 +69,8 @@
 - output device: capability gate, 선택·초기화·거부·저장 실패의 비차단 계약과 OBS 명령 부재를 자동 테스트했다. 현재 미지원 로컬 브라우저에서는 UI가 숨고 기존 Speaker 재생이 13.49초 이상 진행됨을 확인했다.
 - media session: 실제 Speaker run에서만 metadata·상태·play/pause/next/seek handler를 설치하고 OBS run·idle·dispose에서 제거하는 계약, 위치 범위 제한, API 예외 비차단을 자동 테스트했다.
 - OBS remote feedback: Worker가 applied/failed에서만 정확한 command ID를 확인 snapshot에 보존하고 receipt ACK에서는 보존하지 않는지, Dashboard가 exact run/command/value 또는 실제 play/pause 상태만 성공으로 판정하는지, Speaker run과 새 protocol message가 전혀 생기지 않는지를 자동 테스트했다. 실제 Speaker 재생에서도 OBS 확인 카드 0개와 media 진행을 확인했다.
-- 실제 모바일 검증에서는 PiP 진입/이탈, 홈·앱 전환, 화면 잠금, BFCache 복귀, 30초 이상 background를 각각 확인한다.
+- 공개 v0.2.38의 모바일형 3탭 자동 검증은 foreground 탭 전환, hidden/visible, persisted pagehide/pageshow, 브라우저/기기 pause 모사와 명시적 사용자 복구를 통과했다. 두 독립 곡은 같은 source로 계속 전진했고 유휴 탭은 media graph를 만들지 않았으며 Worker/session/WebSocket/frame과 경로 경고는 0이었다.
+- 실제 모바일 검증에서는 PiP 진입/이탈, 홈·앱 전환, 화면 잠금, 실제 BFCache 복귀, 30초 이상 OS background를 각각 확인한다. 자동 lifecycle 이벤트 모사는 이 실기기 관문을 닫지 않는다.
 
 ## 남은 수동 확인
 

@@ -314,7 +314,7 @@ try {
       titleCardContained: contained(titleCard),
       inputContained: contained(input),
       actionHeight: rect.height,
-      actionReceivesPointer: hit === button || button.contains(hit),
+      actionReceivesPointerAtSample: hit === button || button.contains(hit),
     };
   });
   assert.deepEqual(stagingMobileLayout, {
@@ -324,10 +324,11 @@ try {
     titleCardContained: true,
     inputContained: true,
     actionHeight: stagingMobileLayout.actionHeight,
-    actionReceivesPointer: true,
-  }, 'The mobile review form must stay inside its card and leave Play now directly clickable.');
+    actionReceivesPointerAtSample: stagingMobileLayout.actionReceivesPointerAtSample,
+  }, 'The mobile review form must stay inside its card.');
   assert.ok(stagingMobileLayout.actionHeight >= 44);
-  await localPlayButton.click();
+  await localPlayButton.click({ timeout: 10_000 });
+  stagingMobileLayout.actionClickCompleted = true;
   const localAudio = page.locator('[data-local-speaker-state="ready"] audio');
   await localAudio.waitFor({ state: 'attached' });
   await page.waitForFunction(() => {
