@@ -844,3 +844,12 @@
 - 공개 v0.2.33에서 검색 결과 drag→review, drag 취소의 durable mutation 0, 이전 재생곡 drop의 재생 0, 320px overflow 0을 확인했다. 노래책 행 클릭은 즉시 review panel을 열었고, 3개 Speaker 탭은 서로 독립적으로 재생했으며 한 탭 reload 뒤 나머지 두 탭의 시간이 계속 전진했다. 이 Speaker 검증의 session HTTP 요청과 Worker WebSocket은 모두 0이었다.
 - release commit `99a621b5352027d20075a7776481769dda3ea7ca`, Pages workflow `29977321000`, build job `89111772404`, deploy job `89111947797`, deployment `5566498219`가 성공했다. Actions artifact와 공개 CDN의 실제 게시 파일은 크기·SHA-256 `21/21` exact match다.
 - 30초 cadence는 표시와 player 위치의 관찰 전용이다. 곡 중 seek·restart·playbackRate·route 전환·WebSocket 재연결을 만들지 않고, 이전 곡의 strong-stop 뒤 다음 run만 `position: 0`에서 시작한다. 실제 모바일 OS background/PiP와 물리 장치 청취, 사용자 OBS monitoring 청취, 별도 명시 승인 뒤 G5, 같은-clock performer-monitoring G6는 코드 완료와 별도의 운영 관문이다.
+
+## 2026-07-23 (Codex) — 30초 관찰 정책과 운영 장비 가용성 재감사
+
+- Graphify로 position cadence, Dashboard 표시 anchor, 새 곡 run boundary, OBS route 생명주기를 다시 추적했다. 30초 위치 증거는 화면 기준점만 바꾸고 플레이어 명령 권한으로 연결되지 않으며, 새 `runId`는 이전 곡 시간을 상속하지 않고 0초에서 시작한다.
+- 관련 집중 회귀 `250/250`을 통과했다. 5분 재생의 위치 이벤트는 9건, playback command는 0건이었고 stale heartbeat, scene inactive, 중복 후보, same-player reconnect, 다음 곡 LOAD에서도 established route를 유지했다.
+- 측정된 장치 drift를 30초로 환산하면 약 `0.79~0.88ms`인데 30초 관측 jitter p95는 `2.486~3.224ms`였다. 따라서 주기마다 seek·restart·속도 보정을 하는 방식은 실제 오차보다 큰 측정 흔들림을 쫓을 수 있어 채택하지 않는다. 고정 offset은 곡 경계 재정렬과 별도인 monitoring 경로 문제다.
+- 공개 Pages를 다시 열어 기본 `스피커 송출 중`, 주요 소스 순서와 console warning/error 0을 확인했다. 공개 HTTP HEAD는 200이고 workflow `29977321000`의 product SHA·build·deploy는 success 상태다.
+- 현재 PC에는 ADB가 없고, 오디오 endpoint도 온보드 speaker와 별도 USB FIFINE mic 조합이다. VB-Audio Cable은 플레이어 drift 격리 증거일 뿐 실제 performer-monitoring 합격을 대신하지 않는다. 실기기 모바일 관문과 같은-clock/저지연 인터페이스 G6는 새 장비 경로에서 수행해야 한다.
+- 실제 방송·녹화·재생·OBS 설정 변경은 하지 않았다. 미검증 운영 관문은 사용자에게 남은 행동을 알리는 근거이며, established route나 정상 MR을 자동 차단하는 조건으로 사용하지 않는다.

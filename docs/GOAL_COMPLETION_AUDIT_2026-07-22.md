@@ -365,3 +365,14 @@
 - 방송·녹화 OFF 상태의 실제 OBS 중복 Browser Source 수동 확인은 가짜 binding 회귀를 보강하는 운영 관문이다.
 - 플랫폼 비공개 방송/VOD G5는 별도 명시 승인 전 실행하지 않는다.
 - 같은 audio clock 또는 저지연 performer-monitoring 경로의 곡 단위 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계 결과를 대체할 새 물리 증거가 필요하다.
+
+## 14. 30초 관찰 정책과 현재 운영 환경 재감사 — 2026-07-23
+
+- 30초 cadence 관련 집중 회귀 250개를 다시 실행했다. 5분 연속 재생은 `30~270초`의 위치 관찰 9건만 전송했고 playback command는 0건이었다. lifecycle은 즉시 전달하고, 현재 곡의 seek·restart·`playbackRate`·route 전환·WebSocket 재연결은 만들지 않으며 새 `runId`만 기본 `position: 0`에서 시작한다.
+- 현재 물리 결과의 10분 drift `15.5~17.32ms/590초`를 단순 환산하면 30초당 약 `0.79~0.88ms`다. 반면 실제 30초 관측 변화 p95는 물리 경로 `2.486ms`, 가상 케이블 경로 `3.224ms`였다. 따라서 30초마다 강제 보정하면 실제 누적 drift보다 큰 관측 jitter를 따라 반주를 흔들 가능성이 높다.
+- 30초 재기준화는 처음부터 존재하는 고정 offset을 없애지 못한다. 물리 경로 `43.25ms`와 가상 케이블 격리 경로 `85.797ms`는 시작 경계의 monitoring·장치 지연 문제이며, 같은 audio clock 경로 또는 검증된 저지연 monitoring 구성에서 별도로 맞춰야 한다.
+- 공개 Pages를 새 브라우저에서 다시 열어 기본 `스피커 송출 중`, YouTube 단일 상위 소스와 `검색 → 플레이리스트`, Setlink, 멜로밍을 확인했다. console warning/error는 0이었고 HTTP HEAD는 200이었다. Pages workflow `29977321000`의 product SHA `99a621b5352027d20075a7776481769dda3ea7ca`, build·deploy job은 계속 success다.
+- 현재 PC에는 ADB와 연결된 모바일 자동화 경로가 없다. 실제 Android/iOS background·PiP·잠금 화면 관문은 이 환경에서 대체 증거를 만들 수 없다.
+- 현재 오디오 endpoint는 온보드 `Speakers (High Definition Audio Device)`와 별도 USB `FIFINE K670 Microphone` 조합이며, VB-Audio Virtual Cable은 격리 측정용으로 존재한다. 마이크와 헤드폰 출력이 같은 clock을 쓰는 오디오 인터페이스는 확인되지 않았다. 같은 조합의 G6를 반복하는 것은 이미 확인한 시작 offset 실패·5분 drift 경계를 새 증거로 바꾸지 않는다.
+- 최종 G6는 마이크와 헤드폰을 같은 인터페이스 또는 저지연 direct-monitor 경로에 두고, OBS 48kHz·Browser `Monitor and Output`·마이크 `Monitor Off` 또는 direct monitor로 구성한 뒤 방송·녹화 OFF를 먼저 확인한다. 그 다음 로컬 분리 track 5분 한 곡과 짧은 반복만 기록해 offset `±20ms`, drift `≤10ms`, jitter p95 `≤5ms`를 기존 분석기로 판정한다.
+- 이번 재감사에서는 실제 방송·녹화·재생·OBS 설정 변경을 실행하지 않았다. G5는 계속 별도 명시 승인 전 금지하며, G6 실패 또는 미검증 상태도 established OBS route와 정상 MR 재생을 차단하지 않는다.
