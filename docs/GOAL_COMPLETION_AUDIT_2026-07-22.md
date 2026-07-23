@@ -25,7 +25,7 @@
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작·활성 곡 control socket 단절 후 조작 복구 완료 | v0.2.26 공개 배포됨 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 운영 Worker 연결 자동 검증 완료 | v0.2.29 공개 배포됨 | 실제 OBS 화면 수동 확인 |
-| OBS 스킵·자연 종료·폐기 뒤 이전 음원이 멎기 전에 다음 곡을 시작하지 않음 | 동일 run strong-stop 장벽·지연/유실/중복 증거 회귀 완료 | v0.2.36 공개 배포·artifact exact match | 실제 OBS에서 방송·녹화 OFF 수동 곡 경계 확인 |
+| OBS 스킵·자연 종료·폐기 뒤 이전 음원이 멎기 전에 다음 곡을 시작하지 않음 | 동일 run strong-stop 장벽·지연/유실/중복 증거 회귀 + 실제 OBS 3곡 경계 완료 | v0.2.36 공개 배포·artifact exact match·실제 공개 Dashboard/OBS 통과 | 없음 |
 | OBS 오디오를 건드리지 않고 평상시 위치 관측만 30초로 제한 | 5분·4Hz 모사 1,200→9 + 실제 CEF 302.5초 position 10회, 자동 media 명령 0 | v0.2.26 공개 player 실제 OBS 통과 | 없음 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | v0.2.26 공개 배포·긴 문구 시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
@@ -35,7 +35,17 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.29 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.36` / release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`까지 성공적으로 배포됐다. Pages workflow `29982114310`, build job `89125971819`, deploy job `89126157653`, deployment `5567403732`가 success이며 clean Ubuntu에서 751개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px와 금발 선을 통과했고 HTTP 오류와 warm long task는 0이었다. 공개 Speaker 유휴·로컬 재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame과 Worker host 요청도 모두 0이었다. OBS 곡 경계는 `정지 의도 → 동일 run STOP → strong-stop → 완료/폐기 → 다음 LOAD` 순서를 사용하고 8초 증거 지연이나 첫 STOP 유실 시 현재 곡과 다음 곡 예약을 보존한 채 명시적 재요청을 제시한다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 OBS player runtime은 변경·재배포하지 않았고 실제 OBS·방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, v0.2.36의 실제 OBS 곡 경계 수동 확인, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.36` / release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`까지 성공적으로 배포됐다. Pages workflow `29982114310`, build job `89125971819`, deploy job `89126157653`, deployment `5567403732`가 success이며 clean Ubuntu에서 751개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 manifest를 제외한 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px와 금발 선을 통과했고 HTTP 오류와 warm long task는 0이었다. 공개 Speaker 유휴·로컬 재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame과 Worker host 요청도 모두 0이었다. OBS 곡 경계는 `정지 의도 → 동일 run STOP → strong-stop → 완료/폐기 → 다음 LOAD` 순서를 사용하고 8초 증거 지연이나 첫 STOP 유실 시 현재 곡과 다음 곡 예약을 보존한 채 명시적 재요청을 제시한다. 실제 OBS 30.2.0에서 공개 Dashboard와 production Worker를 사용해 A곡 스킵, B곡 자연 종료, C곡 폐기를 연속 실행했고 세 경로 모두 strong-stop 뒤에만 다음 LOAD 또는 idle을 확정했다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 OBS player runtime은 변경·재배포하지 않았고 실제 방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 남은 실물 관문은 사용자 청취·G5·같은 clock 경로 G6와 실제 모바일 백그라운드·장치 조합이다.
+
+### v0.2.36 실제 OBS 3곡 경계 인수 — 2026-07-23
+
+- 공개 Dashboard, production Worker, 실제 OBS 30.2.0 전용 test profile·scene·Browser Source를 사용했다. CEF player는 정확히 하나였고 runtime은 시험 전·중 `streaming=false`, `recording=false`였다.
+- A곡 스킵은 STOP frame `24` → 동일 run exact strong-stop `28` → B곡 LOAD `30` 순서였다. A곡 제목은 정지 확인 중에도 화면에 남았다.
+- B곡 자연 종료는 ended evidence `51` → STOP `53` → exact strong-stop `57` → C곡 LOAD `60` 순서였다. 자연 종료 역시 B곡 제목을 strong-stop까지 보존했다.
+- C곡 폐기는 STOP `78` → exact strong-stop `81` 뒤에만 최종 idle이 됐다. page error와 console error는 0건이고 session은 HTTP 410으로 종료됐다.
+- Browser Source URL은 원본 길이 `214`·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`와 exact match로 복원했다. Browser source 1개, `Control audio via OBS=true`, visible source 1개, 임시 handoff와 원자 교체 잔여 0건을 확인했다.
+- OBS를 원본 상태로 다시 열어 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`을 확인했다. 완료 run 로그 `2026-07-23 14-54-51.txt`의 Streaming/Recording Start·Stop은 모두 0건이다. 실제 방송과 녹화는 시작하지 않았다.
+- credential을 제외한 합격 결과는 `D:\Agents\rekasong\Codex\artifacts\obs-dashboard-boundary-v0236-20260723-145413\status.json`에 보존했다. 이 인수는 사용자 monitoring 청취, 플랫폼 ingest/VOD G5, 같은-clock performer monitoring G6를 대신하지 않는다.
 
 ### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 

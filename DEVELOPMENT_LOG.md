@@ -891,3 +891,13 @@
 - release commit `743dcd4f6a87a7dcdabaaf2ab153c8a778922e97`, Pages workflow `29982114310`, build job `89125971819`, deploy job `89126157653`, deployment `5567403732`가 성공했다. clean Ubuntu에서 751개 테스트·lint·Worker 문법·build·pseudo-locale·30곡 Blob 수명·OBS bundle·publish를 통과했다.
 - Actions artifact에서 manifest를 제외한 공개 대상 21개를 내려받고 공개 CDN에서 다시 수집해 크기와 SHA-256 `21/21` exact match를 확인했다. 공개 smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 금발 선을 통과했고 HTTP 오류·legacy ntfy·warm long task는 0이었다.
 - 공개 Speaker fixture의 유휴·로컬 재생·페이지 수명·기기 pause 복구를 통과했다. 전 구간의 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다. 실제 OBS·음악·점검음·방송·녹화는 시작하지 않았다.
+
+## 2026-07-23 (Codex) — v0.2.36 실제 OBS 3곡 경계 인수
+
+- 공개 Dashboard `https://11qaws.github.io/rekasong/`, production Worker, 실제 OBS 30.2.0의 전용 `Rekasong_Local_Record_Test_20260722 / Scene / Browser`를 한 경로로 묶어 스킵·자연 종료·폐기를 연속 검증했다. OBS CEF player는 정확히 하나였고 시험 전·중 runtime attestation은 계속 `streaming=false`, `recording=false`였다.
+- A곡 스킵은 outgoing STOP frame `24` 뒤 동일 run의 exact strong-stop `28`을 받은 다음에만 B곡 LOAD `30`을 보냈다. B곡 자연 종료는 ended evidence `51` → STOP `53` → exact strong-stop `57` → C곡 LOAD `60` 순서였다. C곡 폐기는 STOP `78` → exact strong-stop `81` 뒤에만 Dashboard idle로 확정됐다.
+- 화면은 A·B의 정지 확인 중에도 현재 곡 제목을 보존했고, 마지막 폐기 뒤 현재 곡 없음으로 돌아왔다. page error와 console error는 각각 0건이었으며 종료 session은 HTTP 410이었다. 즉 스킵·자연 종료·폐기 어느 경로도 strong-stop보다 먼저 이력·다음 LOAD·idle을 낙관적으로 확정하지 않았다.
+- 첫 두 실행은 제품 결함이 아니라 인수 harness의 자동 다음 곡 체크 조작 결함으로 중단됐다. 첫 실행은 닫힌 `<details>` 안의 숨은 checkbox를 Playwright가 누르지 못했고, 두 번째 실행은 DOM property를 직접 바꿔 React controlled state를 갱신하지 못했다. 세 번째 실행은 설정 상세를 실제로 열고 checkbox를 클릭해 같은 제품 경로를 끝까지 통과했다. 모든 중단 run도 session HTTP 410으로 정리했다.
+- 합격 증거는 `D:\Agents\rekasong\Codex\artifacts\obs-dashboard-boundary-v0236-20260723-145413\status.json`에 credential 없이 보존했다. 시험 뒤 Browser Source URL은 원본 길이 `214`·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`와 exact match로 복원했고, Browser source 1개·`Control audio via OBS=true`·visible source 1개를 확인했다. handoff와 원자 교체 `.next`/`.rollback` 잔여는 0건이다.
+- OBS를 원본 source로 다시 열어 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`을 확인했다. 완료 run 로그 `2026-07-23 14-54-51.txt`의 Streaming/Recording Start·Stop은 모두 0건이다. 실제 방송과 녹화는 시작하지 않았다.
+- 이번 단계는 배포된 v0.2.36을 외부에서 인수한 문서·검증 작업이며 제품 source, version, Worker, 공개 artifact를 바꾸지 않는다. 30초 cadence도 계속 화면 기준 재고정과 관찰만 수행하며 곡 중 seek·restart·속도 변경을 만들지 않는다. 남은 실물 관문은 사용자 monitoring 청취, 명시적 승인 뒤 G5, 같은-clock performer 경로 G6, 실제 모바일 백그라운드·장치 조합이다.
