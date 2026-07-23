@@ -874,3 +874,6 @@
 - 전체 `749/749` 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, pseudo-locale 3화면×4폭, 로컬 production smoke, Speaker network/lifecycle/interruption smoke, OBS bundle 예산을 통과했다.
 - 로컬 브라우저에서 기본 Speaker, 320/375/768/1100px, 한국어→영어→reload, 320px 영문 설정, 금발 선, 주요 소스 순서를 확인했다. Speaker 유휴·재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame은 모두 0이었다.
 - build는 Dashboard `378.31kB raw / 103.67kB gzip`, Speaker lazy chunk `8.34kB / 2.85kB`다. OBS closure는 `384,105B raw / 118,424B gzip / 103,700B brotli`로 예산 안이며 Worker·OBS runtime·방송/녹화 제어·30초 관찰 정책은 변경하지 않았다.
+- release commit `2ce37ae45851f9314e29c1b3612cc272a5345627`, Pages workflow `29980592766`, build job `89121348032`, deploy job `89121502137`, deployment `5567109650`가 성공했다. clean Ubuntu의 749개 테스트·lint·Worker 문법·build·pseudo-locale·30곡 Blob 수명·OBS bundle·publish를 모두 통과했다.
+- Actions artifact에서 manifest를 제외한 공개 대상 21개를 내려받고 공개 CDN에서 다시 수집해 크기와 SHA-256 `21/21` exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 금발 선을 통과했고 HTTP 오류와 warm long task는 0이었다.
+- 공개 Speaker fixture는 유휴·재생·페이지 수명·기기 pause 복구·자연 종료를 통과했다. 성공한 자연 종료 뒤 내부 코드가 표시되지 않았고 전 구간의 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다. 실제 OBS·방송·녹화는 시작하지 않았다.

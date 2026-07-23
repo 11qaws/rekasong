@@ -4,14 +4,14 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.34다. Speaker 자연 종료는 성공한 재생을 내부 오류로 바꾸지 않고 완료 source만 비파괴적으로 정리하며, 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.35다. Speaker 자연 종료는 성공한 재생을 내부 오류로 바꾸지 않고 완료 source만 비파괴적으로 정리하며, 사용자 화면은 브라우저·통신·플레이어 내부 코드 대신 현재 언어의 다음 행동을 표시한다. 한 번 확립된 OBS lease는 추가 Browser Source가 나타나거나 현재 장면에서 후보가 잠시 보이지 않아도 정확한 기존 플레이어를 대상으로 재생·리모컨·다음 곡을 유지한다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
 | 사용자 목표 | 로컬 후보 | 공개 배포 | 남은 증거 |
 |---|---|---|---|
 | 앱을 열면 스피커로 바로 시작 | 완료 | v0.2.26 공개 배포됨 | 모바일 OS별 백그라운드 수동 확인 |
-| Speaker를 일반 웹 플레이어처럼 사용 | 완료 | v0.2.34 공개 자연 종료·비파괴 source 정리 통과 | 모바일 OS별 백그라운드 수동 확인 |
+| Speaker를 일반 웹 플레이어처럼 사용 | 완료 | v0.2.35 공개 자연 종료·비파괴 source 정리·내부 오류 비노출 통과 | 모바일 OS별 백그라운드 수동 확인 |
 | 잠금 화면·알림·헤드셋의 Speaker 제어 | 자동 계약 완료 | v0.2.26 공개 배포됨 | 실제 지원 모바일에서 수동 확인 |
 | Speaker 탭·창 수에 앱 경로 제한이 없고 서로 막지 않음 | v0.2.18 실제 3탭 통과 | v0.2.18 실제 3탭·재생·reload 통과 | 모바일 OS별 백그라운드·PiP 수동 확인 |
 | Speaker 화면에서 단일 경로·다른 탭 제어 경고 제거 | 완료 | v0.2.26 공개 배포·자동 재확인 | 없음 |
@@ -30,11 +30,11 @@
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
-| 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.26 공개 언어 전환·reload·3화면×4폭 긴 문구 통과 | 없음 |
+| 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.35 공개 언어 전환·reload·내부 오류 번역 경계·3화면×4폭 통과 | 없음 |
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.29 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.34` / release commit `8d3e0cafa1b0fab6b48a0d976ab0b84c806ca4c4`까지 성공적으로 배포됐다. Pages workflow `29979715853`과 deployment `5566950851`가 success이며 clean Ubuntu에서 744개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 출력별 음량, 기기-pause 복구와 4초 자연 종료를 통과했고 성공한 자연 종료 뒤 `observer_reentry` 같은 내부 코드가 나타나지 않았다. Speaker 유휴·재생·페이지 수명·복구·자연 종료의 session HTTP/WebSocket/frame과 Worker host 요청은 모두 0이었다. production Worker 격리 검증에서는 가짜 OBS 페이지 두 개가 동시에 연결된 동안 lease 대상만 LOAD→PLAY→PAUSE→PLAY→VOLUME→STOP을 수행하고 추가 페이지는 source-detached·paused로 남았다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 실제 OBS runtime은 변경·재배포하지 않았고 실제 방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.35` / release commit `2ce37ae45851f9314e29c1b3612cc272a5345627`까지 성공적으로 배포됐다. Pages workflow `29980592766`과 deployment `5567109650`가 success이며 clean Ubuntu에서 749개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. Actions artifact에서 실제 배포 대상 21개를 내려받아 공개 CDN과 바이트·SHA-256 exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 기기-pause 복구와 자연 종료를 통과했고 내부 코드가 나타나지 않았다. Speaker 유휴·재생·페이지 수명·복구·자연 종료의 session HTTP/WebSocket/frame과 Worker host 요청은 모두 0이었다. production Worker 격리 검증에서는 가짜 OBS 페이지 두 개가 동시에 연결된 동안 lease 대상만 LOAD→PLAY→PAUSE→PLAY→VOLUME→STOP을 수행하고 추가 페이지는 source-detached·paused로 남았다. 30초 cadence는 계속 observation-only이며 곡 중간 seek·restart·속도 변경·재연결을 하지 않는다. production Worker와 실제 OBS runtime은 변경·재배포하지 않았고 실제 방송·녹화도 시작하지 않았다. 실제 OBS CEF 60분과 별도 5분 가상 케이블 증거는 유지되며, 사용자 청취·G5·같은 clock 경로 G6는 별도 관문으로 남는다.
 
 ### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 
@@ -394,3 +394,5 @@
 - source guard는 live UI의 `error.message` 재도입을 차단한다. 단위·계약·전체 회귀는 `749/749`, pseudo-locale은 3개 화면×4개 폭에서 overflow 0, 로컬 production smoke와 Speaker network/lifecycle/interruption smoke를 통과했다.
 - Dashboard는 `378.31kB raw / 103.67kB gzip`, Speaker lazy chunk는 `8.34kB / 2.85kB`, OBS closure는 `384,105B raw / 118,424B gzip / 103,700B brotli`다. Worker와 OBS runtime은 변경하지 않았고, 실제 방송·녹화도 시작하지 않았다.
 - 30초 cadence는 계속 관찰 전용이다. 곡 시작 때 `position: 0`으로 기준을 잡고 곡 안에서는 seek·restart·playbackRate·route 재연결을 만들지 않으며 다음 곡의 새 run에서 다시 기준을 잡는다.
+- release commit `2ce37ae45851f9314e29c1b3612cc272a5345627`, Pages workflow `29980592766`, build `89121348032`, deploy `89121502137`, deployment `5567109650`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
+- 공개 production smoke와 Speaker fixture에서 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 기기 pause 복구, 자연 종료, 내부 코드 비노출을 확인했다. Speaker 전 구간의 session HTTP/WebSocket/frame과 Worker host 요청은 0이었고 실제 OBS·방송·녹화는 시작하지 않았다.
