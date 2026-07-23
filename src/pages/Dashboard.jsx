@@ -2018,9 +2018,9 @@ export default function Dashboard() {
     if (entry.song?.type === 'youtube' && getYoutubeOutputSafety(entry) !== 'safe') {
       throw new Error(prepareBlockMessage(songPrepareState(entry.song, prepareStatesRef.current)));
     }
-    // 진실성 게이트(모든 재생 시작 경로 공통 — 대기열 바로 재생·재시도·자동 다음
-    // 곡 포함): player 위젯이 실제로 연결돼 있지 않으면 run 을 만들지 않는다.
-    // 모든 호출자가 catch→토스트로 처리한다.
+    // OBS만 실제 player route가 확정돼야 한다. Speaker는 이 탭의 로컬 controller가
+    // 담당하므로 OBS 후보·lease·heartbeat가 없어도 대기열·재시도·자동 다음 곡을
+    // 정상적으로 시작한다. 각 호출자는 실제 media 준비 실패만 catch→토스트로 처리한다.
     const runOutputMode = outputMode === 'obs' || outputMode === 'speaker'
       ? outputMode
       : outputModePreference === 'obs' ? 'obs' : 'speaker';

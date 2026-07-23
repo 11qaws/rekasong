@@ -807,3 +807,10 @@
 - release commit `db81d3fb9cad7b224a56a4f0c1f54480eab0ec03`의 Pages workflow `29973743516`에서 build job `89101069580`과 deploy job `89101240107`이 성공했다. 내려받은 Actions artifact의 배포 파일 21/21은 공개 CDN과 바이트·SHA-256 exact match였다.
 - 실제 OBS의 전용 시험 profile은 방송·녹화 OFF 상태였다. Browser Source 설정은 public `/widget`, production Worker, protocol 2, `Control audio via OBS=true`, enabled/unmuted, volume 1, Monitor and Output 구성이었고 OBS CEF child에서 production Worker DNS 주소로 established TCP 연결 하나를 확인했다. credential을 노출하지 않는 1회 read-only 존재하지 않는 asset 요청은 `404`여서 세션과 player credential의 유효성을 확인했다. 이 점검에서는 LOAD/PLAY, 녹화, 송출을 실행하지 않았다.
 - 30초 cadence는 계속 관찰 전용이다. `setInterval` 자체나 화면 시계로 오디오를 보정하지 않고 media/audio clock에서 상대 오차만 기록한다. 곡 중간 seek·restart·rate 변경·연결 재수립을 금지하며, 자연 종료 후 다음 곡의 새 run을 `position: 0`으로 시작할 때만 기준점을 다시 만든다.
+
+## 2026-07-23 (Codex) — v0.2.31 Speaker 보존형 페이지 수명과 번역 가능한 썸네일
+
+- YouTube 검색 결과에 썸네일이 없거나 이미지 로드가 실패할 때 `via.placeholder.com`에 외부 요청을 보내고 `No Image`를 영어로 고정하던 경로를 제거했다. 앱 번들 안의 작은 무문자 SVG data URL로 대체하고 이미지 대체 텍스트는 `search.youtube.thumbnailAlt` 한국어·영어 semantic key로 제공한다.
+- 로컬 Speaker 브라우저 smoke에 `visibilitychange`와 `pagehide(persisted=true)`를 실제 재생 중 합성하는 수명 회귀를 추가했다. 같은 Blob source가 유지되고 media time이 계속 진행하며 paused=false, session HTTP/WebSocket/frame=0인 것을 함께 판정한다. 이 검증은 앱 자체가 보존형 전환을 이유로 재생을 멈추거나 경로를 다시 연결하지 않는다는 증거이며, 실제 Android/iOS의 OS background 정책을 대신하지 않는다.
+- Graphify가 가리킨 `beginPlaybackRun`의 오래된 “모든 출력 player 연결 필수” 주석을 현재 계약에 맞게 바로잡았다. OBS만 authoritative route proof가 필요하고 Speaker는 탭 소유 local controller로 대기열·재시도·자동 다음 곡을 수행한다.
+- 검증: 전체 `734/734`, 검색/locale/Speaker focused `17/17`, lint 신규 오류 0, Worker 문법, production build, pseudo-locale 3화면×4폭 overflow 0, local production Dashboard smoke, Speaker network/lifecycle smoke, OBS closure budget을 통과했다. Dashboard는 `375.46kB raw / 102.85kB gzip`, CSS는 `62.57kB raw / 11.79kB gzip`; OBS closure는 `384,105B raw / 118,427B gzip / 103,811B brotli`다.

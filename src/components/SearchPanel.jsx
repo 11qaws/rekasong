@@ -8,6 +8,10 @@ import { readTitleEventStream } from '../lib/titleStream';
 import { normalizeSongDragCandidate, SONG_DRAG_DATA_TYPE } from '../lib/songDragAction';
 import { getAppMessage as t } from '../copy/appMessages';
 
+const YOUTUBE_THUMBNAIL_FALLBACK = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 68"><rect width="120" height="68" rx="8" fill="#e7ecea"/><circle cx="60" cy="34" r="18" fill="#1d5d51" opacity=".14"/><path d="M55 23v24l17-12z" fill="#1d5d51"/></svg>',
+)}`;
+
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
 
 async function readYoutubeTitle(videoId, signal) {
@@ -517,10 +521,13 @@ export default function SearchPanel({
               aria-label={t('search.result.select', { title: v.title })}
             >
               <img 
-                src={v.thumbnail || 'https://via.placeholder.com/120x68/333/fff?text=No+Image'} 
-                alt="thumbnail" 
+                src={v.thumbnail || YOUTUBE_THUMBNAIL_FALLBACK}
+                alt={t('search.youtube.thumbnailAlt', { title: v.title })}
                 className="result-thumb" 
-                onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/120x68/333/fff?text=No+Image'; }}
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = YOUTUBE_THUMBNAIL_FALLBACK;
+                }}
               />
               <div className="result-info">
                 <div className="result-title">{v.title}</div>

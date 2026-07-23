@@ -31,6 +31,8 @@ test('YouTube search and playlists share one top-level source before Setlink and
   assert.match(source, /role="tablist"[\s\S]*?search\.youtube\.mode\.search[\s\S]*?search\.youtube\.mode\.playlist/);
   assert.match(source, /lastYoutubeTabRef/);
   assert.doesNotMatch(source, />유튜브 검색</);
+  assert.match(source, /alt=\{t\('search\.youtube\.thumbnailAlt'/);
+  assert.doesNotMatch(source, /via\.placeholder\.com|alt="thumbnail"/);
   assert.match(source, /platform === 'youtube-playlist'[\s\S]*?search\.import\.source\.youtubePlaylist/);
   assert.match(source, /storedSetlinkName === 'Setlink 공개 목록'/);
 

@@ -176,7 +176,7 @@ try {
       title: 'Speaker demand fixture',
       channelTitle: 'Rekasong test',
       durationText: '1:00',
-      thumbnail: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="120" height="68"/%3E',
+      thumbnail: '',
       skipAiTitleExtraction: true,
     }]),
   }));
@@ -277,7 +277,7 @@ try {
   await page.locator('.song-composer input[type="file"][accept]').setInputFiles({
     name: 'speaker-local-first.wav',
     mimeType: 'audio/wav',
-    buffer: createWavFixture(),
+    buffer: createWavFixture({ durationSeconds: 4 }),
   });
   await page.locator('.staging-panel').waitFor({ state: 'visible' });
   const localPlayButton = page.locator('.staging-action-buttons .go-live-btn').first();
@@ -289,6 +289,46 @@ try {
     const audio = document.querySelector('[data-local-speaker-state="ready"] audio');
     return audio && audio.paused === false && audio.currentTime > 0.05;
   });
+  const lifecycleBefore = await localAudio.evaluate((audio) => ({
+    currentTime: audio.currentTime,
+    source: audio.currentSrc || audio.src,
+  }));
+  const lifecycleEvent = await page.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    let pageHideEvent;
+    if (typeof PageTransitionEvent === 'function') {
+      pageHideEvent = new PageTransitionEvent('pagehide', { persisted: true });
+    } else {
+      pageHideEvent = new Event('pagehide');
+      Object.defineProperty(pageHideEvent, 'persisted', { value: true });
+    }
+    window.dispatchEvent(pageHideEvent);
+    return { persisted: pageHideEvent.persisted === true };
+  });
+  await page.waitForTimeout(300);
+  const lifecycleAfter = await localAudio.evaluate((audio) => ({
+    currentTime: audio.currentTime,
+    paused: audio.paused,
+    source: audio.currentSrc || audio.src,
+  }));
+  const speakerLifecycleEvidence = {
+    eventPersisted: lifecycleEvent.persisted,
+    mediaAdvanced: lifecycleAfter.currentTime > lifecycleBefore.currentTime,
+    mediaPaused: lifecycleAfter.paused,
+    sourcePreserved: lifecycleAfter.source === lifecycleBefore.source,
+    sessionHttpRequests: sessionHttpRequests.length,
+    sessionSockets: sessionSockets.length,
+    sessionSocketFramesSent,
+  };
+  assert.deepEqual(speakerLifecycleEvidence, {
+    eventPersisted: true,
+    mediaAdvanced: true,
+    mediaPaused: false,
+    sourcePreserved: true,
+    sessionHttpRequests: 0,
+    sessionSockets: 0,
+    sessionSocketFramesSent: 0,
+  }, 'Visibility and persisted pagehide signals must not pause, detach, or reconnect Speaker playback.');
   const persistedAfterLocalPlay = await page.evaluate(({ sharedKey, tabKey }) => (
     `${localStorage.getItem(sharedKey) || ''}${sessionStorage.getItem(tabKey) || ''}`
   ), {
@@ -342,6 +382,16 @@ try {
   await page.locator('.search-form button[type="submit"]').click();
   const source = page.locator(`[data-song-drag-source="${VIDEO_ID}"]`);
   await source.waitFor({ state: 'visible' });
+  const thumbnailEvidence = await source.locator('.result-thumb').evaluate((image) => ({
+    alt: image.alt,
+    source: image.currentSrc || image.src,
+  }));
+  assert.equal(thumbnailEvidence.alt, 'Thumbnail for Speaker demand fixture');
+  assert.match(
+    thumbnailEvidence.source,
+    /^data:image\/svg\+xml,/,
+    'A missing YouTube thumbnail must use the local data image without a third-party request.',
+  );
   await page.waitForTimeout(300);
   assert.equal(sessionHttpRequests.length, 0, 'Searching alone must not create a media session.');
   assert.equal(sessionSockets.length, 0, 'Searching alone must not create an OBS control socket.');
@@ -452,9 +502,11 @@ try {
     targetUrl: appUrl,
     idleEvidence,
     localFileEvidence,
+    speakerLifecycleEvidence,
     searchOnly: {
       sessionHttpRequests: 0,
       sessionSockets: 0,
+      thumbnailEvidence,
     },
     stagedEvidence,
     persistedSessionReloadEvidence,

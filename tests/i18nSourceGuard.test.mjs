@@ -44,7 +44,7 @@ test('live Dashboard surfaces cannot add hardcoded Korean user copy', async () =
 });
 
 test('live Dashboard surfaces cannot hardcode accessibility, placeholder, toast, or confirm copy', async () => {
-  const visibleAttribute = /(?:title|aria-label|aria-description|placeholder)=["']([^"']*[A-Za-z가-힣][^"']*)["']/g;
+  const visibleAttribute = /(?:alt|title|aria-label|aria-description|placeholder)=["']([^"']*[A-Za-z가-힣][^"']*)["']/g;
   const imperativeCopy = /(?:showToast|window\.confirm|confirm)\(\s*['"`]([^'"`]*[A-Za-z가-힣][^'"`]*)['"`]/g;
 
   for (const relativePath of LIVE_USER_SURFACES) {
