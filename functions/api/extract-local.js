@@ -1,8 +1,18 @@
 import { extractSongTitle, isFallbackGeminiKey, isUsableSongTitle, normalizeSongTitle, selectGeminiApiKey } from './gemini.js';
 import { getCachedTitle, putCachedTitle } from './title-cache.js';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '86400',
+};
+
 export async function onRequest(context) {
   const { request, env } = context;
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
 
   // SSE 설정을 위한 스트림 생성
   const { readable, writable } = new TransformStream();
@@ -101,7 +111,7 @@ Return JSON only. The field must be the canonical composition title alone:
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      ...corsHeaders,
     }
   });
 }

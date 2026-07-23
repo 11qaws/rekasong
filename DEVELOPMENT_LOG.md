@@ -1,5 +1,11 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.37 공개 로컬 파일 제목 추출 CORS 복구
+
+- 공개 v0.2.36을 모바일형 3탭 Speaker 생명주기 하네스로 검증하던 중, 로컬 파일 자체는 정상 재생됐지만 GitHub Pages 오리진에서 `rekasong.pages.dev/api/extract-local`로 보내는 JSON POST의 사전 요청이 `Content-Type` 허용 헤더 없이 거절되는 배포 결함을 재현했다. 파일명 fallback 때문에 음악은 유지됐지만 선택적 제목 분석은 매번 실패하고 브라우저 오류 3건을 남겼다.
+- `extract-local` Pages Function에 `POST, OPTIONS`와 `Content-Type`을 명시한 공통 CORS 응답을 추가했다. OPTIONS는 AI·KV·스트림을 시작하기 전에 204로 끝나며, 실제 SSE 응답에도 동일한 오리진·메서드·헤더 계약을 붙였다. Speaker의 재생·출력·OBS 경로는 변경하지 않았다.
+- 새 `pagesApiCors.test.mjs`가 실제 GitHub Pages 오리진과 소문자 `content-type` 사전 요청을 보내 204와 전체 CORS 계약을 검사한다. v0.2.37 후보는 전체 752/752 테스트, lint 신규 오류 0(기존 Gemini 경고 2), Worker·Function 문법, production build와 OBS bundle 예산을 통과했다. 공개 API·GitHub Pages 배포와 모바일형 3탭 재검증 근거는 배포 완료 뒤 이 항목에 추가한다.
+
 ## 2026-07-23 (Codex) — v0.2.28 Speaker 로컬 파일 장시간 수명 관문
 
 - 기존 제품에는 완료 이력의 로컬 `blob:` 원본을 최근 5개·합계 256MiB까지만 유지하고 현재 재생·대기열은 건드리지 않는 수명 정책이 있었지만, 순수 함수와 2개 파일 복구 smoke만으로는 장시간 반복 사용에서 React 적용→최신 참조 재확인→`URL.revokeObjectURL` 순서까지 증명하지 못했다. 제품 차단을 추가하지 않고 실제 production build 브라우저 검증을 배포 관문으로 승격했다.
