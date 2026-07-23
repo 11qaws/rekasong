@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.26이다. OBS 오디오는 건드리지 않고 평상시 위치 관측만 30초로 낮추고 Dashboard 표시를 로컬 보간하는 runtime 변경이 공개됐다. 이후 새 v0.2.26 player를 받은 실제 OBS CEF에서 302.5초 재생과 30초 position 10회를 직접 계수해 cadence 관문도 통과했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.27이다. v0.2.26의 30초 관측 runtime과 바이트가 같은 상태에서 실제 OBS CEF cadence 검증 도구의 비방송 fail-closed 경계와 판정만 강화했다. 새 v0.2.26 player를 받은 실제 OBS CEF에서 302.5초 재생과 30초 position 10회를 직접 계수해 cadence 관문도 통과했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -32,7 +32,15 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.26 공개 예산 통과·기존 60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.26` / release commit `ccac98477871f01a6625f90056535a9a9687ca33`까지 성공적으로 배포됐다. Pages workflow `29966902022`와 deployment `5564569384`가 success이며 clean Ubuntu에서 724개 테스트·pseudo-locale layout·OBS bundle 예산을 통과했다. 공개 `index.html`, entry, Dashboard, `OnAirPlayerV2-DgWroZwz.js`, protocol 자산은 Actions artifact와 바이트·SHA-256이 정확히 일치한다. v0.2.26은 일반 재생의 위치 telemetry만 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 새 player를 받은 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.27` / release commit `b23ca23d69ca61c823d85c0a91b7aa0145e78064`까지 성공적으로 배포됐다. Pages workflow `29968661755`와 deployment `5564872415`가 success이며 clean Ubuntu에서 730개 테스트·pseudo-locale layout·OBS bundle 예산을 통과했다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256이 전부 일치한다. 핵심 runtime 자산은 v0.2.26과 동일한 hash이며 이번 버전은 검증 harness·테스트·문서만 바꾼다. 일반 재생의 위치 telemetry는 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 새 player를 받은 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+
+### v0.2.27 실제 CEF cadence 검증 안전화 — 2026-07-23
+
+- 실제 CEF harness는 현재 OBS status의 `streaming=false`·`recording=false`를 관측하기 전에는 upload·activation하지 않고, 재생 중에도 같은 조건을 계속 검사한다. 방송·녹화 명령 surface는 없다.
+- 공개 v0.2.26 player의 302.5초 실제 OBS run은 position 10회, 최소 간격 `30,025ms`, wall 오차 `132ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. 30초 관측은 리모컨 표시 기준만 갱신하며 음원 seek·restart·속도 변경·재연결을 하지 않는다.
+- 시험 전·중·후 UI와 최종 로그에서 Streaming/Recording Start·Stop 0을 확인했고, Browser Source 설정을 원본 SHA-256과 exact match로 복원했다.
+- commit `b23ca23d69ca61c823d85c0a91b7aa0145e78064`, Pages workflow `29968661755`, deployment `5564872415`가 성공했다. public 21개 파일이 Actions artifact와 exact match였고 runtime hash는 v0.2.26과 동일했다.
+- 공개 smoke는 기본 Speaker와 320~1100px 한·영 UI를 통과했다. HTTP 오류·ntfy 요청 0, warm DCL `23.4ms`, long task 0, JS heap `7,944,864B`였고 media·OBS route·방송·녹화를 시작하지 않았다.
 
 ### v0.2.26 공개 배포·30초 위치 관측 — 2026-07-23
 

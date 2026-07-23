@@ -8,6 +8,7 @@
 - 이 10회는 오디오를 30초마다 다시 맞춘 결과가 아니라 리모컨 기준을 갱신한 관측이다. 실제 재생은 곡의 브라우저 오디오 시계 하나로 연속 진행했고 관측 때문에 생긴 seek·restart·속도 변경·재연결은 0건이었다. 따라서 리모컨 표시는 최대 30초마다 절대 위치를 다시 잡되 반주는 건드리지 않는 제품 계약을 실제 CEF에서도 확인했다.
 - 시험 전후 OBS UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 최종 로그 `2026-07-23 08-58-30.txt`의 Streaming/Recording Start·Stop은 모두 0건이다. OBS를 정상 종료한 뒤 Browser Source 설정은 원본 SHA-256 `6c56fe4804fa0fc65cf50fc65fa64525562a4ef8d65152681bee0f0fe94050d0`과 바이트 단위로 복원했고 임시 handoff와 원자 교체 잔여 파일도 0건임을 확인했다.
 - 제품 runtime과 사용자 문구는 바꾸지 않았다. 전체 `730/730` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker·harness 문법, production build, pseudo-locale 3화면×4폭과 OBS bundle 예산을 통과했다. OBS 정적 경로는 이전 공개본과 같은 `384,105B raw / 118,427B gzip / 103,644B brotli`다. 이번 버전은 실제 인수 harness의 비방송 안전 경계와 cadence 판정만 강화하며, 사용자 청취·플랫폼 ingest/VOD(G5)·같은-clock performer monitoring(G6)은 별도 관문으로 유지한다.
+- v0.2.27 commit `b23ca23d69ca61c823d85c0a91b7aa0145e78064`의 Pages workflow `29968661755`와 deployment `5564872415`가 성공했다. clean Ubuntu에서 730 tests·lint·Worker 문법·build·pseudo-locale·OBS bundle·artifact upload·deploy를 모두 통과했다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256이 전부 일치했고, 핵심 runtime hash는 v0.2.26과 동일했다. 공개 smoke는 기본 Speaker, 두 출력 버튼, YouTube/Setlink/Meloming, 한·영 reload, 320/375/768/1100px, 320px 영문 설정과 금발 선을 통과했다. HTTP 오류·ntfy 요청 0, warm DCL `23.4ms`, warm long task 0, JS heap `7,944,864B`였으며 음악·OBS route·방송·녹화를 시작하지 않았다.
 
 ## 2026-07-23 (Codex) — v0.2.26 OBS 30초 위치 관측과 리모컨 로컬 보간
 
