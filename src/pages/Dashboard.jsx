@@ -39,8 +39,10 @@ import {
 } from '../lib/localObsAsset';
 import { apiUrl } from '../lib/api';
 import {
-  isConfirmedDiscardSnapshot,
-  isConfirmedDiscardStop,
+  OBS_PENDING_STOP_ACTIONS,
+  isConfirmedPendingObsStop,
+  isConfirmedPendingObsStopSnapshot,
+  pendingObsStopAction,
 } from '../lib/dashboardPlaybackSafety';
 import {
   commitPlaybackOutputTransfer,
@@ -614,7 +616,10 @@ export default function Dashboard() {
   const togglePlaybackRef = useRef(null);
   const handleMediaFailureRef = useRef(null);
   const finalizeDiscardRef = useRef(null);
+  const finalizePendingObsStopRef = useRef(null);
+  const finalizedPendingObsStopKeyRef = useRef(null);
   const commitActivePhaseRef = useRef(null);
+  const commitPendingObsStopStateRef = useRef(null);
   const explicitSessionEndRequestedRef = useRef(false);
   const reportedMediaIssueRef = useRef(null);
   const reportedDelayRef = useRef(null);
@@ -911,8 +916,11 @@ export default function Dashboard() {
   }, [isPlaying, activeRunId, useOnAirPlayer]);
 
   const handleSeek = (time) => {
-    // finishing/discarding/failed 중 일반 탐색은 의미가 없거나 전이를 방해한다.
-    if (['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase)) return;
+    // finishing/discarding/stop_unconfirmed/failed 중 일반 탐색은 의미가
+    // 없거나 실제 OBS 정지 증거를 기다리는 전이를 방해한다.
+    if (['finishing', 'discarding', 'stop_unconfirmed', 'failed'].includes(
+      activeRef.current?.phase,
+    )) return;
     if (useOnAirPlayer) {
       try {
         const dispatchResult = dispatchPlaybackCommand({
@@ -2153,10 +2161,99 @@ export default function Dashboard() {
   };
   commitActivePhaseRef.current = commitActivePhase;
 
-  // finishing/discarding/failed는 의도가 확정된 상태라 일반 playing/paused
-  // 확인이 이를 되돌리지 못한다(§4-3 finishing 중 조작 제한, §4-4 discard 우선).
+  const commitPendingObsStopState = ({
+    marker,
+    action,
+    phase,
+    completionReason = null,
+    pendingNextEntryId = null,
+    requestDispatched = false,
+    failureDetail = null,
+  }) => {
+    setSharedState((previous) => {
+      const act = previous.active;
+      if (!act || act.entryId !== marker.entryId || act.runId !== marker.runId
+        || previous.currentEntry?.entryId !== marker.entryId) return previous;
+      return {
+        ...previous,
+        active: {
+          ...act,
+          phase,
+          pendingStopAction: action,
+          stopRequestDispatched: requestDispatched,
+          discardRequested: action === OBS_PENDING_STOP_ACTIONS.DISCARD,
+          pendingCompletionReason: action === OBS_PENDING_STOP_ACTIONS.COMPLETE
+            ? completionReason
+            : null,
+          pendingNextEntryId: action === OBS_PENDING_STOP_ACTIONS.COMPLETE
+            ? pendingNextEntryId
+            : null,
+          failureDetail,
+        },
+      };
+    });
+  };
+  commitPendingObsStopStateRef.current = commitPendingObsStopState;
+
+  // OBS의 곡 경계는 STOP을 보냈다는 사실만으로 확정하지 않는다. 현재 곡과
+  // 대기열을 그대로 둔 채 Protocol v2 강한 정지(일시정지+소스 해제+
+  // 자동재생 취소+비가청)를 기다린다. timeout/dispatch 실패도 재생 실패로
+  // 바꾸지 않고 사용자가 같은 정지를 다시 요청할 수 있는 상태로 남긴다.
+  const requestPendingObsStop = ({
+    marker,
+    action,
+    completionReason = null,
+    pendingNextEntryId = null,
+    retry = false,
+  }) => {
+    const snapshot = stateRef.current || {};
+    const act = activeRef.current;
+    if (!marker || !act || act.outputMode !== 'obs'
+      || act.entryId !== marker.entryId || act.runId !== marker.runId
+      || snapshot.currentEntry?.entryId !== marker.entryId) return false;
+
+    try {
+      sendOnAirCommand({
+        type: 'stop',
+        sessionId: marker.entryId,
+        runId: marker.runId,
+        ...(retry ? { retryStop: true } : {}),
+      });
+    } catch (error) {
+      const detail = userActionErrorMessage(
+        error,
+        t,
+        'playback.stopConfirmation.requestFailed',
+      );
+      commitPendingObsStopStateRef.current?.({
+        marker,
+        action,
+        phase: 'stop_unconfirmed',
+        completionReason,
+        pendingNextEntryId,
+        failureDetail: detail,
+      });
+      showToast(detail, 'error');
+      return false;
+    }
+
+    commitPendingObsStopState({
+      marker,
+      action,
+      phase: action === OBS_PENDING_STOP_ACTIONS.DISCARD ? 'discarding' : 'finishing',
+      completionReason,
+      pendingNextEntryId,
+      requestDispatched: true,
+    });
+    return true;
+  };
+
+  // finishing/discarding/stop_unconfirmed/failed는 의도가 확정된 상태라 일반
+  // playing/paused 확인이 이를 되돌리지 못한다.
   const isPhaseLocked = () =>
-    ['finishing', 'discarding', 'failed'].includes(activeRef.current?.phase);
+    ['finishing', 'discarding', 'stop_unconfirmed', 'failed'].includes(
+      activeRef.current?.phase,
+    );
 
   const handleConfirmedPlaying = (marker) => {
     if (!isCurrentRun(marker) || isPhaseLocked()) return;
@@ -2170,16 +2267,17 @@ export default function Dashboard() {
     commitActivePhase(marker, 'paused');
   };
 
-  // 실제 ended 확인 → completed 확정 → 다음 곡 승격.
-  // history 편입과 자동 다음 곡은 이 completed 전이 하나에서만 일어난다(INV-2/3/4).
-  // 승격 우선순위: 스킵/바로 재생이 예약한 pendingNextEntryId(§4-6 복합 명령)
-  // → autoPlayNext 설정 시 큐 첫 곡. finishing 중 ended는 예정 사유(skipped)로 완료.
-  const handleConfirmedEnded = (marker, completionReason = 'natural') => {
+  // 물리 정지가 이미 확인된 run만 completed로 확정하고 다음 곡을 승격한다.
+  // Speaker의 native ended는 그 자체가 정지 증거이고, OBS는 별도의 strong-stop
+  // 이벤트/스냅숏을 통과한 뒤에만 이 함수에 들어온다.
+  const finalizeConfirmedCompletion = (marker, completionReason = 'natural') => {
     if (!isCurrentRun(marker)) return;
     const act = activeRef.current;
-    // failed는 정상 종료가 아니다(§4-5) — 실패 확정 뒤 늦은 ended는 이력을 만들지 않는다.
+    // failed는 정상 종료가 아니다(§4-5) — 실패 확정 뒤 늦은 증거는 이력을 만들지 않는다.
     if (act?.phase === 'failed') return;
-    const confirmedReason = act?.phase === 'finishing'
+    const confirmedReason = pendingObsStopAction(act) === OBS_PENDING_STOP_ACTIONS.COMPLETE
+      ? (act.pendingCompletionReason || completionReason)
+      : act?.phase === 'finishing'
       ? (act.pendingCompletionReason || 'skipped')
       : completionReason;
     const snapshot = stateRef.current || {};
@@ -2202,7 +2300,7 @@ export default function Dashboard() {
         promoted = null;
       }
     }
-    if (!promoted) {
+    if (!promoted && act?.outputMode !== 'obs') {
       try {
         stopPlaybackOutput({
           stoppingEntryId: marker.entryId,
@@ -2214,6 +2312,19 @@ export default function Dashboard() {
         // 이미 끝난 곡이다 — 정지 명령 실패가 완료 처리를 막지 않는다.
         setIsPlaying(false);
       }
+    }
+    if (!promoted && act?.outputMode === 'obs') {
+      // Strong-stop proof already exists. Do not send a duplicate STOP or
+      // manufacture a second transport transition after the run was released.
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setDuration(0);
+      observeObsPlaybackProgress({
+        runId: marker.runId,
+        position: 0,
+        duration: 0,
+        status: 'stopped',
+      });
     }
 
     const finishedEntry = { ...snapshot.currentEntry, phase: 'completed', completionReason: confirmedReason };
@@ -2231,6 +2342,26 @@ export default function Dashboard() {
         queue: promotedIndex >= 0 ? [...q.slice(0, promotedIndex), ...q.slice(promotedIndex + 1)] : q,
         history: nextHistory
       };
+    });
+  };
+
+  // `ended` means that the OBS media reached its duration; it does not prove
+  // that the source was detached or that autoplay was cancelled. Speaker can
+  // complete immediately, while OBS first opens an explicit strong-stop
+  // transition and keeps the current song visible.
+  const handleConfirmedEnded = (marker, completionReason = 'natural') => {
+    if (!isCurrentRun(marker)) return;
+    const act = activeRef.current;
+    if (act?.phase === 'failed') return;
+    if (act?.outputMode !== 'obs') {
+      finalizeConfirmedCompletion(marker, completionReason);
+      return;
+    }
+    if (pendingObsStopAction(act)) return;
+    requestPendingObsStop({
+      marker,
+      action: OBS_PENDING_STOP_ACTIONS.COMPLETE,
+      completionReason,
     });
   };
 
@@ -2463,6 +2594,16 @@ export default function Dashboard() {
 
     const queue = snapshot.queue || [];
     const nextEntry = queue[0] || null;
+    const act = activeRef.current;
+
+    if (useOnAirPlayer && act?.outputMode === 'obs') {
+      return requestPendingObsStop({
+        marker: { entryId: act.entryId, runId: act.runId },
+        action: OBS_PENDING_STOP_ACTIONS.COMPLETE,
+        completionReason: 'skipped',
+        pendingNextEntryId: nextEntry?.entryId ?? null,
+      });
+    }
 
     let nextActive = null;
     try {
@@ -2577,7 +2718,7 @@ export default function Dashboard() {
     if (!snapshot.currentEntry) return false;
     const act = activeRef.current;
     if (act && act.entryId === snapshot.currentEntry.entryId) {
-      if (act.phase === 'finishing' || act.phase === 'discarding') return false; // 중복 스킵 방지
+      if (['finishing', 'discarding', 'stop_unconfirmed'].includes(act.phase)) return false;
       if (act.phase === 'failed') {
         showToast(t('dashboard.playback.failedActionRequired'), 'info');
         return false;
@@ -2611,26 +2752,18 @@ export default function Dashboard() {
     const current = stateRef.current?.currentEntry;
     if (!current) return;
     const act = activeRef.current;
-    if (act && act.entryId === current.entryId && act.phase === 'discarding') return;
+    if (act && act.entryId === current.entryId
+      && pendingObsStopAction(act) === OBS_PENDING_STOP_ACTIONS.DISCARD
+      && act.phase === 'discarding') return;
 
     if (useOnAirPlayer && playbackModeForRun() === 'obs') {
-      // Keep the song visible until the exact v2 strong-stop event proves that
-      // audio is paused, detached, autoplay-cancelled, and non-audible.
-      try {
-        sendOnAirCommand({
-          type: 'stop',
-          sessionId: current.entryId,
-          runId: act?.runId
-        });
-      } catch {
-        showToast(t('playback.discard.stopRequestFailed'), 'error');
-        return;
-      }
-      commitActivePhase(
-        { entryId: current.entryId, runId: act?.runId },
-        'discarding',
-        { discardRequested: true }
-      );
+      requestPendingObsStop({
+        marker: { entryId: current.entryId, runId: act?.runId },
+        action: OBS_PENDING_STOP_ACTIONS.DISCARD,
+        // Changing a pending completion into an explicit discard must be able
+        // to resend the same run-bound STOP after the first request stalled.
+        retry: pendingObsStopAction(act) !== null,
+      });
       return;
     } else if (useOnAirPlayer) {
       commitActivePhase(
@@ -2673,37 +2806,96 @@ export default function Dashboard() {
     finalizeConfirmedDiscard({ entryId: current.entryId, runId: act?.runId });
   };
 
+  const finalizeConfirmedPendingObsStop = (marker) => {
+    const act = activeRef.current;
+    if (!act || act.entryId !== marker.entryId || act.runId !== marker.runId) return;
+    const action = pendingObsStopAction(act);
+    if (!action) return;
+    // Worker snapshot and relayed player_event intentionally carry the same
+    // strong-stop proof. Both may reach this page before React commits the
+    // first completion, so claim the exact run synchronously before LOAD or
+    // history side effects. The action may change from completion to discard
+    // while STOP is pending, but one physically stopped run can finalize only
+    // once; a later run has a different key.
+    const finalizationKey = `${act.entryId}\u0000${act.runId}`;
+    if (finalizedPendingObsStopKeyRef.current === finalizationKey) return;
+    finalizedPendingObsStopKeyRef.current = finalizationKey;
+    if (action === OBS_PENDING_STOP_ACTIONS.COMPLETE) {
+      finalizeConfirmedCompletion(
+        marker,
+        act.pendingCompletionReason || 'natural',
+      );
+      return;
+    }
+    if (action === OBS_PENDING_STOP_ACTIONS.DISCARD) {
+      finalizeConfirmedDiscard(marker);
+    }
+  };
+  finalizePendingObsStopRef.current = finalizeConfirmedPendingObsStop;
+
+  const handleRetryPendingObsStop = () => {
+    const act = activeRef.current;
+    const action = pendingObsStopAction(act);
+    if (!act || act.phase !== 'stop_unconfirmed' || !action) return false;
+    return requestPendingObsStop({
+      marker: { entryId: act.entryId, runId: act.runId },
+      action,
+      completionReason: act.pendingCompletionReason || null,
+      pendingNextEntryId: act.pendingNextEntryId || null,
+      retry: true,
+    });
+  };
+
+  const pendingStopActionForTimeout = pendingObsStopAction(active);
   useEffect(() => {
-    if (active?.phase !== 'discarding' || !active.discardRequested) return undefined;
+    const action = pendingStopActionForTimeout;
+    if (!action || !['finishing', 'discarding'].includes(active?.phase)) return undefined;
     const marker = { entryId: active.entryId, runId: active.runId };
     const timeout = window.setTimeout(() => {
       const latest = activeRef.current;
-      if (!latest || latest.runId !== marker.runId || !latest.discardRequested
-        || latest.phase !== 'discarding') return;
-      commitActivePhaseRef.current?.(marker, 'failed', {
-        discardRequested: true,
-        failureDetail: t('playback.discard.confirmationTimeout')
+      const latestAction = pendingObsStopAction(latest);
+      if (!latest || latest.runId !== marker.runId || latestAction !== action
+        || !['finishing', 'discarding'].includes(latest.phase)) return;
+      const detail = t('playback.stopConfirmation.timeout');
+      commitPendingObsStopStateRef.current?.({
+        marker,
+        action,
+        phase: 'stop_unconfirmed',
+        completionReason: latest.pendingCompletionReason || null,
+        pendingNextEntryId: latest.pendingNextEntryId || null,
+        requestDispatched: latest.stopRequestDispatched === true,
+        failureDetail: detail,
       });
-      showToast(t('playback.discard.confirmationTimeout'), 'error');
+      showToast(detail, 'error');
     }, 8000);
     return () => window.clearTimeout(timeout);
-  }, [active?.discardRequested, active?.entryId, active?.phase, active?.runId, showToast]);
+  }, [
+    active?.entryId,
+    active?.phase,
+    active?.runId,
+    pendingStopActionForTimeout,
+    showToast,
+  ]);
 
   useEffect(() => {
     const latest = activeRef.current;
-    if (!isConfirmedDiscardSnapshot({
+    if (!isConfirmedPendingObsStopSnapshot({
       // Some coordinator snapshots expose the strong-stop proof at the root,
       // while the production driver keeps it in playerSnapshot. Use the same
-      // normalized authoritative observation as remote-control feedback so a
-      // missed relay cannot leave the UI stuck after audio is already stopped.
+      // normalized authoritative observation so a missed relay cannot leave
+      // any completion/discard intent stuck after audio is already stopped.
       confirmedPlayback: confirmedObsPlayback,
       active: latest,
       currentEntry: stateRef.current?.currentEntry
     })) return;
-    finalizeDiscardRef.current?.({ entryId: latest.entryId, runId: latest.runId });
+    finalizePendingObsStopRef.current?.({
+      entryId: latest.entryId,
+      runId: latest.runId,
+    });
   }, [
-    active?.discardRequested,
     active?.entryId,
+    active?.pendingStopAction,
+    active?.phase,
     active?.runId,
     confirmedObsPlayback,
     currentEntry?.entryId,
@@ -2743,6 +2935,35 @@ export default function Dashboard() {
       snapshot.currentEntry && act &&
       act.entryId === snapshot.currentEntry.entryId && act.phase === 'failed'
     );
+    if (snapshot.currentEntry && act?.outputMode === 'obs') {
+      const pendingAction = pendingObsStopAction(act);
+      if (currentIsFailed || pendingAction === OBS_PENDING_STOP_ACTIONS.DISCARD) {
+        showToast(t('dashboard.playback.failedActionRequired'), 'info');
+        return;
+      }
+      if (pendingAction === OBS_PENDING_STOP_ACTIONS.COMPLETE) {
+        commitPendingObsStopState({
+          marker: { entryId: act.entryId, runId: act.runId },
+          action: pendingAction,
+          phase: act.phase,
+          completionReason: act.pendingCompletionReason || 'skipped',
+          pendingNextEntryId: entryId,
+          requestDispatched: act.stopRequestDispatched === true,
+          failureDetail: act.failureDetail || null,
+        });
+        showToast(t('dashboard.queue.playAfterCurrent'), 'info');
+        return;
+      }
+      if (requestPendingObsStop({
+        marker: { entryId: act.entryId, runId: act.runId },
+        action: OBS_PENDING_STOP_ACTIONS.COMPLETE,
+        completionReason: 'skipped',
+        pendingNextEntryId: entryId,
+      })) {
+        showToast(t('dashboard.queue.playAfterCurrent'), 'info');
+      }
+      return;
+    }
     if (snapshot.currentEntry && !currentIsFailed && tryBeginFinishing(entryId)) {
       showToast(t('dashboard.queue.playAfterCurrent'), 'info');
       return;
@@ -3282,12 +3503,12 @@ export default function Dashboard() {
       if (event.type === 'buffering') {
         handlePlaybackDelay(marker, t('dashboard.playback.source.onAirPlayer'));
       }
-      if (isConfirmedDiscardStop({
+      if (isConfirmedPendingObsStop({
         protocolVersion: payload.protocolVersion,
         event,
         active: act,
         currentEntry: stateRef.current?.currentEntry
-      })) finalizeConfirmedDiscard(marker);
+      })) finalizePendingObsStopRef.current?.(marker);
       if (event.type === 'ended') handleConfirmedEnded(marker, 'natural');
       if (event.type === 'error') {
         setIsPlaying(false);
@@ -3373,10 +3594,12 @@ export default function Dashboard() {
             publicKeyB64={signingKeys?.publicKeyB64}
             currentSong={currentSong}
             activePhase={active?.phase || null}
+            pendingStopAction={active?.pendingStopAction || null}
             failureDetail={active?.failureDetail || ''}
             onSkip={handleSkipCurrent}
             onDiscardCurrent={handleDiscardCurrent}
             onRetryCurrent={handleRetryCurrent}
+            onRetryPendingStop={handleRetryPendingObsStop}
             isPlaying={isPlaying}
             speakerResumeRequired={
               active?.outputMode === 'speaker'

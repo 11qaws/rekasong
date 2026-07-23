@@ -82,6 +82,8 @@ test('tab runtime normalization preserves an in-flight OBS discard intent', () =
       runId: 'discard-run',
       phase: 'discarding',
       outputMode: 'obs',
+      pendingStopAction: 'discard',
+      stopRequestDispatched: true,
       discardRequested: true,
     },
     queue: [],
@@ -92,6 +94,8 @@ test('tab runtime normalization preserves an in-flight OBS discard intent', () =
 
   assert.equal(merged.active?.phase, 'discarding');
   assert.equal(merged.active?.outputMode, 'obs');
+  assert.equal(merged.active?.pendingStopAction, 'discard');
+  assert.equal(merged.active?.stopRequestDispatched, true);
   assert.equal(merged.active?.discardRequested, true);
 });
 

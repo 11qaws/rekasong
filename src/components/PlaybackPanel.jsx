@@ -51,6 +51,7 @@ export default function PlaybackPanel({
   publicKeyB64,
   currentSong,
   activePhase,
+  pendingStopAction = null,
   failureDetail,
   isPlaying,
   speakerResumeRequired = false,
@@ -58,6 +59,7 @@ export default function PlaybackPanel({
   onSkip,
   onDiscardCurrent,
   onRetryCurrent,
+  onRetryPendingStop,
   volume,
   volumeOutputMode = 'speaker',
   onVolumeChange,
@@ -274,9 +276,11 @@ export default function PlaybackPanel({
   // failed: 재시도·버리기만 제시(§4-5).
   const isFinishing = activePhase === 'finishing';
   const isDiscarding = activePhase === 'discarding';
+  const isStopUnconfirmed = activePhase === 'stop_unconfirmed';
   const isFailed = activePhase === 'failed';
   const isStarting = activePhase === 'starting';
-  const controlsLocked = isFinishing || isDiscarding || isFailed;
+  const isObsCompletionStop = isFinishing && pendingStopAction === 'complete';
+  const controlsLocked = isFinishing || isDiscarding || isStopUnconfirmed || isFailed;
   // Speaker transport is a normal browser-local player. OBS authority,
   // reconnect, takeover, and route-switch state must never disable its play,
   // seek, volume, skip, retry, or discard controls.
@@ -287,8 +291,10 @@ export default function PlaybackPanel({
   );
   const transportControlsLocked = isStarting || controlsLocked || outputAuthorityLocked;
   const phaseBadgeText = isStarting ? t('playback.phase.preparing')
+    : isObsCompletionStop ? t('playback.phase.confirmingStop')
     : isFinishing ? t('playback.phase.skipping')
     : isDiscarding ? t('playback.phase.discarding')
+    : isStopUnconfirmed ? t('playback.phase.stopUnconfirmed')
     : isFailed ? t('playback.phase.failed')
     : speakerResumeRequired ? t('playback.phase.resumeRequired')
     : isPlaying ? t('playback.phase.onAir') : t('playback.phase.paused');
@@ -367,7 +373,8 @@ export default function PlaybackPanel({
   const outputNeedsAttention = isSelectedRouteInvalid
     || outputRouteStateUnknown
     || normalizedOutputSwitchState === 'blocked'
-    || outputControlRecoveryRequired;
+    || outputControlRecoveryRequired
+    || isStopUnconfirmed;
   const outputNeedsDestructiveReset = outputNeedsAttention && !(
     failedSelectionMode === 'obs' && obsSourceInactive
   );
@@ -822,7 +829,7 @@ export default function PlaybackPanel({
             <strong>{currentSong.title}</strong>
           </div>
           <div className="playback-controls">
-            {/* finishing/discarding/failed 중 일반 재생 조작 잠금(§4-3, §4-5). */}
+            {/* 정지 전이/실패 중 일반 재생 조작 잠금(§4-3, §4-5). */}
             <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={transportControlsLocked} title={transportControlsLocked ? t('playback.control.locked') : speakerResumeRequired ? t('playback.localSpeaker.resumeAction') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
@@ -852,7 +859,22 @@ export default function PlaybackPanel({
               title={t('playback.control.discard')}
             ><Trash2 size={15} /></button>
           </div>
-          {isFailed ? (
+          {isStopUnconfirmed ? (
+            <div className="playback-stop-unconfirmed" role="status">
+              <span title={failureDetail || t('playback.stopConfirmation.timeout')}>
+                {failureDetail || t('playback.stopConfirmation.timeout')}
+              </span>
+              <button
+                type="button"
+                className="speaker-resume-action"
+                onClick={() => onRetryPendingStop?.()}
+                disabled={outputAuthorityLocked || typeof onRetryPendingStop !== 'function'}
+              >
+                <RotateCcw size={14} />
+                {t('playback.stopConfirmation.retry')}
+              </button>
+            </div>
+          ) : isFailed ? (
             <div className="playback-progress">
               {/* 실패 사유는 진행 바 자리에 보인다(§1-1 "왜 멈췄는가"). 전체 문구는 title로. */}
               <span className="mr-unavailable" title={failureDetail || t('playback.failure.default')}>

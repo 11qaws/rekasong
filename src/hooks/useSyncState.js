@@ -96,11 +96,19 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
         ...(typeof source.active.failureDetail === 'string' && source.active.failureDetail
           ? { failureDetail: source.active.failureDetail }
           : {}),
-        // OBS discard is a two-evidence transition: the local user intent and
-        // the exact strong-stop snapshot may arrive in either order. Keep the
-        // intent in tab runtime state until that snapshot finalizes the run;
-        // dropping it here leaves an already silent player stuck forever in
-        // the discarding phase.
+        // Every OBS boundary is a two-evidence transition: the local intent
+        // and the exact strong-stop snapshot may arrive in either order. Keep
+        // the intent in tab runtime state until that snapshot finalizes the
+        // run; dropping it can either strand a silent song or advance while
+        // old OBS audio is still live.
+        ...(['complete', 'discard'].includes(source.active.pendingStopAction)
+          ? { pendingStopAction: source.active.pendingStopAction }
+          : {}),
+        ...(source.active.stopRequestDispatched === true
+          ? { stopRequestDispatched: true }
+          : {}),
+        // v0.2.35 compatibility. New writes also keep this flag while the
+        // discard transition is pending so an already-open tab is recoverable.
         ...(source.active.discardRequested === true
           ? { discardRequested: true }
           : {})

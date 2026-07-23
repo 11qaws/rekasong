@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
+  OBS_PENDING_STOP_ACTIONS,
   isConfirmedDiscardSnapshot,
   isConfirmedDiscardStop,
+  isConfirmedPendingObsStop,
+  isConfirmedPendingObsStopSnapshot,
+  pendingObsStopAction,
 } from '../src/lib/dashboardPlaybackSafety.js';
 
 const fixture = {
@@ -61,7 +65,61 @@ test('authoritative strong-stop snapshot can recover a missed relay event', () =
   }
 });
 
-test('Dashboard observes the normalized root-or-player strong-stop proof', async () => {
+test('completion waits for the exact current-run strong stop, including after a timeout', () => {
+  const completion = {
+    ...fixture,
+    active: {
+      ...fixture.active,
+      phase: 'stop_unconfirmed',
+      pendingStopAction: OBS_PENDING_STOP_ACTIONS.COMPLETE,
+      pendingCompletionReason: 'skipped',
+      pendingNextEntryId: 'entry-b',
+      discardRequested: false,
+    },
+  };
+  assert.equal(pendingObsStopAction(completion.active), OBS_PENDING_STOP_ACTIONS.COMPLETE);
+  assert.equal(isConfirmedPendingObsStop(completion), true);
+
+  const confirmedPlayback = {
+    status: 'stopped',
+    entryId: 'entry-a',
+    runId: 'run-a',
+    paused: true,
+    sourceDetached: true,
+    autoplayCancelled: true,
+    audible: false,
+  };
+  assert.equal(isConfirmedPendingObsStopSnapshot({
+    confirmedPlayback,
+    active: completion.active,
+    currentEntry: completion.currentEntry,
+  }), true);
+
+  for (const unsafe of [
+    { event: { type: 'ended', sessionId: 'run-a' } },
+    { event: { type: 'stopped', sessionId: 'run-old' } },
+    { active: { ...completion.active, pendingStopAction: null } },
+    { currentEntry: { entryId: 'entry-old' } },
+  ]) {
+    assert.equal(isConfirmedPendingObsStop({ ...completion, ...unsafe }), false);
+  }
+  for (const unsafeProof of [
+    { ...confirmedPlayback, status: 'ended' },
+    { ...confirmedPlayback, paused: false },
+    { ...confirmedPlayback, sourceDetached: false },
+    { ...confirmedPlayback, autoplayCancelled: false },
+    { ...confirmedPlayback, audible: true },
+    { ...confirmedPlayback, runId: 'run-old' },
+  ]) {
+    assert.equal(isConfirmedPendingObsStopSnapshot({
+      confirmedPlayback: unsafeProof,
+      active: completion.active,
+      currentEntry: completion.currentEntry,
+    }), false);
+  }
+});
+
+test('Dashboard observes one normalized strong-stop proof for completion and discard', async () => {
   const source = await readFile(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8');
   assert.match(
     source,
@@ -69,7 +127,22 @@ test('Dashboard observes the normalized root-or-player strong-stop proof', async
   );
   assert.match(
     source,
-    /isConfirmedDiscardSnapshot\(\{[\s\S]*?confirmedPlayback: confirmedObsPlayback[\s\S]*?\}\)[\s\S]*?active\?\.discardRequested[\s\S]*?confirmedObsPlayback[\s\S]*?currentEntry\?\.entryId/,
-    'discard recovery must recheck when either strong-stop proof or the local discard intent arrives first',
+    /isConfirmedPendingObsStopSnapshot\(\{[\s\S]*?confirmedPlayback: confirmedObsPlayback[\s\S]*?\}\)[\s\S]*?active\?\.pendingStopAction[\s\S]*?confirmedObsPlayback[\s\S]*?currentEntry\?\.entryId/,
+    'completion/discard recovery must recheck when either strong-stop proof or the local intent arrives first',
+  );
+  assert.match(
+    source,
+    /if \(act\?\.outputMode !== 'obs'\)[\s\S]*?finalizeConfirmedCompletion\(marker, completionReason\)[\s\S]*?requestPendingObsStop\(\{[\s\S]*?OBS_PENDING_STOP_ACTIONS\.COMPLETE/,
+    'an OBS ended event must request strong stop instead of immediately completing the song',
+  );
+  assert.match(
+    source,
+    /if \(useOnAirPlayer && act\?\.outputMode === 'obs'\)[\s\S]*?requestPendingObsStop\(\{[\s\S]*?pendingNextEntryId: nextEntry\?\.entryId/,
+    'an OBS skip must preserve the current song and selected next entry behind the stop barrier',
+  );
+  assert.match(
+    source,
+    /const finalizationKey = `\$\{act\.entryId\}\\u0000\$\{act\.runId\}`[\s\S]*?finalizedPendingObsStopKeyRef\.current === finalizationKey[\s\S]*?finalizedPendingObsStopKeyRef\.current = finalizationKey/,
+    'snapshot and relayed stopped evidence must not start the next track twice',
   );
 });

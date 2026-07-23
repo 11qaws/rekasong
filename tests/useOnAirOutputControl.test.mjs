@@ -1469,6 +1469,36 @@ test('an explicit STOP followed by LOAD reuses the same stop barrier without dup
   );
 });
 
+test('an explicit stop retry can recover a lost first STOP without unlocking ordinary duplicates', () => {
+  const activeRun = { entryId: 'entry-a', runId: 'run-a' };
+  const activeProtocol = readyRoute('obs', {
+    activeFamily: { family: 'run', entryId: 'entry-a', runId: 'run-a' },
+  });
+  const { controller, coordinators } = createHarness(
+    coordinatorSnapshot(activeProtocol, { activeRun }),
+  );
+  const coordinator = coordinators[0];
+
+  assert.equal(
+    controller.sendCommand({ type: 'stop', sessionId: 'entry-a', runId: 'run-a' }),
+    'stop',
+  );
+  assert.deepEqual(
+    controller.sendCommand({ type: 'stop', sessionId: 'entry-a', runId: 'run-a' }),
+    { status: 'already_stopping' },
+  );
+  assert.equal(
+    controller.sendCommand({
+      type: 'stop',
+      sessionId: 'entry-a',
+      runId: 'run-a',
+      retryStop: true,
+    }),
+    'stop',
+  );
+  assert.deepEqual(coordinator.calls, [['stop'], ['stop']]);
+});
+
 test('never stops or replaces an unowned active family', () => {
   const protocol = readyRoute('speaker', {
     activeFamily: { family: 'run', entryId: 'entry-a', runId: 'run-a' },

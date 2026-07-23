@@ -705,10 +705,14 @@ export class OnAirOutputController {
       case 'stop':
         this.#assertLegacyRunTarget(command);
         this.#pendingPlayAfterLoad = null;
-        if (this.#stopRequested) {
+        if (this.#stopRequested && command.retryStop !== true) {
           return Object.freeze({ status: 'already_stopping' });
         }
         {
+          // A normal duplicate click is coalesced, but the Dashboard exposes an
+          // explicit retry only after strong-stop proof timed out. Reissuing
+          // the same run-bound STOP is safer than leaving #stopRequested as an
+          // irreversible client-side latch when the first frame or ACK vanished.
           const result = this.#coordinator.stop();
           this.#stopRequested = true;
           return result;

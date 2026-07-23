@@ -877,3 +877,14 @@
 - release commit `2ce37ae45851f9314e29c1b3612cc272a5345627`, Pages workflow `29980592766`, build job `89121348032`, deploy job `89121502137`, deployment `5567109650`가 성공했다. clean Ubuntu의 749개 테스트·lint·Worker 문법·build·pseudo-locale·30곡 Blob 수명·OBS bundle·publish를 모두 통과했다.
 - Actions artifact에서 manifest를 제외한 공개 대상 21개를 내려받고 공개 CDN에서 다시 수집해 크기와 SHA-256 `21/21` exact match를 확인했다. 공개 production smoke는 기본 Speaker, 주요 소스, 한·영 reload, 320~1100px, 금발 선을 통과했고 HTTP 오류와 warm long task는 0이었다.
 - 공개 Speaker fixture는 유휴·재생·페이지 수명·기기 pause 복구·자연 종료를 통과했다. 성공한 자연 종료 뒤 내부 코드가 표시되지 않았고 전 구간의 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다. 실제 OBS·방송·녹화는 시작하지 않았다.
+
+## 2026-07-23 (Codex) — v0.2.36 OBS 곡 경계의 정지 증거 우선 전이
+
+- Graphify로 Dashboard의 스킵·자연 종료에서 `OnAirOutputController`→`OnAirControlCoordinator`→`OnAirPlaybackAdapter`→`PlaybackEngine`까지 역추적했다. 기존 `stopPlaybackOutput()`은 동기 STOP 요청 객체를 `Promise.resolve()`로 감싼 뒤 실제 ACK나 물리 정지와 무관하게 화면 시간을 0으로 만들었고, `handlePlayNext()`와 `handleConfirmedEnded()`는 이전 OBS source의 강한 정지 전에 현재 곡을 이력으로 보내거나 다음 곡 화면을 먼저 열 수 있었다.
+- OBS 곡 경계를 `정지 의도 → 동일 entry/run STOP → 강한 정지 증거 → 완료/폐기 확정 → 선택한 다음 곡 LOAD`로 통일했다. 강한 정지는 Protocol v2의 동일 run `stopped` relay 또는 authoritative snapshot의 `paused + sourceDetached + autoplayCancelled + audible=false`를 모두 요구한다. 일반 ACK, pause, ended, 다른 run의 stopped는 완료 근거가 아니다.
+- STOP 전송 실패나 8초 증거 지연은 더 이상 일반 `failed`로 바꾸거나 현재 곡·다음 곡 예약을 지우지 않는다. 새 `stop_unconfirmed` 상태가 두 항목을 그대로 보존하고 `정지 다시 요청`을 제시한다. 사용자가 이 행동을 눌렀을 때만 같은 run의 STOP을 다시 발행하며, 평범한 중복 클릭은 계속 하나로 합친다. 설정의 명시적 긴급 정지 외에는 route 전환·LOAD·PLAY를 자동 재전송하지 않는다.
+- Worker snapshot과 legacy-compatible `player_event`가 같은 strong-stop을 연달아 전달해도 동기 finalization key가 한 번만 의도를 claim한다. 따라서 history 편입·다음 곡 LOAD·폐기 토스트가 중복되지 않는다. 자연 `ended` 뒤에도 OBS는 source detach를 별도로 확인하고, Speaker native ended와 로컬 source 정리는 v0.2.35 동작을 그대로 유지한다.
+- 현재 재생 badge는 OBS 경계에서 `OBS 정지 확인 중…`, 증거 지연 시 `정지 확인 필요`를 표시한다. 한국어·영어 semantic key와 모바일 44px 복구 행동을 함께 추가했으며, 수명주기 문서에도 `stop_unconfirmed`와 허용 행동을 정식 상태로 기록했다.
+- 전체 `751/751` 테스트와 집중 회귀 `81/81`, lint 신규 오류 0(기존 Gemini escape 경고 2), production build와 `git diff --check`를 통과했다. 집중 회귀는 STOP dispatch 실패 보존, ACK/relay 유실 뒤 지연 snapshot, 오래된 run 거부, 명시적 STOP 재요청, snapshot+relay 중복 finalization, Speaker 회귀를 포함한다.
+- build는 Dashboard `382.38kB raw / 104.61kB gzip`, CSS `63.67kB / 11.97kB`다. v0.2.35 대비 Dashboard gzip 증가는 약 `0.94kB`이며 OBS player chunk는 `42.66kB / 12.53kB`로 동일하다.
+- 로컬 브라우저에서 기본 Speaker, YouTube 단일 상위 소스와 Search/Playlist, 한국어↔영어, 390px 모바일, 금발 선과 머리핀 상태를 확인했다. 가로 이탈과 console warning/error는 0이었다. 이 검증은 음악·OBS route·점검음·방송·녹화를 시작하지 않았고 Worker와 OBS player runtime도 변경하지 않았다.
