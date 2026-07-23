@@ -110,6 +110,15 @@ const browser = await chromium.launch({
 const context = await browser.newContext({
   viewport: { width: 1100, height: 900 },
 });
+await context.addInitScript(() => {
+  try {
+    if (!localStorage.getItem('rekasong.locale')) {
+      localStorage.setItem('rekasong.locale', 'ko');
+    }
+  } catch {
+    // about:blank has no storage origin; this script runs again for the app.
+  }
+});
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send('Performance.enable');
