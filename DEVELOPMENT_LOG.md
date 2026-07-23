@@ -798,3 +798,12 @@
 - 30초 카라오케 타이머는 위치 보정기가 아니라 관찰자로 유지한다. 곡 중간에는 자동 seek·restart·playbackRate 보정을 하지 않고, 시작점과 다음 곡 LOAD에서 0초 기준을 다시 잡는다. 작은 관측 오차는 안내만 하며 established route를 끊지 않는다.
 - 사전 검증: 733/733 단위 테스트, pseudo-locale 3화면×4폭 overflow 0, production build, 로컬 Dashboard smoke, Speaker 재생 중 Worker HTTP/socket/frame 0, 30곡 Blob 수명, OBS 정적 closure `384,105B raw / 118,425B gzip / 103,671B brotli`를 통과했다. Dashboard는 `374.58kB raw / 102.47kB gzip`, CSS는 `62.57kB raw / 11.79kB gzip`이다.
 - release commit `03a062a190994a62c17c2b8307b9b7d52d9e78aa`의 Pages workflow `29972538959`와 deployment `5565613740`가 성공했다. 공개 새 브라우저 smoke는 기본 Speaker·출력별 음량 reload·한영·320~1100px·금발 선을 통과했고 HTTP 오류·ntfy·warm long task는 0이었다. Actions artifact의 실제 배포 파일 21/21은 공개 CDN과 바이트·SHA-256 exact match였다.
+
+## 2026-07-23 (Codex) — v0.2.30 출력별 음소거 복원 격리와 공개 배포 검증
+
+- Speaker와 OBS가 각각 다른 음량을 기억하면서도 음소거 해제용 마지막 양수 값은 하나만 공유하던 결함을 수정했다. 두 출력이 모두 0인 상태에서 한쪽을 해제해도 다른 출력의 이전 음량을 가져오지 않으며, Speaker와 OBS가 자기 프로필만 복원한다.
+- 출력별 복원 메모리의 생성·갱신 계약과 실제 PlaybackPanel 라우팅 회귀를 추가했다. 전체 `734/734` 테스트, Worker 문법, production build, pseudo-locale 3화면×4폭, 로컬 Speaker/drag/1,000곡 history smoke와 OBS bundle budget을 통과했다. Dashboard는 `375.01kB raw / 102.60kB gzip`, CSS는 `62.57kB raw / 11.79kB gzip`, OBS 정적 closure는 `384,105B raw / 118,430B gzip / 103,665B brotli`다.
+- 공개 Speaker는 유휴·로컬 재생 모두 session HTTP, WebSocket, 송신 frame이 0이었고 실제 로컬 media가 `volume=0.34`로 진행했다. 기본 Speaker, YouTube 단일 상위 소스, 한영 전환, 320/375/768/1100px 레이아웃, 금발 3px 선, 설정 dialog와 출력별 `34/61` 프로필을 다시 확인했다.
+- release commit `db81d3fb9cad7b224a56a4f0c1f54480eab0ec03`의 Pages workflow `29973743516`에서 build job `89101069580`과 deploy job `89101240107`이 성공했다. 내려받은 Actions artifact의 배포 파일 21/21은 공개 CDN과 바이트·SHA-256 exact match였다.
+- 실제 OBS의 전용 시험 profile은 방송·녹화 OFF 상태였다. Browser Source 설정은 public `/widget`, production Worker, protocol 2, `Control audio via OBS=true`, enabled/unmuted, volume 1, Monitor and Output 구성이었고 OBS CEF child에서 production Worker DNS 주소로 established TCP 연결 하나를 확인했다. credential을 노출하지 않는 1회 read-only 존재하지 않는 asset 요청은 `404`여서 세션과 player credential의 유효성을 확인했다. 이 점검에서는 LOAD/PLAY, 녹화, 송출을 실행하지 않았다.
+- 30초 cadence는 계속 관찰 전용이다. `setInterval` 자체나 화면 시계로 오디오를 보정하지 않고 media/audio clock에서 상대 오차만 기록한다. 곡 중간 seek·restart·rate 변경·연결 재수립을 금지하며, 자연 종료 후 다음 곡의 새 run을 `position: 0`으로 시작할 때만 기준점을 다시 만든다.

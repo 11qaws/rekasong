@@ -276,8 +276,8 @@
 
 ## 7. 배포 완료와 다음 관문
 
-1. 현재 공개본은 Worker `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`와 frontend `0.2.28` / `1346be0d5eef6e8ac680d2d9b6bd46eb134bea49`다. 앱 배포 workflow `29970083896`와 `github-pages` deployment `5565152862`가 모두 성공하고 같은 SHA를 가리킨다.
-2. GitHub Pages clean install·730개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. ntfy 요청·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선, 한국어/영어와 긴 문구 3화면×4폭을 확인했다. Actions artifact와 공개 파일은 21/21 exact match다.
+1. 현재 공개 frontend는 `0.2.30` / `db81d3fb9cad7b224a56a4f0c1f54480eab0ec03`다. Pages workflow `29973743516`의 build job `89101069580`과 deploy job `89101240107`이 성공하고 같은 product SHA를 가리킨다.
+2. GitHub Pages clean install·734개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. ntfy 요청·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선, 한국어/영어와 긴 문구 3화면×4폭을 확인했다. Actions artifact와 공개 파일은 21/21 exact match다.
 3. 실제 OBS G3, G4, source hide/show, 5분 scene 전환, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했고, 공개 3탭 독립 재생·reload도 v0.2.18에서 통과했다. 다음 수동 관문은 모바일 Speaker 백그라운드·잠금 화면/PiP 조작과 실제 출력 장치 전환·청취다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
@@ -295,3 +295,12 @@
 - 전체 자동 근거는 733/733, pseudo-locale overflow 0, 30곡 Blob 예산, production browser smoke, OBS bundle budget 통과다. 실제 방송·녹화는 시작하지 않았다.
 - release commit `03a062a190994a62c17c2b8307b9b7d52d9e78aa`, Pages workflow `29972538959`, deployment `5565613740`가 성공했다. 공개 파일 21/21이 Actions artifact와 exact match이며 공개 smoke의 HTTP 오류·ntfy 요청·warm long task는 0이었다.
 - 아직 목표 전체 완료로 판정하지 않는다. 실제 모바일 백그라운드/PiP·물리 출력 장치 청취, OBS monitoring 청취, 명시 승인 뒤 G5, 같은 clock 경로의 G6가 남아 있다.
+
+## 9. v0.2.30 출력별 음소거·실제 OBS 연결 증거 — 2026-07-23
+
+- 음소거 해제 시 Speaker와 OBS가 하나의 이전 음량을 공유하던 상태 누출을 제거했다. 각 출력은 자기 마지막 양수 음량만 기억하고 복원하며, 다른 출력의 0/양수 전환에 영향을 받지 않는다.
+- 자동 근거는 전체 `734/734`, 출력별 mute/unmute 계약 `33/33`, production build, pseudo-locale, Speaker network 분리, drag, 1,000곡 history, OBS closure budget 통과다. 공개 Speaker에서 로컬 media 진행과 `34/61` 프로필을 다시 확인했고 session HTTP·socket·frame은 모두 0이었다.
+- 실제 OBS Browser Source의 현재 설정은 public `/widget`과 production Worker protocol 2를 사용하고 `Control audio via OBS`가 켜져 있다. source는 enabled/unmuted, volume 1, Monitor and Output이며 OBS CEF child에서 Worker 주소로 established TCP 연결 하나가 존재했다. 존재하지 않는 asset에 대한 credential 비노출 read-only 요청은 `404`여서 세션 만료나 인증 실패가 아닌 정상 연결임을 확인했다.
+- 이 확인 동안 OBS streaming/recording은 모두 OFF였고 LOAD/PLAY도 보내지 않았다. 따라서 “연결 구성과 CEF transport가 살아 있다”는 증거이지, v0.2.30에서 mixer meter·청취·녹화 PCM을 새로 재측정한 증거는 아니다.
+- 30초 측정은 오차 관찰과 추세 기록에만 쓴다. 30초마다 seek/restart/playbackRate/reconnect를 실행하지 않으며 established OBS route를 끊지 않는다. 실제 기준점 재설정은 곡 자연 종료 뒤 다음 run이 `position: 0`으로 시작할 때 한 번만 수행한다.
+- release artifact는 공개 CDN 21/21과 exact match다. 남은 관문은 지원 모바일 환경의 백그라운드/PiP·물리 장치 전환, 사용자 OBS monitoring 청취, 명시 승인 뒤 G5, 같은 clock 경로의 endpoint-inclusive 5분 G6다.

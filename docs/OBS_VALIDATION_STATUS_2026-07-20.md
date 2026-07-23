@@ -430,3 +430,21 @@ Remove-Item Env:REKASONG_WORKER, Env:REKASONG_ALLOW_PRODUCTION_WORKER
 이 명령은 CI에 포함하지 않는다. 실제 방송·녹화·stream key를 조작하지 않으며 가상 OBS binding은 off 상태만 보고한다.
 
 30초 cadence는 observation-only다. 곡 중간 자동 seek/restart/rate/reconnect를 금지하고, 자연 종료와 다음 LOAD에서만 위치를 0으로 다시 고정한다.
+
+## 9. v0.2.30 실제 OBS 연결 구성 재확인 — 2026-07-23
+
+이번 점검은 재생을 시작하지 않는 read-only 연결 확인이다. 실제 방송과 녹화는 모두 OFF로 유지했다.
+
+| 항목 | 관측 | 판정 범위 |
+|---|---|---|
+| Browser Source URL | public `/widget`, production Worker, protocol 2 | 올바른 앱·Worker 계약 |
+| OBS audio control | `Control audio via OBS=true` | 브라우저 소스 오디오를 OBS mixer로 분리 |
+| Source state | enabled, unmuted, volume 1 | source 설정상 차단 없음 |
+| Monitoring | Monitor and Output | 현재 시험 profile의 monitoring 구성 |
+| CEF network | Worker DNS 주소로 established TCP 1개 | 실제 CEF transport 연결 존재 |
+| Credential probe | 존재하지 않는 asset `404` | 세션·player credential 유효, asset만 없음 |
+| Streaming/recording | 모두 OFF | 실제 송출·녹화 미실행 |
+
+이 표는 URL을 저장해 둔 것만이 아니라 OBS CEF가 실제 Worker에 연결됐음을 보인다. 다만 이번 read-only 점검은 mixer meter, 사용자 청취, 녹화 PCM을 새로 증명하지 않는다. 이전 G3/G4 증거는 유지하고, 최종 사용자 monitoring 청취·G5·같은-clock G6는 별도 관문으로 남긴다.
+
+30초 주기의 허용 동작은 media/audio clock 기반 상대 오차 기록과 UI 경고뿐이다. 브라우저 timer는 throttle과 scheduling jitter가 있으므로 보정 기준으로 사용하지 않는다. 금지 동작은 곡 중간 seek, restart, playbackRate 변경, route 재선택, reconnect다. 새 기준점은 자연 종료 뒤 다음 곡을 새 run과 `position: 0`으로 LOAD할 때만 설정한다.
