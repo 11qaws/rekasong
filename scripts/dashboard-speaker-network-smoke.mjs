@@ -274,14 +274,59 @@ try {
   );
   await page.locator('#obs-setup-dialog > header .btn-icon').click();
 
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('.song-composer input[type="file"][accept]').setInputFiles({
-    name: 'speaker-local-first.wav',
+    name: 'speaker-mobile-layout-first.wav',
     mimeType: 'audio/wav',
     buffer: createWavFixture({ durationSeconds: 4 }),
   });
   await page.locator('.staging-panel').waitFor({ state: 'visible' });
   const localPlayButton = page.locator('.staging-action-buttons .go-live-btn').first();
   assert.equal(await localPlayButton.isEnabled(), true, 'Speaker local playback must not wait for an OBS asset.');
+  await localPlayButton.evaluate((button) => button.scrollIntoView({
+    block: 'center',
+    inline: 'nearest',
+  }));
+  await page.waitForTimeout(50);
+  const stagingMobileLayout = await localPlayButton.evaluate((button) => {
+    const panel = button.closest('.staging-panel');
+    const form = panel?.querySelector('.staging-form');
+    const titleCard = panel?.querySelector('.ai-title-card');
+    const input = panel?.querySelector('.staging-form input');
+    const rect = button.getBoundingClientRect();
+    const panelRect = panel?.getBoundingClientRect();
+    const contained = (element) => {
+      const elementRect = element?.getBoundingClientRect();
+      return Boolean(
+        elementRect && panelRect
+        && elementRect.left >= panelRect.left - 1
+        && elementRect.right <= panelRect.right + 1
+      );
+    };
+    const hit = document.elementFromPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    return {
+      viewportWidth: window.innerWidth,
+      overflowPx: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+      formContained: contained(form),
+      titleCardContained: contained(titleCard),
+      inputContained: contained(input),
+      actionHeight: rect.height,
+      actionReceivesPointer: hit === button || button.contains(hit),
+    };
+  });
+  assert.deepEqual(stagingMobileLayout, {
+    viewportWidth: 390,
+    overflowPx: 0,
+    formContained: true,
+    titleCardContained: true,
+    inputContained: true,
+    actionHeight: stagingMobileLayout.actionHeight,
+    actionReceivesPointer: true,
+  }, 'The mobile review form must stay inside its card and leave Play now directly clickable.');
+  assert.ok(stagingMobileLayout.actionHeight >= 44);
   await localPlayButton.click();
   const localAudio = page.locator('[data-local-speaker-state="ready"] audio');
   await localAudio.waitFor({ state: 'attached' });
@@ -289,6 +334,7 @@ try {
     const audio = document.querySelector('[data-local-speaker-state="ready"] audio');
     return audio && audio.paused === false && audio.currentTime > 0.05;
   });
+  await page.setViewportSize({ width: 1100, height: 900 });
   const lifecycleBefore = await localAudio.evaluate((audio) => ({
     currentTime: audio.currentTime,
     source: audio.currentSrc || audio.src,
@@ -608,6 +654,7 @@ try {
     targetUrl: appUrl,
     idleEvidence,
     localFileEvidence,
+    stagingMobileLayout,
     speakerLifecycleEvidence,
     speakerInterruptionRecoveryEvidence,
     searchOnly: {

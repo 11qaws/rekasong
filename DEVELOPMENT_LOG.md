@@ -1,10 +1,17 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.38 모바일 곡 검토 조작면 복구
+
+- v0.2.37 공개 API 복구 뒤 실제 제목 분석이 계속 진행되는 동안 390px 모바일 곡 검토 화면을 재검증하자, 제목 입력란과 AI 카드의 고유 최소 너비가 패널보다 넓어져 브라우저 layout viewport를 390px에서 463px로 확장했다. 화면 밖 입력란이 `재생` 버튼의 정상 포인터 판정을 가로막아 버튼은 활성으로 보이면서도 일반 클릭이 30초 넘게 전달되지 않았다.
+- 곡 정보·제목 폼·입력 래퍼·AI 카드가 부모 폭 안에서 축소되도록 `width/min-width/max-width` 경계를 명시하고, 도움말은 긴 번역에서도 줄바꿈되게 했다. 모바일 `재생` 조작면은 최소 44px로 고정했다. 공개 화면에 CSS를 임시 주입한 사전 검증에서 viewport가 정확히 390px로 복원되고 입력·AI 카드가 패널 안에 들어왔으며 Playwright 일반 클릭으로 즉시 같은 로컬 곡이 재생됐다.
+- `dashboard-speaker-network-smoke.mjs`는 이제 실제 390×844 곡 검토 화면에서 문서 overflow 0, 폼·AI 카드·입력 containment, 44px 조작면과 `elementFromPoint` 직접 클릭 가능성을 먼저 검사한 뒤에만 재생을 진행한다. 번역 문구·Speaker transport·OBS runtime·Worker protocol은 변경하지 않았다.
+
 ## 2026-07-23 (Codex) — v0.2.37 공개 로컬 파일 제목 추출 CORS 복구
 
 - 공개 v0.2.36을 모바일형 3탭 Speaker 생명주기 하네스로 검증하던 중, 로컬 파일 자체는 정상 재생됐지만 GitHub Pages 오리진에서 `rekasong.pages.dev/api/extract-local`로 보내는 JSON POST의 사전 요청이 `Content-Type` 허용 헤더 없이 거절되는 배포 결함을 재현했다. 파일명 fallback 때문에 음악은 유지됐지만 선택적 제목 분석은 매번 실패하고 브라우저 오류 3건을 남겼다.
 - `extract-local` Pages Function에 `POST, OPTIONS`와 `Content-Type`을 명시한 공통 CORS 응답을 추가했다. OPTIONS는 AI·KV·스트림을 시작하기 전에 204로 끝나며, 실제 SSE 응답에도 동일한 오리진·메서드·헤더 계약을 붙였다. Speaker의 재생·출력·OBS 경로는 변경하지 않았다.
-- 새 `pagesApiCors.test.mjs`가 실제 GitHub Pages 오리진과 소문자 `content-type` 사전 요청을 보내 204와 전체 CORS 계약을 검사한다. v0.2.37 후보는 전체 752/752 테스트, lint 신규 오류 0(기존 Gemini 경고 2), Worker·Function 문법, production build와 OBS bundle 예산을 통과했다. 공개 API·GitHub Pages 배포와 모바일형 3탭 재검증 근거는 배포 완료 뒤 이 항목에 추가한다.
+- 새 `pagesApiCors.test.mjs`가 실제 GitHub Pages 오리진과 소문자 `content-type` 사전 요청을 보내 204와 전체 CORS 계약을 검사한다. v0.2.37 후보는 전체 752/752 테스트, lint 신규 오류 0(기존 Gemini 경고 2), Worker·Function 문법, production build와 OBS bundle 예산을 통과했다.
+- release commit `585edbeabd47cf483ac26391c0f9ed038e256b1f`의 Pages workflow `29985789769`, build job `89137180347`, deploy job `89137397355`, deployment `5568083486`가 성공했다. Cloudflare Pages는 commit 연결이 없는 별도 프로젝트라 같은 dist와 Functions를 Wrangler로 배포했고 고유 주소는 `73f975d2.rekasong.pages.dev`다. 대표·고유 API 주소 모두 GitHub Pages 오리진의 실제 preflight에 `204`, `POST, OPTIONS`, `Content-Type`, max-age `86400`을 반환했다.
 
 ## 2026-07-23 (Codex) — v0.2.28 Speaker 로컬 파일 장시간 수명 관문
 

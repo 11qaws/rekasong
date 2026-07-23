@@ -503,6 +503,14 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.staging-form .search-input-wrapper {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .staging-form label {
@@ -1077,7 +1085,7 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 @keyframes bgSpin { 100% { transform: rotate(360deg); } }
 
 .local-video-preview { display: block; width: 100%; border-radius: 8px; background: #000; }
-.ai-title-card { display: flex; align-items: center; gap: 0.7rem; padding: 0.75rem; border: 1px solid rgba(16,255,203,0.35); border-radius: 10px; background: rgba(16,255,203,0.07); }
+.ai-title-card { display: flex; align-items: center; gap: 0.7rem; width: 100%; min-width: 0; max-width: 100%; padding: 0.75rem; border: 1px solid rgba(16,255,203,0.35); border-radius: 10px; background: rgba(16,255,203,0.07); }
 .ai-title-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 8px; color: var(--chr-vest); background: rgba(16,255,203,0.14); }
 .ai-title-copy { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
 .ai-title-copy strong { font-size: 0.82rem; color: var(--text-main); }
@@ -1098,14 +1106,14 @@ input[type='text']:focus, .alias-input:focus, .search-input:focus, .volume-slide
 .ai-retry-button { flex: 0 0 auto; border: 1px solid var(--glass-border); border-radius: 6px; padding: 0.4rem 0.55rem; background: var(--bg-mid); color: var(--text-main); font: inherit; font-size: 0.72rem; cursor: pointer; }
 .ai-retry-button:hover, .ai-retry-button:focus-visible { border-color: var(--eureka-emerald); color: var(--chr-vest); }
 .staging-media-info { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr); align-items: start; gap: 0.8rem; }
-.staging-song-info { display: grid; gap: 0.8rem; min-width: 0; }
+.staging-song-info { display: grid; gap: 0.8rem; width: 100%; min-width: 0; }
 .preview-player-priority { position: relative; margin: 0; }
-.staging-title-help { margin: -0.35rem 0 0; color: var(--text-muted); font-size: 0.7rem; }
+.staging-title-help { margin: -0.35rem 0 0; color: var(--text-muted); font-size: 0.7rem; overflow-wrap: anywhere; }
 .staging-title-help span { margin-left: 8px; color: var(--chr-vest); }
 .staging-actions { display: grid; gap: 0.65rem; margin-top: 0; }
 .mr-cache-note { margin: 0; padding: 0.62rem 0.72rem; border: 1px solid rgba(16,255,203,0.22); border-radius: 8px; background: rgba(16,255,203,0.055); color: var(--text-muted); font-size: 0.76rem; line-height: 1.45; }
 .staging-action-buttons { display: flex; gap: 0.5rem; width: 100%; }
-.staging-action-buttons .go-live-btn { flex: 1; padding: 1rem; font-size: 1.02rem; font-weight: bold; }
+.staging-action-buttons .go-live-btn { flex: 1; min-height: 44px; padding: 1rem; font-size: 1.02rem; font-weight: bold; }
 /* '바로 다음 곡' 새치기는 위험 동작이 아니므로 빨강 대신 네이비로 강조를 구분한다 */
 .staging-action-buttons .go-live-next { background-color: var(--chr-hat); }
 .staging-action-buttons .go-live-next:hover:not(:disabled) { background: var(--chr-vest); }
