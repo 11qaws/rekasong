@@ -609,8 +609,8 @@ export default function PlaybackPanel({
       const url = await onPrepareOnAir();
       setPreparedPlayerUrl(url || '');
       return url;
-    } catch (error) {
-      showToast?.(error.message || t('obs.setup.player.prepareFailed'), 'error');
+    } catch {
+      showToast?.(t('obs.setup.player.prepareFailed'), 'error');
       return '';
     } finally {
       setIsPreparingPlayer(false);
@@ -632,8 +632,8 @@ export default function PlaybackPanel({
       const url = await onPrepareOnAirDisplay();
       setPreparedDisplayUrl(url || '');
       return url;
-    } catch (error) {
-      showToast?.(error.message || t('obs.setup.display.prepareFailed'), 'error');
+    } catch {
+      showToast?.(t('obs.setup.display.prepareFailed'), 'error');
       return '';
     } finally {
       setIsPreparingDisplay(false);
@@ -653,8 +653,8 @@ export default function PlaybackPanel({
     setPreparedDisplayUrl('');
     try {
       await onRecoverOnAir();
-    } catch (error) {
-      showToast?.(error?.message || t('obs.setup.recovery.failed'), 'error');
+    } catch {
+      showToast?.(t('obs.setup.recovery.failed'), 'error');
     } finally {
       setIsRecoveringOnAir(false);
     }
@@ -665,13 +665,13 @@ export default function PlaybackPanel({
     if (!window.confirm(t('obs.setup.recovery.emergencyConfirm'))) return;
     setIsEmergencyStoppingOutput(true);
     try {
-      Promise.resolve(onEmergencyStopOutput()).catch((error) => {
+      Promise.resolve(onEmergencyStopOutput()).catch(() => {
         setIsEmergencyStoppingOutput(false);
-        showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
+        showToast?.(t('obs.setup.recovery.emergencyFailed'), 'error');
       });
-    } catch (error) {
+    } catch {
       setIsEmergencyStoppingOutput(false);
-      showToast?.(error?.message || t('obs.setup.recovery.emergencyFailed'), 'error');
+      showToast?.(t('obs.setup.recovery.emergencyFailed'), 'error');
     }
   };
 

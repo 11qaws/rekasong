@@ -864,3 +864,13 @@
 - FIFINE 마이크 20초 캡처에는 재생 fixture의 440 Hz가 idle 잡음보다 유의하게 구분되지 않았다. 이 PC에는 물리 스피커 loopback 입력이 없으므로 브라우저의 실제 재생 완료는 증명했지만 공기 중 Speaker→마이크 경로는 증명하지 않았다. 해당 물리 관문에는 스피커를 실제로 켜거나 같은-clock 가상 케이블이 필요하다. OBS 방송·녹화는 시작하지 않았다.
 - release commit `8d3e0cafa1b0fab6b48a0d976ab0b84c806ca4c4`, Pages workflow `29979715853`, build job `89118818558`, deploy job `89118984303`, deployment `5566950851`가 성공했다. clean Ubuntu의 전체 검증을 통과했고 Actions artifact와 공개 CDN 게시 파일은 크기·SHA-256 `21/21` exact match였다.
 - 공개 v0.2.34에서 같은 4초 Speaker 자연 종료를 다시 실행했다. idle 전환과 내부 코드 비노출을 확인했으며 유휴·재생·pagehide 수명·기기 pause 복구·자연 종료 전 구간의 session HTTP, WebSocket, 송신 frame, Worker host 요청은 모두 0이었다.
+
+## 2026-07-23 (Codex) — v0.2.35 사용자 오류 번역 경계
+
+- 대시보드와 재생 설정 화면에 남아 있던 `error.message` 직접 표시 22곳을 제거했다. 브라우저 영문 예외, WebSocket·lease·플레이어 내부 코드는 사용자 화면에 그대로 노출하지 않고, 현재 언어의 다음 행동 안내로 바꾼다.
+- 준비되지 않은 곡, OBS용 로컬 파일 준비, OBS 경로 미확정처럼 사용자에게 원인을 구체적으로 알려도 되는 조건만 `UserActionError`의 semantic message key로 명시한다. 그 외 예외는 탐색·재생/일시정지·볼륨·정지·세션 종료별 안전한 fallback을 사용하며, 대기 중 언어가 바뀌어도 표시 시점의 locale로 번역한다.
+- 한국어·영어에 탐색 실패, 재생 상태 변경 실패, 볼륨 변경 실패, 정지 요청 실패, 방송 세션 종료 실패 문구를 함께 추가했다. 모든 문구는 상태 코드 대신 현재 출력 확인·재시도·목록 보존 등 사용자의 다음 행동을 설명한다.
+- live UI에서 `error.message`를 다시 사용하면 실패하는 source guard와 사용자 오류 경계 단위 테스트를 추가했다. 기존 소스 구조 테스트도 새 semantic error 계약을 검사하도록 갱신했다.
+- 전체 `749/749` 테스트, lint 신규 오류 0(기존 Gemini escape 경고 2건), production build, pseudo-locale 3화면×4폭, 로컬 production smoke, Speaker network/lifecycle/interruption smoke, OBS bundle 예산을 통과했다.
+- 로컬 브라우저에서 기본 Speaker, 320/375/768/1100px, 한국어→영어→reload, 320px 영문 설정, 금발 선, 주요 소스 순서를 확인했다. Speaker 유휴·재생·페이지 수명·기기 pause 복구의 session HTTP/WebSocket/frame은 모두 0이었다.
+- build는 Dashboard `378.31kB raw / 103.67kB gzip`, Speaker lazy chunk `8.34kB / 2.85kB`다. OBS closure는 `384,105B raw / 118,424B gzip / 103,700B brotli`로 예산 안이며 Worker·OBS runtime·방송/녹화 제어·30초 관찰 정책은 변경하지 않았다.

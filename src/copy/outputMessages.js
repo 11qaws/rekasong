@@ -25,6 +25,10 @@ export const outputMessageCatalog = Object.freeze({
     'playback.control.requeue': '현재 곡 다시 예약',
     'playback.control.discard': '현재 곡 버리기 — 이력에 남지 않고 다음 곡을 자동 재생하지 않습니다',
     'playback.control.seek': '재생 위치',
+    'playback.control.seekFailed': '재생 위치를 바꾸지 못했습니다. 곡은 현재 위치에서 계속됩니다. 다시 눌러 주세요.',
+    'playback.control.toggleFailed': '재생 상태를 바꾸지 못했습니다. 현재 표시를 확인한 뒤 다시 눌러 주세요.',
+    'playback.control.volumeFailed': '볼륨을 바꾸지 못했습니다. 기존 볼륨을 유지합니다. 다시 조절해 주세요.',
+    'playback.control.stopFailed': '재생 정지를 요청하지 못했습니다. 현재 출력에서 소리가 남아 있는지 확인한 뒤 다시 눌러 주세요.',
     'playback.discard.confirmed': '현재 곡의 실제 정지를 확인한 뒤 목록에서 버렸습니다. 다음 곡은 자동 재생하지 않습니다.',
     'playback.discard.stopRequestFailed': '현재 곡의 정지를 요청하지 못했습니다. 소리가 계속 날 수 있어 곡을 목록에 유지합니다.',
     'playback.discard.confirmationTimeout': '실제 정지를 확인하지 못했습니다. 곡을 목록에 유지합니다. 출력 상태를 확인한 뒤 다시 시도해 주세요.',
@@ -490,7 +494,8 @@ export const outputMessageCatalog = Object.freeze({
     'obs.setup.session.endDescription': '방송을 완전히 마치면 세션을 종료해 현재 곡·대기열·다시 부르기 목록과 임시 로컬 파일을 함께 정리합니다.',
     'obs.setup.session.endBlocked': '재생과 출력 처리가 모두 끝난 뒤에 세션을 종료할 수 있습니다. 먼저 현재 곡을 정지하거나 버려 주세요.',
     'obs.setup.session.endConfirm': '방송 세션을 종료할까요? 현재 재생·대기열·이전 재생 목록과 임시 로컬 파일이 정리됩니다.',
-    'obs.setup.session.endButton': '방송 세션 종료'
+    'obs.setup.session.endButton': '방송 세션 종료',
+    'obs.setup.session.endFailed': '방송 세션을 종료하지 못했습니다. 현재 곡과 목록은 유지했습니다. 잠시 뒤 다시 눌러 주세요.'
   }),
   en: Object.freeze({
     'playback.phase.preparing': 'Preparing…',
@@ -499,6 +504,10 @@ export const outputMessageCatalog = Object.freeze({
     'playback.localSpeaker.loadFailed': 'Could not load the audio. Retry or discard the current track.',
     'playback.localSpeaker.autoplayBlocked': 'The browser blocked audio from starting. Press the current track’s play button once to start it.',
     'playback.localSpeaker.startFailed': 'Speaker playback did not start. Retry or discard the current track.',
+    'playback.control.seekFailed': 'Could not change the playback position. The track will continue from its current position. Try again.',
+    'playback.control.toggleFailed': 'Could not change the playback state. Check the current indicator, then try again.',
+    'playback.control.volumeFailed': 'Could not change the volume. The previous volume is still in use. Try adjusting it again.',
+    'playback.control.stopFailed': 'Could not request playback to stop. Check whether audio remains on the current output, then try again.',
     'search.tab.youtubeSearch': 'YouTube Search',
     'search.tab.youtubeList': 'YouTube List',
     'search.tab.setlink': 'Setlink',
@@ -826,7 +835,8 @@ export const outputMessageCatalog = Object.freeze({
     'onair.session.ended.explicit': 'The broadcast session ended and temporary file cleanup was scheduled.',
     'onair.session.ended.unexpected': 'The broadcast connection ended. Your song list was kept; create a new connection before playing again.',
     'onair.session.ended.localSpeakerContinues': 'Music will keep playing in this browser. After the current track ends, the server connection will be renewed for the next track.',
-    'obs.setup.session.endBlocked': 'You can end the session after playback and output processing are idle. Stop or discard the current track first.'
+    'obs.setup.session.endBlocked': 'You can end the session after playback and output processing are idle. Stop or discard the current track first.',
+    'obs.setup.session.endFailed': 'Could not end the broadcast session. The current track and lists were kept. Try again in a moment.'
   })
 });
 

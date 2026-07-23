@@ -171,7 +171,7 @@ test('dashboard speaker is browser-local while OBS control reconnect stays bound
   );
   assert.match(
     source,
-    /LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000[\s\S]*?timeoutError: \(\) => new Error\(t\('playback\.localSpeaker\.notReady'\)\)/,
+    /LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS = 12_000[\s\S]*?timeoutError: \(\) => new UserActionError\('playback\.localSpeaker\.notReady'\)/,
     'a missing local player must reject its queued command instead of waiting forever',
   );
   assert.doesNotMatch(

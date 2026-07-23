@@ -63,3 +63,16 @@ test('live Dashboard surfaces cannot hardcode accessibility, placeholder, toast,
     );
   }
 });
+
+test('live Dashboard surfaces cannot expose raw browser or protocol error messages', async () => {
+  for (const relativePath of LIVE_USER_SURFACES) {
+    const source = withoutBlockComments(
+      await readFile(new URL(relativePath, import.meta.url), 'utf8'),
+    );
+    assert.doesNotMatch(
+      source,
+      /\berror\??\.message\b/,
+      `${relativePath} must translate a semantic recovery action instead of exposing error.message`,
+    );
+  }
+});

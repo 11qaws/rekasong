@@ -535,7 +535,7 @@ test('route refusal, watchdog recovery, and takeover timeout copy is localized a
     /if \(!isEmergencyStoppingOutput\)[\s\S]*?obs\.setup\.recovery\.emergencyTimeout[\s\S]*?retryOutputControlRef\.current\(\)/,
     'missing emergency-stop evidence must time out into a fresh state check',
   );
-  assert.match(panelSource, /\.catch\(\(error\) => \{[\s\S]*?obs\.setup\.recovery\.emergencyFailed/);
+  assert.match(panelSource, /\.catch\(\(\) => \{[\s\S]*?obs\.setup\.recovery\.emergencyFailed/);
   assert.match(
     dashboardSource,
     /const obsPlayerCandidate = outputControl\.outputView\?\.candidates\?\.obs \?\? null;/,

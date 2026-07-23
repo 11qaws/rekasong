@@ -74,6 +74,10 @@ import {
 import { createSpeakerMediaSessionController } from '../lib/speakerMediaSession';
 import { isSpeakerResumeRequiredEvidence } from '../lib/speakerInterruption';
 import {
+  UserActionError,
+  userActionErrorMessage,
+} from '../lib/userActionError';
+import {
   OBS_REMOTE_CONTROL_FEEDBACK_DELAY_MS,
   createObsRemoteControlFeedback,
   obsRemoteControlFeedbackMatchesRun,
@@ -101,7 +105,7 @@ import {
   YOUTUBE_ID_PATTERN,
   fetchPrepareStatus,
   isPrepareConfigured,
-  prepareBlockMessage,
+  prepareBlockMessageKey,
   prepareFailureInfo,
   prepareSessionIdentity,
   requestPrepare,
@@ -220,7 +224,7 @@ export default function Dashboard() {
   if (!localSpeakerCommandQueueRef.current) {
     localSpeakerCommandQueueRef.current = createBoundedCommandQueue({
       timeoutMs: LOCAL_SPEAKER_COMMAND_WAIT_TIMEOUT_MS,
-      timeoutError: () => new Error(t('playback.localSpeaker.notReady')),
+      timeoutError: () => new UserActionError('playback.localSpeaker.notReady'),
     });
   }
   const beginPlaybackRunRef = useRef(null);
@@ -771,7 +775,7 @@ export default function Dashboard() {
       state: localSpeakerState,
       queue: localSpeakerCommandQueueRef.current,
       command,
-      unavailableError: () => new Error(t('playback.localSpeaker.notReady')),
+      unavailableError: () => new UserActionError('playback.localSpeaker.notReady'),
     });
   };
 
@@ -782,7 +786,7 @@ export default function Dashboard() {
       state: nextState,
       queue: localSpeakerCommandQueueRef.current,
       error,
-      unavailableError: () => new Error(t('playback.localSpeaker.notReady')),
+      unavailableError: () => new UserActionError('playback.localSpeaker.notReady'),
     });
   }, []);
 
@@ -794,13 +798,13 @@ export default function Dashboard() {
       return undefined;
     }
     if (!['failed', 'invalid_configuration'].includes(localSpeakerState)) return undefined;
-    const error = new Error(t('playback.localSpeaker.notReady'));
+    const error = new UserActionError('playback.localSpeaker.notReady');
     localSpeakerCommandQueueRef.current.rejectAll(error);
     return undefined;
   }, [localSpeakerState]);
 
   useEffect(() => () => {
-    const error = new Error(t('playback.localSpeaker.notReady'));
+    const error = new UserActionError('playback.localSpeaker.notReady');
     localSpeakerCommandQueueRef.current.rejectAll(error);
     preparedSpeakerLoadQueueRef.current.clear();
     playbackOutputTransferRef.current = null;
@@ -918,7 +922,10 @@ export default function Dashboard() {
           position: time
         });
         trackObsRemoteControlRequest('seek', dispatchResult);
-        Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
+        Promise.resolve(dispatchResult).catch((error) => showToast(
+          userActionErrorMessage(error, t, 'playback.control.seekFailed'),
+          'error',
+        ));
         if (activeRef.current?.outputMode === 'obs') {
           observeObsPlaybackProgress({
             runId: activeRef.current.runId,
@@ -931,7 +938,7 @@ export default function Dashboard() {
           setCurrentTime(time);
         }
       } catch (error) {
-        showToast(error.message, 'error');
+        showToast(userActionErrorMessage(error, t, 'playback.control.seekFailed'), 'error');
       }
       return;
     }
@@ -1323,8 +1330,8 @@ export default function Dashboard() {
       try {
         const freshSession = await recoverOnAirConnection();
         resetPrepareSession(prepareSessionIdentity(freshSession));
-      } catch (error) {
-        showToast(error?.message || t('obs.setup.recovery.failed'), 'error');
+      } catch {
+        showToast(t('obs.setup.recovery.failed'), 'error');
         return;
       }
     }
@@ -1599,10 +1606,7 @@ export default function Dashboard() {
       if (!onAirSessionRecoveryGate.claim()) return;
       recoverOnAirConnection()
         .then(() => showToast(t('onair.connection.recovery.created'), 'success'))
-        .catch((error) => showToast(
-          error?.message || t('onair.connection.recovery.failed'),
-          'error'
-        ));
+        .catch(() => showToast(t('onair.connection.recovery.failed'), 'error'));
       return;
     }
 
@@ -1661,7 +1665,9 @@ export default function Dashboard() {
             outputMode: 'speaker',
             position: resumePosition,
           });
-          if (!nextActive) throw new Error(t('playback.localSpeaker.loadFailed'));
+          if (!nextActive) {
+            throw new UserActionError('playback.localSpeaker.loadFailed');
+          }
           transfer = createPlaybackOutputTransfer({
             entry: activeEntry,
             active: activeRun,
@@ -1671,10 +1677,13 @@ export default function Dashboard() {
           transferredState = commitPlaybackOutputTransfer(stateRef.current, transfer);
           if (transferredState === stateRef.current) {
             preparedSpeakerLoadQueueRef.current.discard(nextActive.runId);
-            throw new Error(t('playback.localSpeaker.loadFailed'));
+            throw new UserActionError('playback.localSpeaker.loadFailed');
           }
         } catch (error) {
-          showToast(error?.message || t('playback.localSpeaker.loadFailed'), 'error');
+          showToast(
+            userActionErrorMessage(error, t, 'playback.localSpeaker.loadFailed'),
+            'error',
+          );
           return;
         }
 
@@ -2001,7 +2010,13 @@ export default function Dashboard() {
           outputMode === 'obs'
             ? t('onair.output.playback.source')
             : t('playback.localSpeaker.source'),
-          error?.message || t('playback.localSpeaker.loadFailed'),
+          userActionErrorMessage(
+            error,
+            t,
+            outputMode === 'obs'
+              ? 'onair.output.playback.transitionFailed'
+              : 'playback.localSpeaker.loadFailed',
+          ),
         );
       }, 0);
     });
@@ -2018,7 +2033,9 @@ export default function Dashboard() {
   // 호출자가 catch→토스트로 처리한다(재생이 안 되는 편이 광고보다 낫다).
   const beginPlaybackRun = (entry, { outputMode = null, position = 0 } = {}) => {
     if (entry.song?.type === 'youtube' && getYoutubeOutputSafety(entry) !== 'safe') {
-      throw new Error(prepareBlockMessage(songPrepareState(entry.song, prepareStatesRef.current)));
+      throw new UserActionError(
+        prepareBlockMessageKey(songPrepareState(entry.song, prepareStatesRef.current)),
+      );
     }
     // OBS만 실제 player route가 확정돼야 한다. Speaker는 이 탭의 로컬 controller가
     // 담당하므로 OBS 후보·lease·heartbeat가 없어도 대기열·재시도·자동 다음 곡을
@@ -2028,11 +2045,11 @@ export default function Dashboard() {
       : outputModePreference === 'obs' ? 'obs' : 'speaker';
     if (useOnAirPlayer && runOutputMode === 'obs' && localSongNeedsObsAsset(entry.song)) {
       requestLocalSongObsAsset(entry.song);
-      throw new Error(t('dashboard.localFile.obsPreparingAction'));
+      throw new UserActionError('dashboard.localFile.obsPreparingAction');
     }
     const initialPosition = Number.isFinite(position) && position >= 0 ? position : 0;
     if (useOnAirPlayer && runOutputMode === 'obs' && !outputRouteStable) {
-      throw new Error(t('onair.output.playback.routeNotConfirmed'));
+      throw new UserActionError('onair.output.playback.routeNotConfirmed');
     }
     const runId = newId();
     setCurrentTime(initialPosition);
@@ -2106,7 +2123,10 @@ export default function Dashboard() {
         sessionId: stoppingEntryId || currentEntry?.entryId,
         runId: stoppingRunId || activeRef.current?.runId
       }, outputMode);
-      Promise.resolve(operation).catch((error) => showToast(error.message, 'error'));
+      Promise.resolve(operation).catch((error) => showToast(
+        userActionErrorMessage(error, t, 'playback.control.stopFailed'),
+        'error',
+      ));
     }
     setIsPlaying(false);
     setCurrentTime(0);
@@ -2175,7 +2195,10 @@ export default function Dashboard() {
       try {
         nextActive = beginPlaybackRun(promoted);
       } catch (error) {
-        showToast(error.message || t('dashboard.playback.nextFailed'), 'error');
+        showToast(
+          userActionErrorMessage(error, t, 'dashboard.playback.nextFailed'),
+          'error',
+        );
         promoted = null;
       }
     }
@@ -2237,7 +2260,7 @@ export default function Dashboard() {
       ? songPrepareState({ type: 'youtube', src: sourceItem.src }, prepareStates)
       : { kind: 'ready' };
     if (stagedPrepare.kind === 'blocked' || stagedPrepare.kind === 'unavailable') {
-      showToast(prepareBlockMessage(stagedPrepare), 'error');
+      showToast(t(prepareBlockMessageKey(stagedPrepare)), 'error');
       return false;
     }
 
@@ -2304,7 +2327,10 @@ export default function Dashboard() {
       try {
         nextActive = beginPlaybackRun(entry);
       } catch (error) {
-        showToast(error.message || t('dashboard.playback.startFailed'), 'error');
+        showToast(
+          userActionErrorMessage(error, t, 'dashboard.playback.startFailed'),
+          'error',
+        );
         return false;
       }
     }
@@ -2448,7 +2474,7 @@ export default function Dashboard() {
         stoppingRunId: activeRef.current?.runId
       });
     } catch (error) {
-      showToast(error.message || t('dashboard.playback.skipFailed'), 'error');
+      showToast(userActionErrorMessage(error, t, 'dashboard.playback.skipFailed'), 'error');
       return false;
     }
 
@@ -2693,7 +2719,7 @@ export default function Dashboard() {
     try {
       nextActive = beginPlaybackRun(current);
     } catch (error) {
-      showToast(error.message || t('dashboard.playback.retryFailed'), 'error');
+      showToast(userActionErrorMessage(error, t, 'dashboard.playback.retryFailed'), 'error');
       return;
     }
     setSharedState((previous) => {
@@ -2726,7 +2752,10 @@ export default function Dashboard() {
     try {
       nextActive = beginPlaybackRun(selectedEntry);
     } catch (error) {
-      showToast(error.message || t('dashboard.queue.playSelectedFailed'), 'error');
+      showToast(
+        userActionErrorMessage(error, t, 'dashboard.queue.playSelectedFailed'),
+        'error',
+      );
       return;
     }
 
@@ -2778,9 +2807,12 @@ export default function Dashboard() {
           runId: activeRef.current?.runId
         });
         trackObsRemoteControlRequest(action, dispatchResult);
-        Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
+        Promise.resolve(dispatchResult).catch((error) => showToast(
+          userActionErrorMessage(error, t, 'playback.control.toggleFailed'),
+          'error',
+        ));
       } catch (error) {
-        showToast(error.message, 'error');
+        showToast(userActionErrorMessage(error, t, 'playback.control.toggleFailed'), 'error');
       }
       return;
     }
@@ -2827,9 +2859,12 @@ export default function Dashboard() {
           volume: clamped
         }, targetMode);
         if (targetMode === 'obs') trackObsRemoteControlRequest('volume', dispatchResult);
-        Promise.resolve(dispatchResult).catch((error) => showToast(error.message, 'error'));
+        Promise.resolve(dispatchResult).catch((error) => showToast(
+          userActionErrorMessage(error, t, 'playback.control.volumeFailed'),
+          'error',
+        ));
       } catch (error) {
-        showToast(error.message, 'error');
+        showToast(userActionErrorMessage(error, t, 'playback.control.volumeFailed'), 'error');
       }
     }
   };
@@ -2886,9 +2921,9 @@ export default function Dashboard() {
     try {
       explicitSessionEndRequestedRef.current = true;
       sendOnAirCommand({ type: 'end_session' });
-    } catch (error) {
+    } catch {
       explicitSessionEndRequestedRef.current = false;
-      showToast(error.message, 'error');
+      showToast(t('obs.setup.session.endFailed'), 'error');
     }
   };
 

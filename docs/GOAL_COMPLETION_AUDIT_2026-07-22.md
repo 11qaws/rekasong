@@ -386,3 +386,11 @@
 - 전체 `744/744`, lint 신규 오류 0, build, pseudo-locale, 30곡 Blob 수명, OBS bundle 예산을 통과했다. Dashboard는 `377.69kB raw / 103.49kB gzip`, Speaker lazy chunk는 `8.34kB raw / 2.85kB gzip`, OBS closure는 `384,105B raw / 118,431B gzip / 103,706B brotli`다.
 - release commit `8d3e0cafa1b0fab6b48a0d976ab0b84c806ca4c4`, Pages workflow `29979715853`, build `89118818558`, deploy `89118984303`, deployment `5566950851`가 성공했다. manifest를 제외한 Actions artifact와 공개 CDN 파일은 크기·SHA-256 `21/21` exact match다.
 - FIFINE 마이크 20초 캡처에서는 440 Hz fixture를 idle 잡음과 유의하게 구분하지 못했다. 브라우저의 실제 재생 완료와 자연 종료는 확인했지만, 물리 Speaker→공기→마이크 경로는 loopback 입력이 없어 미확인으로 남긴다. 실제 스피커 청취 또는 같은-clock 가상 케이블 관문이 필요하며 방송·녹화는 시작하지 않았다.
+
+## 16. v0.2.35 사용자 오류 번역 경계 — 2026-07-23
+
+- Dashboard와 PlaybackPanel의 사용자 화면에서 브라우저·통신·플레이어 예외문을 직접 표시하던 22개 경로를 제거했다. 내부 코드는 표시하지 않고 탐색, 재생/일시정지, 볼륨, 정지, 연결 복구, 세션 종료별 번역된 다음 행동을 표시한다.
+- 구체적으로 표시할 수 있는 준비 상태와 출력 경로 조건은 문장 대신 semantic key를 가진 `UserActionError`로만 전달한다. 나머지 오류는 호출 경계의 번역 fallback으로 수렴하므로 locale 변경 뒤에도 현재 언어로 표시되며 내부 영문이나 코드가 섞이지 않는다.
+- source guard는 live UI의 `error.message` 재도입을 차단한다. 단위·계약·전체 회귀는 `749/749`, pseudo-locale은 3개 화면×4개 폭에서 overflow 0, 로컬 production smoke와 Speaker network/lifecycle/interruption smoke를 통과했다.
+- Dashboard는 `378.31kB raw / 103.67kB gzip`, Speaker lazy chunk는 `8.34kB / 2.85kB`, OBS closure는 `384,105B raw / 118,424B gzip / 103,700B brotli`다. Worker와 OBS runtime은 변경하지 않았고, 실제 방송·녹화도 시작하지 않았다.
+- 30초 cadence는 계속 관찰 전용이다. 곡 시작 때 `position: 0`으로 기준을 잡고 곡 안에서는 seek·restart·playbackRate·route 재연결을 만들지 않으며 다음 곡의 새 run에서 다시 기준을 잡는다.
