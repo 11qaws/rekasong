@@ -1,5 +1,14 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-07-23 (Codex) — v0.2.27 실제 OBS CEF 30초 관측 검증 안전화
+
+- 실제 OBS 외부 CEF harness가 control WebSocket의 원본 `playback_event`를 읽기 전용으로 관찰해 lifecycle과 `position` cadence를 직접 계수하도록 보강했다. 보관 값은 event/run/entry/media time/duration/수신 시각뿐이며 credential, URL, 곡 정보와 오류 상세는 버린다. 관측기는 제품 player에 seek·restart·playback-rate·route·media 명령을 보낼 수 없다.
+- harness는 OBS runtime이 현재 상태를 한 번 실제 보고한 뒤 `streaming=false`와 `recording=false`인 경우에만 fixture 업로드와 route 활성화를 허용한다. 상태 미관측은 false 기본값으로 간주하지 않고 대기하며, 방송 또는 녹화가 켜져 있으면 즉시 실패한다. 활성 시험 중에도 같은 안전 조건을 계속 검사해 바뀌면 STOP·deactivate·session end 정리를 수행한다.
+- 공개 v0.2.26 player와 production Worker를 실제 OBS 30.2.0 전용 test collection에서 `302.5초` fixture로 검증했다. wall `302,632ms`로 기대값 대비 `+132ms`, media duration은 정확히 `302,500ms`였고 30초 `position`은 정확히 10회였다. 수신 간격은 `30,025~30,113ms`, media time은 `29.951257→300.542368s`로 단조 증가했다. candidate 전환·control disconnect·reconnect·unsafe route는 모두 0이었고 자연 종료·strong STOP·output deactivate·session end·HTTP 410 fence를 통과했다.
+- 이 10회는 오디오를 30초마다 다시 맞춘 결과가 아니라 리모컨 기준을 갱신한 관측이다. 실제 재생은 곡의 브라우저 오디오 시계 하나로 연속 진행했고 관측 때문에 생긴 seek·restart·속도 변경·재연결은 0건이었다. 따라서 리모컨 표시는 최대 30초마다 절대 위치를 다시 잡되 반주는 건드리지 않는 제품 계약을 실제 CEF에서도 확인했다.
+- 시험 전후 OBS UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 최종 로그 `2026-07-23 08-58-30.txt`의 Streaming/Recording Start·Stop은 모두 0건이다. OBS를 정상 종료한 뒤 Browser Source 설정은 원본 SHA-256 `6c56fe4804fa0fc65cf50fc65fa64525562a4ef8d65152681bee0f0fe94050d0`과 바이트 단위로 복원했고 임시 handoff와 원자 교체 잔여 파일도 0건임을 확인했다.
+- 제품 runtime과 사용자 문구는 바꾸지 않았다. 전체 `730/730` 테스트, lint(신규 오류 0, 기존 Gemini escape 경고 2), Worker·harness 문법, production build, pseudo-locale 3화면×4폭과 OBS bundle 예산을 통과했다. OBS 정적 경로는 이전 공개본과 같은 `384,105B raw / 118,427B gzip / 103,644B brotli`다. 이번 버전은 실제 인수 harness의 비방송 안전 경계와 cadence 판정만 강화하며, 사용자 청취·플랫폼 ingest/VOD(G5)·같은-clock performer monitoring(G6)은 별도 관문으로 유지한다.
+
 ## 2026-07-23 (Codex) — v0.2.26 OBS 30초 위치 관측과 리모컨 로컬 보간
 
 - 사용자가 제안한 “한 곡은 자체 오디오 시계로 재생하고 30초마다 기준만 다시 확인한다”는 정책을 실제 일반 재생 경로에 적용했다. 곡 시작·재생·일시정지·버퍼링·탐색·종료·오류는 계속 즉시 전달하지만, 조작 없는 `position` telemetry만 `30,000ms` 간격으로 제한한다. 이 관측은 seek·restart·playback-rate 변경·route 교체·오디오 재연결을 절대 일으키지 않는다.

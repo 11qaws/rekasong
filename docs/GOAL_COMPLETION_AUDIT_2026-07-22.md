@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.26이다. OBS 오디오는 건드리지 않고 평상시 위치 관측만 30초로 낮추고 Dashboard 표시를 로컬 보간하는 runtime 변경이 공개됐다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존하며, v0.2.26 배포 검증은 OBS 재생·녹화·방송을 시작하지 않았다.
+> 최신 공개 배포는 v0.2.26이다. OBS 오디오는 건드리지 않고 평상시 위치 관측만 30초로 낮추고 Dashboard 표시를 로컬 보간하는 runtime 변경이 공개됐다. 이후 새 v0.2.26 player를 받은 실제 OBS CEF에서 302.5초 재생과 30초 position 10회를 직접 계수해 cadence 관문도 통과했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -23,7 +23,7 @@
 | OBS 최초 설정 대기가 경로 고장으로 바뀌지 않고 자동으로 이어짐 | v0.2.21 로컬 제품 UI·자동 계약·실제 OBS 후발 연결 통과 | v0.2.21 배포·공개 자산 확인 | 없음 |
 | OBS 재접속 중 재생 연결을 우선 보존 | 같은 player ID 자동 복구 + control coordinator/run 소유권 보존 + 새 ID 명시적 완전 초기화 + 실제 source hide/show·scene 전환·60분 CEF·source refresh·OBS 재시작·활성 곡 control socket 단절 후 조작 복구 완료 | v0.2.26 공개 배포됨 | 없음 |
 | OBS 리모컨 요청과 실제 플레이어 적용을 구분 | 자동 검증 완료 | v0.2.26 공개 배포됨 | 실제 OBS 연결 상태에서 설정 카드 확인 |
-| OBS 오디오를 건드리지 않고 평상시 위치 관측만 30초로 제한 | 5분·4Hz 모사에서 position 1,200→9, 자동 media 명령 0 | v0.2.26 공개 자산·해시 확인 | 새 player를 받은 실제 OBS CEF에서 5분 메시지 cadence 재계측 |
+| OBS 오디오를 건드리지 않고 평상시 위치 관측만 30초로 제한 | 5분·4Hz 모사 1,200→9 + 실제 CEF 302.5초 position 10회, 자동 media 명령 0 | v0.2.26 공개 player 실제 OBS 통과 | 없음 |
 | 헤더 머리핀 UI와 유레카 금발 선 | 완료 | v0.2.26 공개 배포·긴 문구 시각 검증됨 | 없음 |
 | YouTube 검색/목록을 한 소스로 묶기 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
@@ -32,7 +32,7 @@
 | 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.26 공개 예산 통과·기존 60분 CEF 통과 | 로컬 Blob 장시간 상한 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.26` / release commit `ccac98477871f01a6625f90056535a9a9687ca33`까지 성공적으로 배포됐다. Pages workflow `29966902022`와 deployment `5564569384`가 success이며 clean Ubuntu에서 724개 테스트·pseudo-locale layout·OBS bundle 예산을 통과했다. 공개 `index.html`, entry, Dashboard, `OnAirPlayerV2-DgWroZwz.js`, protocol 자산은 Actions artifact와 바이트·SHA-256이 정확히 일치한다. v0.2.26은 일반 재생의 위치 telemetry만 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 기존 실제 OBS 증거는 v0.2.24의 활성 곡 control-gap 복구까지 유효하지만, 이미 열려 있던 OBS Browser Source가 v0.2.26 player를 받으려면 안전한 시점에 한 번 새로고침해야 한다. v0.2.26의 새 실제 CEF 5분 cadence 측정은 별도 관문이다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.26` / release commit `ccac98477871f01a6625f90056535a9a9687ca33`까지 성공적으로 배포됐다. Pages workflow `29966902022`와 deployment `5564569384`가 success이며 clean Ubuntu에서 724개 테스트·pseudo-locale layout·OBS bundle 예산을 통과했다. 공개 `index.html`, entry, Dashboard, `OnAirPlayerV2-DgWroZwz.js`, protocol 자산은 Actions artifact와 바이트·SHA-256이 정확히 일치한다. v0.2.26은 일반 재생의 위치 telemetry만 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 새 player를 받은 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
 ### v0.2.26 공개 배포·30초 위치 관측 — 2026-07-23
 

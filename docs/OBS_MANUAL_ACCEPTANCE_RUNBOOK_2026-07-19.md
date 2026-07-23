@@ -143,9 +143,11 @@ npm run test:obs:v2:cef-soak
 3. Properties를 다시 열어 저장된 URL이 동일한지 확인한다.
 4. `Refresh cache of current page`를 누르고 즉시 `OK`를 누른다. OBS 툴바의 일반 새로고침만으로 대체하지 않는다.
 5. Properties 미리보기 CEF는 잠시 뒤 사라지고 본 source CEF가 새 identity로 연결될 수 있다. harness가 하나의 후보를 75초 연속 관측해 확정할 때까지 Properties를 다시 열거나 source를 조작하지 않는다.
-6. `SOAK_PLAYING` 뒤 player 1개, OBS 후보 1개, `audible`, `playing`, 동일 lease target을 주기적으로 기록한다. OBS 본체와 해당 renderer의 working set/private memory도 같은 간격으로 기록한다.
-7. 자연 종료 뒤 harness가 STOP, output deactivate, session end와 HTTP 410 재사용 차단까지 완료하는지 확인한다.
-8. 시험 전 URL을 복원하고, 다시 저장 확인 → cache refresh → 즉시 OK 순서를 지킨다. clipboard에 URL을 남기지 않는다.
+6. harness가 OBS runtime의 현재 status를 실제 관측하고 `streaming=false`, `recording=false`임을 증명하기 전에는 fixture 업로드와 route 활성화를 시작하지 않는다. 상태 미관측은 OFF로 간주하지 않으며, 시험 도중 방송 또는 녹화가 켜져도 즉시 실패·정리한다.
+7. `SOAK_PLAYING` 뒤 player 1개, OBS 후보 1개, `audible`, `playing`, 동일 lease target을 주기적으로 기록한다. OBS 본체와 해당 renderer의 working set/private memory도 같은 간격으로 기록한다.
+8. control WebSocket의 lifecycle은 즉시 도착하고 평상시 `position`은 30초 예산 안에서만 오는지 읽기 전용으로 계수한다. 이 관측 때문에 seek·restart·playback-rate·route·media 명령을 만들지 않는다.
+9. 자연 종료 뒤 harness가 STOP, output deactivate, session end와 HTTP 410 재사용 차단까지 완료하는지 확인한다.
+10. 시험 전 URL을 복원하고, 다시 저장 확인 → cache refresh → 즉시 OK 순서를 지킨다. clipboard에 URL을 남기지 않는다.
 
 합격 기준:
 
@@ -173,6 +175,15 @@ npm run test:obs:v2:cef-soak
 - 자연 종료 뒤 strong STOP·output deactivate·session end 정리가 완료됐고 종료 session 조회는 HTTP 410이었다. 이로써 이 실행서의 실제 CEF 60분 장시간 관문은 **통과**다.
 - 시험 URL은 원래 URL과 길이·SHA-256을 대조해 복원하고 cache refresh를 적용했다. clipboard와 credential-bearing 임시 파일은 제거했다.
 - 이 결과는 실제 OBS CEF 재생 경로와 자원 안정성 증거다. 사용자의 물리 모니터링 청취, ingest/VOD(G5), 라이브 마이크↔MR 상대 싱크(G6)는 대체하지 않는다.
+
+2026-07-23 공개 v0.2.26의 30초 관측 재실행 기록:
+
+- 실제 OBS 30.2.0 Browser Source 한 개로 `302,500ms` WAV fixture를 자연 종료까지 재생했다. wall은 `302,632ms`, 오차는 `+132ms`, media duration은 정확히 `302,500ms`였다.
+- lifecycle은 `playing`과 `ended`를 즉시 포함했고 `position`은 정확히 10회였다. 수신 간격은 `30,025~30,113ms`, media time은 `29.951257→300.542368s`로 역행 없이 증가했다. candidate 전환, control disconnect/reconnect, unsafe route 관측은 모두 0건이었다.
+- 30초 값은 리모컨 표시용 절대 기준 관측이며 음원 동기 보정 명령이 아니다. 같은 media graph를 끝까지 유지했고 관측으로 인한 seek·restart·playback-rate 변경·재연결은 0건이었다.
+- harness가 업로드 전과 재생 중 `streaming=false`, `recording=false`를 fail-closed로 확인했다. 실행 전·중·후 UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었고 최종 OBS 로그의 Streaming/Recording Start·Stop은 모두 0건이었다.
+- 종료 뒤 strong STOP·output deactivate·session end·HTTP 410 fence를 통과했다. Browser Source 설정은 시험 전 SHA-256과 exact match로 복원했고 credential handoff와 원자 교체 임시 파일은 제거했다.
+- 이 run으로 v0.2.26의 실제 CEF 5분 메시지 cadence 관문은 통과했다. 물리 청취, 녹화 artifact, G5와 G6를 새로 증명한 run은 아니다.
 
 ### 5.3 실제 OBS source refresh·재시작 복구 run
 

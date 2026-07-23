@@ -12,6 +12,8 @@
 >
 > 추가 활성 곡 control-gap 검증: `0.2.24` / `ba92170f46dc6142ea9720cdfa276d2da2625737` 공개 배포·실제 OBS 통과
 >
+> 추가 30초 위치 관측 검증: 공개 `0.2.26` player / 실제 OBS 302.5초 CEF 통과
+>
 > Production Worker: `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`
 >
 > OBS: `30.2.0`, 전용 profile·scene collection `Rekasong_Local_Record_Test_20260722`
@@ -27,6 +29,7 @@
 - 라이브 마이크↔MR G6는 전용 분리 track과 물리 스피커·FIFINE 마이크로 10분까지 실행했다. 60/60 marker와 낮은 jitter는 확인했지만, 현재 장치 조합의 상대 drift가 허용치를 넘었으므로 **G6 통과로 판정하지 않는다**.
 - 공개 v0.2.19 OBS player의 302.5초 곡을 빈 장면으로 10초 전환했다가 복귀해도 동일 player·connection·run이 유지됐고 wall 오차 `84ms`로 자연 종료했다. 30초 관측은 기록 전용이며 곡 중 재생 위치나 속도를 보정하지 않는다.
 - v0.2.24 실제 control-gap run은 활성 곡 중 Dashboard 제어 socket만 끊어도 같은 coordinator·player·run이 유지되고 media timeline이 계속 전진하며, 복구 뒤 명시적 pause/play/stop이 다시 적용됨을 확인했다.
+- 공개 v0.2.26 player의 실제 OBS CEF 302.5초 run은 position을 정확히 10회, 최소 `30,025ms` 간격으로 관측했고 wall 오차 `132ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 자연 종료했다. 이 관측은 음원 보정이 아니라 리모컨 기준 갱신이며 seek·restart·속도 변경·재연결을 만들지 않았다.
 
 ### 1.1 장면 전환 연속성 추가 검증 — 2026-07-23
 
@@ -45,6 +48,15 @@
 - 복구 뒤 명시적 PAUSE→PLAY→STOP을 같은 run에 보내 실제 상태 변화를 확인했다. output deactivate와 end session 뒤 session status는 HTTP 410이었다.
 - 첫 run은 동작 결함이 아니라 검증기가 요청 close code와 관측 close code의 일치를 강제한 탓에 실패했다. 요청·관측을 분리하도록 고친 뒤 전체 시나리오를 처음부터 다시 실행해 통과했다. 두 run 모두 정리 후 원본 URL을 exact match로 복원했다.
 - 시험 전후 UI는 `Start Streaming`·`Start Recording`, 두 타이머 `00:00:00`이었다. 최종 로그 `2026-07-23 07-20-44.txt`의 Streaming/Recording Start·Stop은 모두 0이고 clean shutdown은 1회다. 원본 URL은 214자·SHA-256 `e654020bc4e70f0faf7bc5f5e5bf8672891ad461126030ecd254093873e07a2d`로 exact 복원됐고 handoff는 제거됐다. 실제 방송·녹화는 시작하지 않았다.
+
+### 1.3 공개 v0.2.26 실제 CEF 30초 관측 — 2026-07-23
+
+- 전용 `Rekasong_Local_Record_Test_20260722 / Scene / Browser`와 production Worker·공개 v0.2.26 player에서 `302,500ms` WAV를 재생했다. wall은 `302,632ms`, 오차는 `+132ms`, media duration은 정확히 `302,500ms`였다.
+- raw control WebSocket에서 `playing`·`ended` lifecycle과 `position` 10회를 읽기 전용으로 수집했다. position media time은 `29.951257→300.542368s`, 수신 간격은 `30,025~30,113ms`였고 역행·빠른 중복이 없었다.
+- candidate 전환, control disconnect, reconnect 시도, unsafe route는 모두 0건이었다. 같은 player·lease·media graph가 자연 종료까지 유지됐고 strong STOP·deactivate·session end·HTTP 410 fence를 통과했다.
+- 30초 position은 리모컨 표시가 실제 player에 다시 기대는 관측이다. player 오디오를 seek·restart하거나 playback-rate를 바꾸는 동기 보정은 실행하지 않았다. 따라서 이 run은 메시지 cadence와 연속 재생 증거이며 마이크↔MR G6 증거는 아니다.
+- harness는 현재 OBS status를 실제 관측해 `streaming=false`, `recording=false`인 경우에만 upload·activation을 허용했고 재생 중에도 계속 검사했다. 실행 전·중·후 UI는 `Start Streaming`·`Start Recording`, 타이머 `00:00:00`이었고 로그 `2026-07-23 08-58-30.txt`의 Streaming/Recording Start·Stop은 0건이었다.
+- OBS 종료 뒤 Browser Source 설정은 시험 전 원본 SHA-256 `6c56fe4804fa0fc65cf50fc65fa64525562a4ef8d65152681bee0f0fe94050d0`과 exact match로 복원했다. 임시 credential handoff와 `.next`/`.rollback` 잔여 파일은 0건이다.
 
 ## 2. 안전 경계와 방송 OFF 증거
 

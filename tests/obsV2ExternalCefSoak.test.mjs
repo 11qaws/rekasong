@@ -22,6 +22,13 @@ test('external CEF soak keeps the player credential in a short-lived handoff fil
   assert.match(source, /coordinator\.connect\(\)/);
   assert.match(source, /'soak_control_reconnecting'/);
   assert.match(source, /stableForMs >= CANDIDATE_STABLE_MS/);
+  assert.match(source, /inspectExternalCefRuntime/);
+  assert.match(source, /STREAMING_ACTIVE/);
+  assert.match(source, /RECORDING_ACTIVE/);
+  assert.match(source, /candidate\.runtime\?\.streamingStatusObserved === true/);
+  assert.match(source, /candidate\.runtime\?\.streaming === false/);
+  assert.match(source, /candidate\.runtime\?\.recording === false/);
+  assert.match(source, /external OBS CEF runtime became unsafe/);
   assert.match(source, /candidateTransitions \+= 1/);
   assert.match(source, /await writeStatus\('candidate_connected'/);
   assert.match(source, /await writeStatus\('uploading_asset'/);
@@ -59,6 +66,13 @@ test('external CEF soak enforces bounded media and exact route cleanup', async (
   assert.match(source, /controlDisconnectCount/);
   assert.match(source, /controlReconnectAttemptCount/);
   assert.match(source, /maxControlGapMs/);
+  assert.match(source, /observePlaybackCadenceFrame/);
+  assert.match(source, /summarizePlaybackCadence/);
+  assert.match(source, /webSocketFactory: createTrackedControlWebSocket/);
+  assert.match(source, /playbackCadenceRecords\.length = 0/);
+  assert.match(source, /positionCountWithinExpectedRange/);
+  assert.match(source, /positionsStrictlyIncrease/);
+  assert.match(source, /positionGapWithinTolerance/);
   assert.match(source, /observation\.playerCount !== 1/);
   assert.match(source, /observation\.obsCandidateCount !== 1/);
   assert.match(

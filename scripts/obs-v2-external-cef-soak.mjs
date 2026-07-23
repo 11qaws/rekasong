@@ -9,6 +9,15 @@ import {
 import { OnAirOutputController } from '../src/hooks/useOnAirOutputControl.js';
 import { renderObsV2ContinuityFixture } from './obs-v2-continuity-fixture.mjs';
 import {
+  DEFAULT_CADENCE_TOLERANCE_MS,
+  observePlaybackCadenceFrame,
+  summarizePlaybackCadence,
+} from './obs-v2-playback-cadence.mjs';
+import {
+  EXTERNAL_CEF_PREFLIGHT_CODES,
+  inspectExternalCefRuntime,
+} from './obs-v2-external-cef-preflight.mjs';
+import {
   createHarnessDiagnosticSanitizer,
   omittedHttpBodyErrorMessage,
 } from './obs-v2-harness-safety.mjs';
@@ -47,6 +56,11 @@ const PLAYBACK_GRACE_MS = positiveIntegerEnvironment(
 const PROGRESS_INTERVAL_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_SOAK_PROGRESS_INTERVAL_MS',
   30_000,
+);
+const POSITION_OBSERVATION_INTERVAL_MS = 30_000;
+const POSITION_CADENCE_TOLERANCE_MS = positiveIntegerEnvironment(
+  'REKASONG_CEF_POSITION_CADENCE_TOLERANCE_MS',
+  DEFAULT_CADENCE_TOLERANCE_MS,
 );
 const CONTROL_RECONNECT_GRACE_MS = positiveIntegerEnvironment(
   'REKASONG_CEF_SOAK_RECONNECT_GRACE_MS',
@@ -130,6 +144,7 @@ let latestTrackedCoordinator = null;
 let outputControllerStarted = false;
 const commandResults = new Map();
 const routeObservations = [];
+const playbackCadenceRecords = [];
 const controlDiagnostics = [];
 const controlSocketRecords = [];
 const controlCoordinatorCallCounts = new Map();
@@ -231,6 +246,12 @@ function createTrackedControlWebSocket(url) {
     record.closeCode = Number.isInteger(event?.code) ? event.code : null;
     record.wasClean = typeof event?.wasClean === 'boolean' ? event.wasClean : null;
   }, { once: true });
+  socket.addEventListener('message', (event) => {
+    const record = observePlaybackCadenceFrame(event?.data, Date.now());
+    if (!record) return;
+    playbackCadenceRecords.push(record);
+    if (playbackCadenceRecords.length > 512) playbackCadenceRecords.shift();
+  });
   return socket;
 }
 
@@ -351,6 +372,17 @@ function assertHealthy({ allowSessionEnded = false, commandId = null } = {}) {
     if (failure) throw new Error(`command ${commandId} failed: ${diagnostics.json(failure)}`);
   }
   const snapshot = coordinator?.snapshot?.();
+  const leaseTarget = snapshot?.playerSnapshot?.lease?.leaseTarget;
+  const leasedPlayer = snapshot?.playerSnapshot?.players?.find((player) => (
+    player.playerInstanceId === leaseTarget
+  ));
+  if (snapshot?.playerSnapshot?.activeFamily
+    && leasedPlayer?.clientKind === 'obs-browser-source') {
+    const runtimeSafety = inspectExternalCefRuntime(leasedPlayer.runtime);
+    if (!runtimeSafety.ok) {
+      throw new Error(`external OBS CEF runtime became unsafe: ${runtimeSafety.code}`);
+    }
+  }
   const lock = snapshot?.unknownLock;
   if (!lock) finishRecoveredControlGap();
   if (lock && !(allowSessionEnded
@@ -405,7 +437,7 @@ async function waitForControllerState(predicate, timeoutMs, label) {
   })}`);
 }
 
-function currentObsCandidate() {
+function currentSoleObsCandidate() {
   const snapshot = coordinator.snapshot().playerSnapshot;
   const candidateIds = snapshot?.eligibleCandidates?.obs || [];
   const player = snapshot?.players?.find((entry) => entry.playerInstanceId === candidateIds[0]);
@@ -417,6 +449,11 @@ function currentObsCandidate() {
     : null;
 }
 
+function currentObsCandidate() {
+  const player = currentSoleObsCandidate();
+  return player && inspectExternalCefRuntime(player.runtime).ok ? player : null;
+}
+
 async function waitForStableObsCandidate() {
   const deadline = Date.now() + CANDIDATE_TIMEOUT_MS;
   let candidateId = null;
@@ -426,6 +463,16 @@ async function waitForStableObsCandidate() {
   let lastStatusAt = 0;
   while (Date.now() < deadline) {
     assertHealthy();
+    const observedCandidate = currentSoleObsCandidate();
+    const runtimeSafety = observedCandidate
+      ? inspectExternalCefRuntime(observedCandidate.runtime)
+      : null;
+    if (runtimeSafety && [
+      EXTERNAL_CEF_PREFLIGHT_CODES.STREAMING_ACTIVE,
+      EXTERNAL_CEF_PREFLIGHT_CODES.RECORDING_ACTIVE,
+    ].includes(runtimeSafety.code)) {
+      throw new Error(`external OBS CEF preflight blocked: ${runtimeSafety.code}`);
+    }
     const candidate = currentObsCandidate();
     const now = Date.now();
     if (!candidate) {
@@ -620,6 +667,9 @@ function routeObservation(snapshot) {
     leaseTarget,
     leaseSourceActive: leasedPlayer?.runtime?.sourceActive ?? null,
     leaseSourceVisible: leasedPlayer?.runtime?.sourceVisible ?? null,
+    leaseStreaming: leasedPlayer?.runtime?.streaming ?? null,
+    leaseStreamingStatusObserved: leasedPlayer?.runtime?.streamingStatusObserved ?? null,
+    leaseRecording: leasedPlayer?.runtime?.recording ?? null,
     activeEntryId: snapshot?.playerSnapshot?.activeFamily?.entryId ?? null,
     activeRunId: snapshot?.playerSnapshot?.activeFamily?.runId ?? null,
     confirmedStatus: snapshot?.playerSnapshot?.confirmedPlayback?.status ?? null,
@@ -1433,7 +1483,7 @@ async function run() {
       transport: {
         url: websocketUrl(session.room, session.controlToken),
         sessionId: session.room,
-        webSocketFactory: (url) => new WebSocket(url),
+        webSocketFactory: createTrackedControlWebSocket,
         buildId: 'rekasong-v2-external-cef-soak',
         capabilities: {},
       },
@@ -1450,11 +1500,19 @@ async function run() {
 
   const stableCandidate = await waitForStableObsCandidate();
   const { candidate, candidateTransitions } = stableCandidate;
+  invariant(
+    candidate.runtime?.streamingStatusObserved === true
+      && candidate.runtime?.streaming === false
+      && candidate.runtime?.recording === false,
+    'external OBS CEF preflight proved streaming and recording are off',
+  );
   await writeStatus('candidate_connected', {
     playerCount: 1,
     obsCandidateCount: 1,
     stableMs: CANDIDATE_STABLE_MS,
     candidateTransitions,
+    streaming: false,
+    recording: false,
   });
   await removeSetupHandoff();
   console.log('CEF_CANDIDATE_CONNECTED');
@@ -1485,6 +1543,7 @@ async function run() {
     return;
   }
 
+  playbackCadenceRecords.length = 0;
   const activation = coordinator.activateOutput('obs');
   await waitFor(() => {
     const snapshot = coordinator.snapshot();
@@ -1578,6 +1637,37 @@ async function run() {
     `media=${ended.confirmedPlayback.duration * 1_000}ms expected=${EXPECTED_DURATION_MS}ms`,
   );
 
+  const playbackCadence = summarizePlaybackCadence(playbackCadenceRecords, {
+    runId,
+    durationMs: EXPECTED_DURATION_MS,
+    intervalMs: POSITION_OBSERVATION_INTERVAL_MS,
+    toleranceMs: POSITION_CADENCE_TOLERANCE_MS,
+  });
+  invariant(
+    playbackCadence.eventCounts.playing >= 1
+      && playbackCadence.eventCounts.ended >= 1,
+    'external OBS CEF lifecycle evidence stayed immediate',
+    diagnostics.json(playbackCadence.eventCounts),
+  );
+  invariant(
+    playbackCadence.positionCountWithinExpectedRange,
+    'external OBS CEF position evidence stayed on the 30-second budget',
+    diagnostics.json(playbackCadence),
+  );
+  invariant(
+    playbackCadence.positionsStrictlyIncrease,
+    'external OBS CEF position evidence never moved backwards',
+    diagnostics.json(playbackCadence.positionMediaTimes),
+  );
+  invariant(
+    playbackCadence.positionGapWithinTolerance,
+    'external OBS CEF position evidence had no rapid duplicate emission',
+    diagnostics.json({
+      receivedGapsMs: playbackCadence.receivedGapsMs,
+      minimumAllowedGapMs: playbackCadence.minimumAllowedGapMs,
+    }),
+  );
+
   const unsafeObservations = routeObservations.filter((observation) => (
     (observation.unknownLockCode !== null
       && observation.unknownLockCode !== ON_AIR_CONTROL_COORDINATOR_CODES.CONNECTION_LOST)
@@ -1640,6 +1730,7 @@ async function run() {
     maxControlGapMs,
     routeObservationCount: routeObservations.length,
     unsafeObservationCount: unsafeObservations.length,
+    playbackCadence,
   })}`));
 }
 
