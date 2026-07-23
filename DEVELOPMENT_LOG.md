@@ -8,6 +8,9 @@
 - byte 상한·동일 src 원자 만료·현재/대기열 보호·구버전 unknown 크기 보수 계산은 기존 단위 계약을 다시 통과했다. 30초 OBS 위치 관측도 함께 추적해 `position`은 표시 기준만 갱신하고 seek·restart·playback-rate·route·media 명령을 만들지 않는다는 기존 계약을 유지한다.
 - 새 검증은 `scripts/`와 Pages workflow에만 있으며 사용자 runtime·문구·번역 catalog·OBS player bundle을 바꾸지 않는다. 배포 workflow는 build와 pseudo-locale 뒤 이 30곡 수명 시험까지 통과한 artifact만 게시한다.
 - 첫 Pages run `29969969505`는 제품 test·lint·build·pseudo-locale까지 통과한 뒤 새 관문의 기본 Speaker 문구 정규식이 Ubuntu의 `Playing through speakers` 소문자 복수형을 허용하지 않아 중단됐다. 제품 상태 실패가 아니라 test oracle의 대소문자 결함이므로 한국어 또는 case-insensitive `speaker`를 받도록 고쳤고, Blob 수명·재생·메모리 판정은 낮추지 않았다.
+- v0.2.28 release commit `1346be0d5eef6e8ac680d2d9b6bd46eb134bea49`의 Pages workflow `29970083896`과 deployment `5565152862`가 성공했다. clean Ubuntu에서 730 tests·lint·Worker 문법·build·pseudo-locale·새 30곡 수명 관문·OBS bundle·artifact upload·deploy를 모두 통과했고, 새 관문은 41초 안에 완료됐다.
+- 공개 URL에서도 30곡 반복이 생성 30·선회수 25·유지 5·Dashboard 종료 뒤 30/30 회수, 저장 Blob URL·Worker 요청 0으로 다시 통과했다. 공개 run의 post-GC heap 증가는 `4,222,900B`, 전이 p95는 `1,340.9ms`였다. 일반 공개 smoke는 기본 Speaker, YouTube/Setlink/Meloming, Search/Playlist, 한·영 reload, 320/375/768/1100px, 320px 영문 설정, 두 출력 버튼과 금발 선을 통과했고 HTTP 오류·ntfy 요청 0, warm DCL `26.0ms`, long task 0, JS heap `8,012,016B`였다.
+- Actions의 `github-pages` artifact와 공개 파일 21개를 독립적으로 내려받아 바이트 길이와 SHA-256을 비교했고 21/21 exact match였다. 제품 runtime hash는 v0.2.26과 같으며 이번 버전은 test·workflow·문서만 바꾼다. 실제 방송·녹화·OBS route는 시작하지 않았다.
 
 ## 2026-07-23 (Codex) — v0.2.27 실제 OBS CEF 30초 관측 검증 안전화
 

@@ -4,7 +4,7 @@
 >
 > 판정 원칙: 코드 존재가 아니라 사용자가 실제로 끝까지 수행할 수 있는지, 그리고 그 사실을 어떤 증거로 확인했는지로 판정한다.
 >
-> 최신 공개 배포는 v0.2.27이다. v0.2.26의 30초 관측 runtime과 바이트가 같은 상태에서 실제 OBS CEF cadence 검증 도구의 비방송 fail-closed 경계와 판정만 강화했다. 새 v0.2.26 player를 받은 실제 OBS CEF에서 302.5초 재생과 30초 position 10회를 직접 계수해 cadence 관문도 통과했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
+> 최신 공개 배포는 v0.2.28이다. v0.2.26의 제품 runtime과 바이트가 같은 상태에서 실제 OBS CEF 30초 cadence 관문과 Speaker 로컬 파일 30곡 수명 관문을 배포 필수 검증으로 고정했다. 실제 OBS·로컬 녹화·OBS→Speaker 전환 물리 증거는 [OBS_PHYSICAL_VALIDATION_2026-07-22.md](./OBS_PHYSICAL_VALIDATION_2026-07-22.md)와 [OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md](./OBS_MANUAL_ACCEPTANCE_RUNBOOK_2026-07-19.md)에 보존한다.
 
 ## 1. 현재 결론
 
@@ -29,17 +29,19 @@
 | 노래책 행 클릭 후 명확한 검토/재생 행동 | 완료 | v0.2.26 공개 smoke 통과 | 없음 |
 | 검색·노래책 곡을 지금/다음 재생·대기열·이력에 드래그 | 완료·실제 Chrome 검증 | v0.2.15 공개 검증됨 | 모바일·키보드는 기존 클릭 경로 사용 |
 | 한국어/영어 전환과 번역 가능한 출력 구조 | 완료(현재 사용자 화면 범위 + pseudo CI) | v0.2.26 공개 언어 전환·reload·3화면×4폭 긴 문구 통과 | 없음 |
-| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.26 공개 예산 통과·기존 60분 CEF 통과, v0.2.28 후보 30곡 Blob 수명 통과 | 없음 |
+| 가벼운 앱과 OBS 정적 경로 예산 | 완료 | v0.2.28 공개 예산·30곡 Blob 수명, 기존 60분 CEF 통과 | 없음 |
 | 1,000곡 이력이 기본 조작을 무겁게 하지 않음 | production-browser 실측 완료 | v0.2.15 공개 코드 재확인 | 없음 |
 
-현재 공개 Pages는 `0.2.27` / release commit `b23ca23d69ca61c823d85c0a91b7aa0145e78064`까지 성공적으로 배포됐다. Pages workflow `29968661755`와 deployment `5564872415`가 success이며 clean Ubuntu에서 730개 테스트·pseudo-locale layout·OBS bundle 예산을 통과했다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256이 전부 일치한다. 핵심 runtime 자산은 v0.2.26과 동일한 hash이며 이번 버전은 검증 harness·테스트·문서만 바꾼다. 일반 재생의 위치 telemetry는 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 새 player를 받은 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
+현재 공개 Pages는 `0.2.28` / release commit `1346be0d5eef6e8ac680d2d9b6bd46eb134bea49`까지 성공적으로 배포됐다. Pages workflow `29970083896`와 deployment `5565152862`가 success이며 clean Ubuntu에서 730개 테스트·pseudo-locale layout·30곡 local Blob 수명·OBS bundle 예산을 통과했다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256이 전부 일치한다. 핵심 runtime 자산은 v0.2.26과 동일한 hash이며 이번 버전은 test·workflow·문서만 바꾼다. 일반 재생의 위치 telemetry는 30초 절대 관측으로 제한하고 Dashboard 표시를 단조 시계로 로컬 보간한다. 오디오를 seek·restart·속도 변경·재연결하지 않으며 곡 시작·play·pause·buffering·seek·ended·error는 즉시 처리한다. 실제 OBS CEF 302.5초 run도 wall 오차 `132ms`, position 10회, 수신 간격 최소 `30,025ms`, candidate 전환·control disconnect/reconnect·unsafe route 0으로 통과했다. 공개 Speaker 30곡 반복은 최근 5개 유지·25개 선회수·Dashboard 종료 뒤 30/30 회수, 저장 Blob URL·Worker 요청 0으로 통과했다. production Worker runtime은 변경·재배포하지 않았고 현재 close 관측 배포 version은 `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`이다. 실제 OBS CEF 60분 재생과 별도 5분 가상 케이블 녹화도 기존 버전에서 통과했다. 물리 G6는 현재 장치 조합의 시작 offset 실패와 5분 drift 경계를 유지하지만, 가상 케이블 격리 run은 5분 drift `0.965ms`/linear-fit `0.352ms`로 통과하고 고정 offset `85.797ms`는 실패했다. 사용자 청취와 G5는 별도 관문으로 남는다.
 
-### v0.2.28 후보 Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
+### v0.2.28 공개 배포·Speaker 로컬 파일 장시간 수명 관문 — 2026-07-23
 
 - production build 브라우저에서 기본 Speaker로 로컬 WAV 30개를 UI 선택→재생→종료까지 반복했다. 완료 기록 30개는 유지하면서 최근 5개만 즉시 재생 가능한 Blob으로 남고 오래된 25개는 복구 가능한 메타데이터로 만료됐다.
 - Dashboard가 열린 동안 Object URL은 생성 30·회수 25·유지 5였고 Dashboard unmount 뒤에는 30개 전부 회수·유지 0이었다. 저장소 `blob:` URL, Worker session/WebSocket/ntfy 요청, page error는 모두 0이었다.
 - Linux와 같은 `en-US` locale로 고정한 최종 배포 후보 run의 강제 GC 뒤 JS heap 증가는 `4,200,944B`, 30회 UI 전이 p95는 `1,342.4ms`였다. byte 상한과 현재/대기열 보호는 단위 계약으로 함께 재확인했다.
-- 이 관문은 새 재생 제한이나 서버 검사를 추가하지 않는다. 기존 수명 정책을 실제 제품 UI에서 검증하고 Pages workflow에 넣은 test-only 변경이며, 공개 배포 전까지 표의 공개 증거는 후보로 구분한다.
+- 이 관문은 새 재생 제한이나 서버 검사를 추가하지 않는다. 기존 수명 정책을 실제 제품 UI에서 검증하고 Pages workflow에 넣은 test-only 변경이다.
+- Pages workflow `29970083896`과 deployment `5565152862`가 release commit `1346be0d5eef6e8ac680d2d9b6bd46eb134bea49`로 성공했다. 공개 URL의 동일 30곡 run은 post-GC heap 증가 `4,222,900B`, 전이 p95 `1,340.9ms`였고 나머지 수명 판정은 로컬 후보와 같았다.
+- 공개 production smoke는 기본 Speaker·주요 소스·한영 reload·320~1100px·320px 영문 설정·금발 선을 통과했다. HTTP 오류·ntfy 요청 0, warm DCL `26.0ms`, long task 0, JS heap `8,012,016B`였다. 공개 파일 21개는 Actions artifact와 바이트·SHA-256 exact match였다.
 
 ### v0.2.27 실제 CEF cadence 검증 안전화 — 2026-07-23
 
@@ -274,8 +276,8 @@
 
 ## 7. 배포 완료와 다음 관문
 
-1. 현재 공개본은 Worker `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`와 frontend `0.2.26` / `ccac98477871f01a6625f90056535a9a9687ca33`다. 앱 배포 workflow `29966902022`와 `github-pages` deployment `5564569384`가 모두 성공하고 같은 SHA를 가리킨다.
-2. GitHub Pages clean install·724개 테스트·build·pseudo-locale layout·OBS budget·publish와 공개 production smoke를 통과했다. ntfy 요청·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선, 한국어/영어와 긴 문구 3화면×4폭을 확인했다.
+1. 현재 공개본은 Worker `9dd91fc4-81e1-45a8-9d15-e7250e4a3496`와 frontend `0.2.28` / `1346be0d5eef6e8ac680d2d9b6bd46eb134bea49`다. 앱 배포 workflow `29970083896`와 `github-pages` deployment `5565152862`가 모두 성공하고 같은 SHA를 가리킨다.
+2. GitHub Pages clean install·730개 테스트·build·pseudo-locale layout·30곡 local Blob 수명·OBS budget·publish와 공개 production smoke를 통과했다. ntfy 요청·HTTP 오류 0, 모바일 viewport의 hairpin·유레카 금발 선, 한국어/영어와 긴 문구 3화면×4폭을 확인했다. Actions artifact와 공개 파일은 21/21 exact match다.
 3. 실제 OBS G3, G4, source hide/show, 5분 scene 전환, CEF 60분 재생을 통과했다.
 4. 공개 단일 탭의 Speaker 기본값·출력 버튼·언어 전환과 곡 클릭·drag 취소·이력 배치 smoke는 자동화했고, 공개 3탭 독립 재생·reload도 v0.2.18에서 통과했다. 다음 수동 관문은 모바일 Speaker 백그라운드·잠금 화면/PiP 조작과 실제 출력 장치 전환·청취다.
 5. 최종 송출 관문은 사용자의 실제 청취, 명시적 승인 뒤의 비공개 방송/VOD G5, 같은 clock monitoring 경로에서의 endpoint-inclusive 5분 한 곡+짧은 반복 G6 재검증이다. 10분 run은 stress 진단으로만 남고, 현재 장치는 시작 offset 실패·5분 drift 경계/재검 필요다.
