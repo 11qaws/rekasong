@@ -1006,3 +1006,12 @@
   build 하네스는 activity 정확히 1·금지 트래픽 0, prepare 미설정 development
   하네스는 activity 0·금지 트래픽 0을 요구한다. Blob 30개 중 25개 선회수·unmount
   뒤 30개 전부 회수, 복구 Blob 2개 전부 회수와 320px overflow 0을 다시 통과했다.
+- 최종 v0.2.40 커밋 `a4fa486bd3c35ea411286e75d7b2d41d6cffae2b`의 Pages
+  workflow `30212649504`, build job `89821395574`, deploy job `89821539224`,
+  deployment `5612453821`이 성공했다. artifact `8634916132`의 SHA-256 digest는
+  `bb6176e35e541663ef400042ddb6fd4a4037e6e2c8d33c255d9dc57700395087`이다.
+- 공개 `https://11qaws.github.io/rekasong/`은 기본 `스피커 송출 중`으로 정상
+  렌더링되고 브라우저 오류 0이었다. 공개 페이지 진입 시 Oracle이 `app_active`
+  count 13을 수신하고 즉시 빈 claim으로 돌아왔다. 게시 artifact와 CDN의
+  index·CSS·JS·아이콘 21개는 크기와 SHA-256이 `21/21` exact match였다.
+  검증 중 음악 재생·OBS 연결·방송·녹화는 시작하지 않았다.
