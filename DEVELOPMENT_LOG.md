@@ -949,3 +949,54 @@
 - 전체 `752/752`, lint 신규 오류 0(기존 `functions/api/gemini.js` escape 경고 2), Functions/Worker 10개 문법, production build, pseudo-locale 3화면×4폭 overflow 0, 공개 Speaker 로컬 재생·page lifecycle·기기 pause 복구, 공개 click→review·drag cancel/history, OBS 정적 closure `384,105B raw / 118,426B gzip / 103,743B brotli`를 통과했다. Speaker 유휴·로컬 재생·검색·복구의 Worker host/session HTTP/WebSocket/frame은 모두 0이었다.
 - 최종 검증 커밋 `16a573ddcdcfa2e85c91414791277f51013036e8`의 Pages workflow `29987857926`, build job `89143658803`, deploy job `89143872896`, deployment `5568496455`가 성공했다. 새 Linux Chrome 관문을 포함한 모든 단계가 통과했고, Actions artifact의 실제 게시 파일은 공개 CDN과 바이트·SHA-256 `21/21` exact match였다. 배포 후 공개 smoke의 cold/warm longest task는 `63/0ms`, DOM 125개, decoded 약 1.04MiB, heap 약 8.26MiB였다.
 - 이번 재감사와 성능 관문 검증은 실제 OBS 연결·음악 송출·점검음·방송·녹화를 시작하지 않았다. 30초 cadence도 표시 기준 관찰만 수행하며 곡 중 seek·restart·playbackRate·route 재연결을 만들지 않는다.
+
+## 2026-07-27 (Codex) — prepare 큐 유휴 polling 예산 교정
+
+- Cloudflare `PrepareQueue` 로그의 `POST /v1/prepare/claim` 204는 Speaker/OBS
+  heartbeat가 아니라 Oracle VPS 준비 워커의 고정 5초 빈 큐 확인이었다. 호출
+  `User-Agent`, Oracle Osaka 출구, 실제 `prepare_worker.py` 루프를 대조했다.
+- Codex backend의 준비 워커를 `5→10→20→최대 30초` idle backoff로 바꿨다.
+  작업 발견·통신 복구 시 5초로 즉시 리셋하고, 여러 워커가 동시에 claim하지
+  않도록 10% jitter를 둔다. 아웃바운드 전용·무포트·PREPARE_TOKEN 계약은 같다.
+- 장기 유휴 호출 예산은 17,280회/일에서 약 2,880회/일로 83% 감소한다. 새 작업
+  발견 지연은 최대 30초로 제한하며, 순수 backoff 단위 테스트와 VPS 배포 후
+  실제 간격을 별도 검증한다.
+- `rekasong-prepare-worker/0.1.1`을 Oracle VPS에 배포했다. 로컬/원격
+  SHA-256이 일치하고 서비스 `active`를 확인했으며, 빈 claim 응답 직후 기록은
+  `16:17:50 → :55 → 16:18:04 → :24 UTC`, 다음 대기는
+  `5.0 → 9.0 → 19.1 → 30.0초`였다. 따라서 배포 환경에서도 고정 5초 호출이
+  해제되고 장기 유휴 30초 상한으로 전환됨을 확인했다.
+
+## 2026-07-27 (Codex) — 앱 활성·enqueue 기반 prepare 워커 즉시 기상
+
+- 앱 mount·pageshow·online·visible 복귀에서 `POST /v1/prepare/activity`를
+  보내고, 실제 `enqueue()`도 별도로 기상시키는 프로토콜을 추가했다. 앱에는
+  주기 타이머가 없고 화면 수명별 60초 client cooldown을 둔다. 활동 요청은
+  세션·작업·음악·OBS·방송 상태를 만들거나 바꾸지 않는 비권위 힌트이며 실패해도
+  UI와 재생을 잠그지 않는다.
+- `PrepareQueue`는 Bearer `PREPARE_TOKEN`을 통과한 Oracle 워커만
+  `/v1/prepare/wake` hibernatable WebSocket에 연결한다. `connected`,
+  `app_active`, `job_enqueued` 프레임은 Oracle의 진행 중인 유휴 대기를 깨우고,
+  연결 실패 때에는 기존 최대 30초 polling이 계속된다.
+- 첫 구현은 활동 신호를 위해 세션을 먼저 만들었고 Speaker smoke가 최초 화면에서
+  session HTTP와 playback chunk를 발견해 실패했다. 활동 경로를 세션 비생성
+  bounded hint로 분리한 뒤 유휴 화면은 session HTTP/WebSocket/frame 0,
+  activity POST 정확히 1, playback chunk 0으로 돌아왔다.
+- 실제 왕복 전 검토에서 첫 activity cooldown 시각이 생성자에서 초기화되지 않아
+  첫 신호가 빠질 수 있음을 발견했다. 생성자 기반 테스트를 추가해 수정했다.
+  프로덕션 첫 실측에서는 DO hibernation 뒤 메모리 cooldown이 사라져 16초 뒤
+  신호가 재전달되는 것도 발견했다. 마지막 activity 시각을 WebSocket attachment에
+  함께 직렬화해 storage write 없이 hibernation 이후에도 30초 제한을 보존했다.
+- 로컬 Durable Object는 무인증 wake 401, 인증 연결 `connected`, activity
+  `app_active`, cooldown 내 중복 프레임 0을 통과했다. 실제
+  `PrepareWakeListener` 왕복은 activity→수신 20.9ms였다.
+- production Worker version
+  `b61e9921-b727-4213-b2f6-c51de115dd00`를 배포했다. 30초 유휴 상태의 Oracle
+  동일 시계에서 activity→wake 수신은 약 242ms, activity→빈 claim 완료는 약
+  428ms였다. 12초 뒤 두 번째 activity는 억제됐고 30초가 지난 다음 신호는 다시
+  수신됐다. Worker 재배포로 연결이 끊겼을 때도 polling을 유지하면서 약 2초 안에
+  자동 재연결했고 systemd `NRestarts=0`이었다.
+- v0.2.40 후보는 전체 `759/759`, backend `7/7`, lint 신규 오류 0(기존
+  `functions/api/gemini.js` escape 경고 2), production build와 Speaker network
+  smoke를 통과했다. Dashboard 번들은 `386.78kB raw / 105.81kB gzip`으로 변경
+  전보다 커지지 않았다. 실제 음악·OBS·방송·녹화는 시작하지 않았다.

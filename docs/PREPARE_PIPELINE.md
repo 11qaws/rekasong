@@ -66,16 +66,22 @@ failed      실패 (reason, failureKind, attempts, nextRetryAt)
 
 ### 대시보드 → Worker
 ```
+POST /v1/prepare/activity                  → 204             앱 활성 기상 힌트
 POST /v1/prepare            {videoId}     → {status, ...}   준비 요청(스테이징 시점)
 GET  /v1/prepare/{videoId}                → {status, ...}   폴링
 GET  /v1/audio/{videoId}?token=...        → 오디오 바이트   <audio src> (Range/206)
 ```
+
+`POST /v1/prepare/activity`는 앱 mount·복귀 때만 보내는 비권위 힌트다. 세션이나
+작업을 만들지 않고, 30초 전역 cooldown으로 합쳐진다. 음악·OBS·방송을 시작할
+권한도 없다. 실패는 UI나 재생을 잠그지 않으며 아래 fallback polling이 남는다.
 
 `POST /v1/prepare`는 **멱등**이다. 이미 `ready`면 즉시 `ready`를 반환하고 작업을
 만들지 않는다(캐시 히트 = YouTube 미접촉).
 
 ### VPS 워커 → Worker (`Authorization: Bearer $PREPARE_TOKEN`)
 ```
+GET  /v1/prepare/wake     WebSocket        ← prepare.wake 기상 프레임
 POST /v1/prepare/claim                    → {videoId, leaseUntil} | 204   작업 집어가기
 PUT  /v1/prepare/{videoId}/bytes          → {ok}    본문=오디오 바이트, R2에 저장 후 ready
 POST /v1/prepare/{videoId}/fail           {failureKind, reason} → {ok}
@@ -96,7 +102,12 @@ GET  /v1/prepare/stats                    → 큐/실패율 계측 (§6)
 ```
 loop:
   job = POST /v1/prepare/claim
-  if not job: sleep(5s); continue
+  if not job:
+    wait(idle_backoff(5s → 10s → 20s → 최대 30s, jitter 10%)
+         또는 prepare.wake)
+    if wake: idle_backoff.reset()
+    continue
+  idle_backoff.reset()
   audio = yt-dlp(job.videoId)        # bestaudio, android_vr 우선, 파일로 저장
   if ok:   PUT /v1/prepare/{id}/bytes   (파일 스트리밍 업로드)
   else:    POST /v1/prepare/{id}/fail   (failureKind 분류)
@@ -104,6 +115,13 @@ loop:
 ```
 
 - **아웃바운드 전용.** 열린 포트 없음, 터널 없음.
+- 앱 활성 또는 새 `enqueue`는 Durable Object의 hibernatable WebSocket으로
+  `prepare.wake`를 보낸다. 워커는 진행 중인 유휴 대기를 즉시 끝내고 claim한다.
+  연결이 끊기거나 WebSocket 의존성이 없어도 서비스는 종료하지 않고 아래
+  polling을 계속한다. 상세 상태·인증·불변식은 `PREPARE_WAKE_PROTOCOL.md`.
+- 빈 큐 폴링은 고정 5초가 아니다. 첫 확인은 기존 반응성을 위해 5초를 유지하되
+  연속 빈 응답은 10→20→최대 30초로 늦추고, 작업 발견·통신 복구 뒤에는 즉시
+  5초로 돌아간다. 여러 워커가 같은 시각에 claim하지 않도록 10% jitter를 둔다.
 - yt-dlp 오류 문자열 → `failureKind` 분류:
   - `Sign in to confirm you're not a bot` → `botwall`
   - `Video unavailable` / `Private video` / `removed` → `unavailable` (재시도 금지)

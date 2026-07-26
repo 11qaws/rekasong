@@ -13,6 +13,7 @@ import {
 const VIDEO_ID = 'cv7zqJhKoVE';
 const SESSION_PATH = /^\/v1\/sessions(?:\/|$)/;
 const SESSION_SOCKET_PATH = /^\/v1\/sessions\/[^/]+\/ws$/;
+const PREPARE_ACTIVITY_PATH = '/v1/prepare/activity';
 const LOCAL_SPEAKER_CHUNK = /\/(?:DashboardLocalSpeaker|playbackEngine)-[^/]+\.js(?:\?|$)/;
 const REMOTE_MEDIA_CHUNK = /\/(?:onAirPrefetchCache|onAirSourceResolver)-[^/]+\.js(?:\?|$)/;
 
@@ -150,6 +151,7 @@ try {
   const workerHostRequests = [];
   const sessionHttpRequests = [];
   const sessionSockets = [];
+  const prepareActivityRequests = [];
   let sessionSocketFramesSent = 0;
   let obsAssetUploadAttempts = 0;
 
@@ -159,6 +161,9 @@ try {
     if (/workers\.dev$/i.test(url.hostname)) workerHostRequests.push(url.pathname);
     if (SESSION_PATH.test(url.pathname)) {
       sessionHttpRequests.push({ method: request.method(), path: url.pathname });
+    }
+    if (url.pathname === PREPARE_ACTIVITY_PATH) {
+      prepareActivityRequests.push({ method: request.method(), path: url.pathname });
     }
   });
   page.on('websocket', (socket) => {
@@ -251,12 +256,14 @@ try {
     sessionHttpRequests: sessionHttpRequests.length,
     sessionSockets: sessionSockets.length,
     sessionSocketFramesSent,
+    prepareActivityRequests: prepareActivityRequests.length,
     storedSession: await page.evaluate(() => localStorage.getItem('rekasong-on-air-session-v1')),
   };
   assert.deepEqual(idleEvidence, {
     sessionHttpRequests: 0,
     sessionSockets: 0,
     sessionSocketFramesSent: 0,
+    prepareActivityRequests: 1,
     storedSession: null,
   }, 'An idle Speaker page must not create a media session or OBS control socket.');
 

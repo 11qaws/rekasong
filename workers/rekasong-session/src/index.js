@@ -8,6 +8,9 @@ const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 const PREPARE_LEASE_MS = 120 * 1000;
+const PREPARE_WAKE_PROTOCOL_VERSION = 1;
+const PREPARE_WAKE_WORKER_TAG = 'prepare-worker';
+const PREPARE_ACTIVITY_WAKE_COOLDOWN_MS = 30 * 1000;
 const PROTOCOL_V2 = 2;
 // Heartbeats are observability, not an audio clock or a playback kill switch.
 // Native WebSocket delivery remains the control and continuity signal. OBS
@@ -93,6 +96,13 @@ const hashToken = async (token) => {
 };
 
 const parseBearer = (request) => request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '') || '';
+
+export const prepareWakeFrame = (reason, sentAt = Date.now()) => JSON.stringify({
+  type: 'prepare.wake',
+  version: PREPARE_WAKE_PROTOCOL_VERSION,
+  reason,
+  sentAt
+});
 
 const assetKey = (room, assetId) => `sessions/${room}/${assetId}`;
 
@@ -310,6 +320,8 @@ export default {
     if (url.pathname === '/v1/prepare' || url.pathname.startsWith('/v1/prepare/')) {
       // 대시보드 구간(큐잉·폴링)은 /v1/audio와 동일한 room+player 토큰 게이트.
       // claim/bytes/fail/heartbeat/stats는 DO 내부의 Bearer(PREPARE_TOKEN)가 담당.
+      // activity는 작업 상태를 바꾸지 않는 bounded wake hint라 세션 생성 없이
+      // 앱 첫 화면에서 보낸다. 실제 enqueue는 계속 room+player 인증이 필수다.
       const dashboardRoute = (request.method === 'POST' && url.pathname === '/v1/prepare')
         || (request.method === 'GET' && /^\/v1\/prepare\/[A-Za-z0-9_-]{11}$/.test(url.pathname));
       if (dashboardRoute && !(await verifyRoomPlayerToken(request, env))) {
@@ -4402,12 +4414,17 @@ export class PrepareQueue {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
+    // Activity wake is a best-effort hint. Keep its coalescing state in memory so
+    // the first activity after a DO start/hibernate always wakes connected workers.
+    this.lastActivityWakeAt = 0;
   }
 
   async fetch(request) {
     const url = new URL(request.url);
 
     if (url.pathname === '/v1/prepare' && request.method === 'POST') return this.requestPrepare(request);
+    if (url.pathname === '/v1/prepare/activity' && request.method === 'POST') return this.noteAppActivity();
+    if (url.pathname === '/v1/prepare/wake' && request.method === 'GET') return this.connectWorker(request);
     if (url.pathname === '/v1/prepare/claim' && request.method === 'POST') return this.claim(request);
     if (url.pathname === '/v1/prepare/stats' && request.method === 'GET') return this.stats(request);
 
@@ -4434,6 +4451,81 @@ export class PrepareQueue {
 
   async putJob(job) {
     await this.ctx.storage.put(`job:${job.videoId}`, job);
+  }
+
+  connectedPrepareWorkers() {
+    return this.ctx.getWebSockets(PREPARE_WAKE_WORKER_TAG);
+  }
+
+  signalWorkers(reason, sockets = this.connectedPrepareWorkers(), attachmentPatch = null) {
+    let delivered = 0;
+    const frame = prepareWakeFrame(reason);
+    for (const socket of sockets) {
+      try {
+        socket.send(frame);
+        if (attachmentPatch) {
+          const attachment = socket.deserializeAttachment?.() || {};
+          socket.serializeAttachment?.({ ...attachment, ...attachmentPatch });
+        }
+        delivered += 1;
+      } catch {
+        // 닫힌 소켓은 runtime이 제거한다. enqueue 자체는 신호 실패 때문에
+        // 실패하지 않으며 Oracle의 최대 30초 fallback polling이 남는다.
+      }
+    }
+    return delivered;
+  }
+
+  async connectWorker(request) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return json({ error: 'WebSocket upgrade required' }, 426);
+    }
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    this.ctx.acceptWebSocket(server, [PREPARE_WAKE_WORKER_TAG]);
+    server.serializeAttachment({
+      role: PREPARE_WAKE_WORKER_TAG,
+      connectedAt: Date.now(),
+      version: PREPARE_WAKE_PROTOCOL_VERSION,
+      lastActivityWakeAt: 0
+    });
+    // 새 연결 자체도 기상 사건이다. 연결 단절 중 쌓인 queued job을 즉시
+    // 회수하게 하며 별도 초기 ping을 요구하지 않는다.
+    server.send(prepareWakeFrame('connected'));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  noteAppActivity() {
+    const now = Date.now();
+    const sockets = this.connectedPrepareWorkers();
+    const persistedActivityWakeAt = sockets.reduce((latest, socket) => {
+      const attachment = socket.deserializeAttachment?.();
+      return Math.max(latest, Number(attachment?.lastActivityWakeAt) || 0);
+    }, 0);
+    const latestActivityWakeAt = Math.max(this.lastActivityWakeAt, persistedActivityWakeAt);
+    if (now - latestActivityWakeAt >= PREPARE_ACTIVITY_WAKE_COOLDOWN_MS) {
+      this.lastActivityWakeAt = now;
+      // Hibernation recreates this Durable Object instance, but WebSocket
+      // attachments survive it. Persist the cooldown on every connected worker
+      // without introducing a Durable Object storage write per app visit.
+      this.signalWorkers('app_active', sockets, { lastActivityWakeAt: now });
+    }
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  webSocketMessage(_socket, _message) {
+    // 기상 채널은 서버→Oracle 단방향이다. 클라이언트 application frame은
+    // 상태를 바꾸지 않는다(WebSocket protocol ping/pong은 runtime이 처리).
+  }
+
+  webSocketClose() {
+    // 연결 손실은 Oracle의 재연결 루프와 fallback polling이 복구한다.
+  }
+
+  webSocketError() {
+    // 오류 문자열에는 네트워크/인증 세부가 섞일 수 있어 서버 로그에 남기지 않는다.
   }
 
   async listJobs() {
@@ -4487,6 +4579,7 @@ export class PrepareQueue {
       attempts: previous?.attempts || 0
     };
     await this.putJob(job);
+    this.signalWorkers('job_enqueued');
     return job;
   }
 
@@ -4497,7 +4590,12 @@ export class PrepareQueue {
     if (!VIDEO_ID_PATTERN.test(videoId)) return json({ error: 'Invalid videoId' }, 400);
 
     const job = await this.getJob(videoId);
-    if (job?.status === 'queued' || job?.status === 'preparing') return json(this.publicJob(job));
+    if (job?.status === 'queued') {
+      // 이전 기상 신호가 연결 전/단절 중 유실됐더라도 앱의 멱등 재요청이 다시 깨운다.
+      this.signalWorkers('job_enqueued');
+      return json(this.publicJob(job));
+    }
+    if (job?.status === 'preparing') return json(this.publicJob(job));
 
     if (job?.status === 'ready') {
       // 수동/TTL 정리로 바이트만 사라진 ready는 거짓 안전이다. 폴링(GET)이 아닌

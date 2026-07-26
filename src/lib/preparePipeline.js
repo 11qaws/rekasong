@@ -134,6 +134,34 @@ export const requestPrepare = async (
     body: JSON.stringify({ videoId: String(videoId || ''), ...(force ? { force: true } : {}) })
   }, fetchImpl);
 
+// 앱 시작·복귀를 준비 워커에 알리는 일회성 힌트다. 실제 작업 상태를 바꾸지
+// 않으며, 실패해도 기존 enqueue 신호와 최대 30초 fallback polling이 남는다.
+// 주기 heartbeat가 아니라 Dashboard lifecycle 이벤트에서만 호출한다.
+export const notifyPrepareActivity = async (
+  { fetchImpl = globalThis.fetch } = {}
+) => {
+  if (typeof fetchImpl !== 'function') {
+    throw new PrepareRequestError(PREPARE_REQUEST_ERROR_CODES.NETWORK_ERROR);
+  }
+
+  let response;
+  try {
+    response = await fetchImpl(
+      `${configuredBase}/v1/prepare/activity`,
+      { method: 'POST', keepalive: true }
+    );
+  } catch (cause) {
+    throw new PrepareRequestError(PREPARE_REQUEST_ERROR_CODES.NETWORK_ERROR, { cause });
+  }
+
+  if (!response.ok) {
+    throw new PrepareRequestError(responseErrorCode(response.status), {
+      httpStatus: response.status
+    });
+  }
+  return true;
+};
+
 export const fetchPrepareStatus = async (
   videoId,
   auth,

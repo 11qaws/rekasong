@@ -6,6 +6,7 @@ import {
   PREPARE_REQUEST_ERROR_CODES,
   PrepareRequestError,
   fetchPrepareStatus,
+  notifyPrepareActivity,
   prepareBlockMessage,
   prepareBlockMessageKey,
   prepareFailureInfo,
@@ -82,6 +83,36 @@ test('successful prepare requests preserve the API contract and normalize respon
   assert.equal(requestInit.method, 'POST');
   assert.deepEqual(JSON.parse(requestInit.body), { videoId: VIDEO_ID, force: true });
   assert.deepEqual(info, { status: 'ready', failureKind: null, reason: '' });
+});
+
+test('prepare activity is a bounded non-authoritative hint without a response body contract', async () => {
+  let requestUrl = '';
+  let requestInit = null;
+  const result = await notifyPrepareActivity({
+    fetchImpl: async (url, init) => {
+      requestUrl = url;
+      requestInit = init;
+      return { ok: true, status: 204 };
+    },
+  });
+
+  assert.equal(result, true);
+  assert.match(requestUrl, /\/v1\/prepare\/activity$/);
+  assert.doesNotMatch(requestUrl, /room=|token=/);
+  assert.deepEqual(requestInit, { method: 'POST', keepalive: true });
+});
+
+test('prepare activity failure remains a typed connection result for silent fallback', async () => {
+  await assert.rejects(
+    notifyPrepareActivity({
+      fetchImpl: async () => ({ ok: false, status: 401 }),
+    }),
+    (error) => {
+      assert.ok(error instanceof PrepareRequestError);
+      assert.equal(error.code, PREPARE_REQUEST_ERROR_CODES.SESSION_INVALID);
+      return true;
+    },
+  );
 });
 
 test('prepare failure UI state prefers authoritative session lifecycle evidence', () => {
@@ -166,4 +197,6 @@ test('Dashboard resets prepare state by session identity and fences stale async 
   assert.match(source, /prepareStatus === 'session_invalid'/);
   assert.match(source, /prepareStatus === 'session_ended'/);
   assert.match(source, /recoverOnAirConnection\(\)/);
+  assert.match(source, /notifyPrepareActivity\(/);
+  assert.match(source, /now - signalState\.lastAttemptAt < 60000/);
 });

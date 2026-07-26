@@ -107,6 +107,7 @@ import {
   YOUTUBE_ID_PATTERN,
   fetchPrepareStatus,
   isPrepareConfigured,
+  notifyPrepareActivity,
   prepareBlockMessageKey,
   prepareFailureInfo,
   prepareSessionIdentity,
@@ -1134,6 +1135,49 @@ export default function Dashboard() {
   // 폴링 interval(watchedVideoIds 의존)이 세션 갱신마다 재설치되지 않게 하는 거울.
   const ensureSessionRef = useRef(onAir.ensureSession);
   ensureSessionRef.current = onAir.ensureSession;
+  const prepareActivitySignalRef = useRef({
+    disposed: false,
+    inFlight: null,
+    lastAttemptAt: 0
+  });
+
+  // 앱이 열리거나 네트워크/페이지가 실제로 복귀할 때만 일회성 기상 신호를 보낸다.
+  // 타이머 heartbeat는 두지 않는다. 앱을 닫으면 신호가 자연히 사라지고, 곡이
+  // 나중에 등록되면 PrepareQueue.enqueue가 별도로 워커를 즉시 깨운다.
+  useEffect(() => {
+    if (!isPrepareConfigured()) return undefined;
+    const signalState = prepareActivitySignalRef.current;
+    signalState.disposed = false;
+
+    const signalActivity = () => {
+      const now = Date.now();
+      if (signalState.disposed
+        || signalState.inFlight
+        || now - signalState.lastAttemptAt < 60000) return;
+      signalState.lastAttemptAt = now;
+      signalState.inFlight = notifyPrepareActivity()
+        // 기상 채널은 지연 최적화다. 실패를 재생 게이트나 사용자 오류로 승격하지
+        // 않는다 — 실제 prepare 요청과 fallback polling이 권위 경로로 남는다.
+        .catch(() => false)
+        .finally(() => {
+          signalState.inFlight = null;
+        });
+    };
+    const signalWhenVisible = () => {
+      if (document.visibilityState === 'visible') signalActivity();
+    };
+
+    signalActivity();
+    window.addEventListener('pageshow', signalActivity);
+    window.addEventListener('online', signalActivity);
+    document.addEventListener('visibilitychange', signalWhenVisible);
+    return () => {
+      signalState.disposed = true;
+      window.removeEventListener('pageshow', signalActivity);
+      window.removeEventListener('online', signalActivity);
+      document.removeEventListener('visibilitychange', signalWhenVisible);
+    };
+  }, []);
 
   // 인증 수명이 바뀌면 이전 세션의 요청 표식과 화면 상태를 함께 폐기한다. 세대가
   // 다른 비동기 응답은 아래 notePrepare에서 무시해 새 세션을 덮어쓰지 못한다.
