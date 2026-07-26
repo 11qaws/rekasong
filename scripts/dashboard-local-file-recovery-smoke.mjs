@@ -233,11 +233,16 @@ try {
   });
   const page = await context.newPage();
   const pageErrors = [];
-  const workerRequests = [];
+  const prepareActivityRequests = [];
+  const forbiddenWorkerRequests = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('request', (request) => {
     const url = request.url();
-    if (/workers\.dev|\/v1\/sessions(?:\/|\?|$)/i.test(url)) workerRequests.push(url);
+    if (/\/v1\/prepare\/activity(?:\?|$)/i.test(url)) {
+      prepareActivityRequests.push(url);
+    } else if (/workers\.dev|\/v1\/sessions(?:\/|\?|$)/i.test(url)) {
+      forbiddenWorkerRequests.push(url);
+    }
   });
 
   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -369,7 +374,16 @@ try {
     `Local-file recovery overflows at 320px (${mobile.documentWidth}px).`);
   assert.equal(mobile.buttons.every(({ left, right }) => left >= -1 && right <= mobile.viewportWidth + 1), true);
   assert.deepEqual(pageErrors, []);
-  assert.deepEqual(workerRequests, [], 'Local Speaker recovery must generate zero Worker traffic.');
+  assert.equal(
+    prepareActivityRequests.length,
+    0,
+    'Development mode without a prepare endpoint must not emit an activity hint.',
+  );
+  assert.deepEqual(
+    forbiddenWorkerRequests,
+    [],
+    'Local Speaker recovery must generate no session, media, or OBS traffic.',
+  );
 
   await page.evaluate(() => { window.location.hash = '#/widget'; });
   await page.locator('.dashboard-container').waitFor({ state: 'detached' });
@@ -389,7 +403,8 @@ try {
       historyRestore: 'expired record -> new playable queued copy',
       persistedBlobUrls: 0,
       unmountRevokedBlobUrls: blobLifecycle.revoked.length,
-      workerRequests: workerRequests.length,
+      prepareActivityRequests: prepareActivityRequests.length,
+      forbiddenWorkerRequests: forbiddenWorkerRequests.length,
       removedSinkFallback: sinkRecovery.calls.slice(-2).map((call) => call.deviceId),
       mobileWidth: mobile.viewportWidth,
       mobileDocumentWidth: mobile.documentWidth,

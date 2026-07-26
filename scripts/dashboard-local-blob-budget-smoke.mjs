@@ -136,11 +136,16 @@ try {
   await cdp.send('Performance.enable');
 
   const pageErrors = [];
-  const workerRequests = [];
+  const prepareActivityRequests = [];
+  const forbiddenWorkerRequests = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('request', (request) => {
     const url = request.url();
-    if (/workers\.dev|\/v1\/sessions(?:\/|\?|$)|ntfy/i.test(url)) workerRequests.push(url);
+    if (/\/v1\/prepare\/activity(?:\?|$)/i.test(url)) {
+      prepareActivityRequests.push(url);
+    } else if (/workers\.dev|\/v1\/sessions(?:\/|\?|$)|ntfy/i.test(url)) {
+      forbiddenWorkerRequests.push(url);
+    }
   });
   await page.route('**/api/extract-local', (route) => route.fulfill({
     status: 200,
@@ -238,7 +243,16 @@ try {
     tabKey: TAB_SYNC_STORAGE_KEY,
   });
   assert.equal(`${persisted.shared}${persisted.tab}`.includes('blob:'), false);
-  assert.deepEqual(workerRequests, [], 'Speaker local-file playback must generate zero Worker/OBS traffic.');
+  assert.equal(
+    prepareActivityRequests.length,
+    1,
+    'Dashboard mount must emit exactly one bounded prepare activity hint.',
+  );
+  assert.deepEqual(
+    forbiddenWorkerRequests,
+    [],
+    'Speaker local-file playback must generate no session, media, or OBS traffic.',
+  );
   assert.deepEqual(pageErrors, []);
 
   await cdp.send('HeapProfiler.collectGarbage');
@@ -276,7 +290,8 @@ try {
       reclaimedSourcesBeforeUnmount: beforeUnmount.revoked,
       reclaimedSourcesAfterUnmount: afterUnmount.revoked,
       persistedBlobUrls: 0,
-      workerRequests: workerRequests.length,
+      prepareActivityRequests: prepareActivityRequests.length,
+      forbiddenWorkerRequests: forbiddenWorkerRequests.length,
       postGcHeapGrowthBytes: heapGrowthBytes,
       p95IterationMs: Math.round(p95IterationMs * 10) / 10,
     },

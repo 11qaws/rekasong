@@ -1000,3 +1000,9 @@
   `functions/api/gemini.js` escape 경고 2), production build와 Speaker network
   smoke를 통과했다. Dashboard 번들은 `386.78kB raw / 105.81kB gzip`으로 변경
   전보다 커지지 않았다. 실제 음악·OBS·방송·녹화는 시작하지 않았다.
+- 첫 Pages workflow `30212456763`은 제품 코드가 아니라 기존 Blob 수명 하네스의
+  “모든 Worker URL 0건” 단정에서 중단됐다. 새 bounded activity 1건을 세션·미디어·
+  OBS 트래픽과 구분하도록 Blob 예산 및 로컬 파일 복구 하네스를 교정했다. production
+  build 하네스는 activity 정확히 1·금지 트래픽 0, prepare 미설정 development
+  하네스는 activity 0·금지 트래픽 0을 요구한다. Blob 30개 중 25개 선회수·unmount
+  뒤 30개 전부 회수, 복구 Blob 2개 전부 회수와 320px overflow 0을 다시 통과했다.
