@@ -113,7 +113,7 @@ import {
   automaticLyricsSearchArtist,
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
-import { searchLyricsWithNamuWikiHelper } from '../lib/lyrics/namuWikiLyricsHelper';
+import { searchHostedLyrics } from '../lib/lyrics/lyricsSearchClient';
 import {
   PREPARE_REQUEST_ERROR_CODES,
   YOUTUBE_ID_PATTERN,
@@ -1587,7 +1587,7 @@ export default function Dashboard() {
   }, []);
 
   const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default') => {
-    return searchLyricsWithNamuWikiHelper({
+    return searchHostedLyrics({
       endpoint: apiUrl('/api/lyrics-search'),
       input: {
         videoId,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo, GripVertical, Captions } from 'lucide-react';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
@@ -6,6 +6,7 @@ import { apiUrl } from '../lib/api';
 import { readTitleEventStream } from '../lib/titleStream';
 import { normalizeSongDragCandidate, SONG_DRAG_DATA_TYPE } from '../lib/songDragAction';
 import { getAppMessage as t } from '../copy/appMessages';
+import { DEFAULT_SETLINK_SOURCE_URL } from '../hooks/useSyncState';
 
 const YOUTUBE_THUMBNAIL_FALLBACK = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 68"><rect width="120" height="68" rx="8" fill="#e7ecea"/><circle cx="60" cy="34" r="18" fill="#1d5d51" opacity=".14"/><path d="M55 23v24l17-12z" fill="#1d5d51"/></svg>',
@@ -36,7 +37,7 @@ export default function SearchPanel({
   sharedState,
   setSharedState,
 }) {
-  const { setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, songbookLyricsCache = {}, activeIntegrationTab } = sharedState;
+  const { setlinkCatalog = [], setlinkSourceUrl = DEFAULT_SETLINK_SOURCE_URL, setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, songbookLyricsCache = {}, activeIntegrationTab } = sharedState;
   
   // Search, playlist import, and Setlink are equal top-level sources.
   const initialTab = ['youtube', 'youtube-playlist', 'setlink'].includes(activeIntegrationTab)
@@ -51,6 +52,7 @@ export default function SearchPanel({
   const [songbookUploadContext, setSongbookUploadContext] = useState(null);
   const [cacheLookupKeys, setCacheLookupKeys] = useState({});
   const checkedSongbookCacheKeys = useRef(new Set());
+  const automaticSetlinkImportAttempted = useRef(false);
   const setSharedStateRef = useRef(setSharedState);
   setSharedStateRef.current = setSharedState;
   
@@ -439,7 +441,7 @@ export default function SearchPanel({
     startSongbookMrSearch(song, platform);
   };
 
-  const handleSetlinkImport = async (value = tempSetlinkUrl) => {
+  const handleSetlinkImport = useCallback(async (value = tempSetlinkUrl) => {
     const sourceUrl = value.trim();
     if (!sourceUrl) return;
     setIsSetlinkLoading(true);
@@ -463,7 +465,7 @@ export default function SearchPanel({
     } finally {
       setIsSetlinkLoading(false);
     }
-  };
+  }, [setSharedState, tempSetlinkUrl]);
 
   const handlePlaylistImport = async (value = tempPlaylistUrl) => {
     const sourceUrl = value.trim();
@@ -497,6 +499,12 @@ export default function SearchPanel({
         : ({ ...prev, setlinkSourceUrl: '', setlinkCatalog: [], setlinkCatalogMeta: null }));
     }
   };
+
+  useEffect(() => {
+    if (automaticSetlinkImportAttempted.current || setlinkCatalog.length || !setlinkSourceUrl) return;
+    automaticSetlinkImportAttempted.current = true;
+    void handleSetlinkImport(setlinkSourceUrl);
+  }, [handleSetlinkImport, setlinkCatalog.length, setlinkSourceUrl]);
 
   const renderYoutubeTab = () => (
     <>

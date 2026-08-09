@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  DEFAULT_SETLINK_SOURCE_URL,
   createPersistedTabState,
   createPersistedSyncState,
   mergeCrossTabSyncState,
@@ -34,6 +35,13 @@ const localBlobEntry = (entryId, phase = 'queued') => ({
     mediaType: 'audio',
     localBlobBytes: 1024,
   },
+});
+
+test('Eureka Setlink is the default songbook source', () => {
+  assert.equal(
+    createPersistedSyncState({ setlinkSourceUrl: '' }).setlinkSourceUrl,
+    DEFAULT_SETLINK_SOURCE_URL,
+  );
 });
 
 test('cross-tab sync preserves each tab\'s current Speaker run and queue', () => {

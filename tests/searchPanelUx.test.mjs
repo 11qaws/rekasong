@@ -36,6 +36,8 @@ test('Search, playlist, and Setlink are equal top-level sources', async () => {
   assert.doesNotMatch(source, /via\.placeholder\.com|alt="thumbnail"/);
   assert.match(source, /platform === 'youtube-playlist'[\s\S]*?search\.import\.source\.youtubePlaylist/);
   assert.match(source, /storedSetlinkName === 'Setlink 공개 목록'/);
+  assert.match(source, /automaticSetlinkImportAttempted/);
+  assert.match(source, /handleSetlinkImport\(setlinkSourceUrl\)/);
 
   const semanticKeys = [...source.matchAll(/\bt\('([^']+)'/g)].map((match) => match[1]);
   for (const key of semanticKeys) {

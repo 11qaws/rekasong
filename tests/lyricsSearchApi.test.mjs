@@ -9,7 +9,6 @@ import {
   selectLrclibCandidate,
   validateGroundedLyricsResult,
   validateLyricsSearchRequest,
-  validateNamuWikiRelay,
 } from '../functions/api/lyrics-search.js';
 
 const input = validateLyricsSearchRequest({
@@ -168,9 +167,9 @@ test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page',
   });
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[0].url, 'https://namu.wiki/w/Synthetic%20Song');
+  assert.equal(requests[0].url, 'https://namu.wiki/w/Synthetic%20Song(Example%20Artist)');
   assert.deepEqual(JSON.parse(requests[1].options.body).tools || [], []);
-  assert.deepEqual(candidate.discoveryPath, ['google_search', 'namuwiki']);
+  assert.deepEqual(candidate.discoveryPath, ['deterministic_namuwiki_url', 'namuwiki']);
   assert.equal(candidate.originalTextPolicy, 'verbatim');
   assert.equal(candidate.lines.length, 5);
 });
@@ -203,7 +202,10 @@ test('NamuWiki direct-title miss falls through to AI page discovery', async () =
   });
 
   assert.deepEqual(requests, [
+    'https://namu.wiki/w/Synthetic%20Song(Example%20Artist)',
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
     'https://namu.wiki/w/Synthetic%20Song',
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
     'https://generativelanguage.googleapis.com/v1beta/interactions',
     'https://namu.wiki/w/Discovered',
     'https://generativelanguage.googleapis.com/v1beta/interactions',
@@ -212,44 +214,29 @@ test('NamuWiki direct-title miss falls through to AI page discovery', async () =
   assert.equal(candidate.lines.length, 5);
 });
 
-test('validated local NamuWiki relay bypasses blocked server fetch and stays verbatim', async () => {
+test('deterministic NamuWiki artist page uses URL Context when server HTML is challenged', async () => {
   const priorityInput = validateLyricsSearchRequest({ ...input, sourcePriority: 'namuwiki_only' });
-  const namuRelay = validateNamuWikiRelay({
-    sourceTitle: 'Synthetic Song - NamuWiki',
-    sourceUrl: 'https://namu.wiki/w/Synthetic',
-    blocks: [{
-      heading: 'Synthetic Song',
-      lines: [
-        'first synthetic lyric line',
-        'second synthetic lyric line',
-        'third synthetic lyric line',
-        'fourth synthetic lyric line',
-        'fifth synthetic lyric line',
-      ],
-    }],
-  });
+  const sourceUrl = 'https://namu.wiki/w/Synthetic%20Song(Example%20Artist)';
   const requests = [];
   const candidate = await searchLyrics(priorityInput, {
     apiKey: 'fixture-key',
-    namuRelay,
     fetchImpl: async (url, options = {}) => {
       requests.push(String(url));
-      return groundedResponse(options, {
-        sourceUrl: namuRelay.sourceUrl,
-        sourceCategory: 'namuwiki',
-      });
+      if (String(url).startsWith('https://namu.wiki/')) {
+        return new Response('challenge', { status: 403, headers: { 'Content-Type': 'text/plain' } });
+      }
+      return groundedResponse(options, { sourceUrl, sourceCategory: 'namuwiki' });
     },
   });
 
-  assert.deepEqual(requests, ['https://generativelanguage.googleapis.com/v1beta/interactions']);
-  assert.deepEqual(candidate.discoveryPath, ['local_namuwiki_helper', 'namuwiki']);
+  assert.deepEqual(requests, [
+    sourceUrl,
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
+  ]);
+  assert.deepEqual(candidate.discoveryPath, ['deterministic_namuwiki_url', 'url_context', 'namuwiki']);
   assert.equal(candidate.originalTextPolicy, 'verbatim');
-  assert.deepEqual(candidate.lines, namuRelay.blocks[0].lines);
-  assert.equal(validateNamuWikiRelay({ ...namuRelay, sourceUrl: 'https://example.com/' }), null);
-  assert.equal(validateNamuWikiRelay({
-    ...namuRelay,
-    blocks: [{ ...namuRelay.blocks[0], lines: [`${'x'.repeat(501)}`, ...namuRelay.blocks[0].lines] }],
-  }), null);
+  assert.deepEqual(candidate.lines, ['alpha', 'beta']);
 });
 
 test('citation-free NamuWiki discovery returns a host-validated URL when URL Context is blocked', async () => {
@@ -282,8 +269,8 @@ test('citation-free NamuWiki discovery returns a host-validated URL when URL Con
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
   }), (error) => error.message === 'lyrics_web_candidate_not_found'
-    && error.diagnostics?.namuRelayUrl === sourceUrl
-    && error.diagnostics?.namuRelayUrls?.includes(modelUrl));
+    && error.diagnostics?.namuCandidateUrl === sourceUrl
+    && error.diagnostics?.namuCandidateUrls?.includes(modelUrl));
 });
 
 test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {

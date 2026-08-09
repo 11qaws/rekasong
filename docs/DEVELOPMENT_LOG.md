@@ -179,3 +179,10 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - Removed the redundant requirement for Gemini to restate the server-known selected line count; the model now only selects a block and confirms exact-song and complete-lyrics status.
 - Candidate misses expose only safe direct-probe structure (`attempted`, HTML available, block count, selected), never the page body, lyric lines, prompts, or credentials.
 - Bumped the deployment version to `0.2.61`.
+
+## 2026-08-09 - Hosted lyrics search and default Eureka songbook (v0.2.74)
+
+- Removed the loopback NamuWiki helper and its npm command; every browser now uses the hosted lyrics-search endpoint.
+- Kept NamuWiki as the first web source while treating its data-center challenge as a source miss instead of accepting generated replacement text.
+- URL Context NamuWiki candidates now require a second exact-page verification pass before review.
+- Set `유레카 노래책` (`ccd4cab1-5f67-40a1-92af-e6f8b80fc307`) as the default Setlink catalog and load it automatically on first use.

@@ -13,6 +13,7 @@ export {
   SHARED_SYNC_STORAGE_KEY,
   TAB_SYNC_STORAGE_KEY,
 };
+export const DEFAULT_SETLINK_SOURCE_URL = 'https://setlink.jp/public/ccd4cab1-5f67-40a1-92af-e6f8b80fc307';
 const DEV_HISTORY_FIXTURE_QUERY = '__rekasong_history_fixture';
 const DEV_HISTORY_FIXTURE_MAX = 2000;
 
@@ -31,7 +32,7 @@ const defaultState = {
   volume: 100,
   isMuted: false,
   setlinkCatalog: [],
-  setlinkSourceUrl: '',
+  setlinkSourceUrl: DEFAULT_SETLINK_SOURCE_URL,
   setlinkCatalogMeta: null,
   youtubePlaylistCatalog: [],
   youtubePlaylistSourceUrl: '',
@@ -145,7 +146,9 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     volume: Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : defaultState.volume,
     isMuted: Boolean(source.isMuted),
     setlinkCatalog: Array.isArray(source.setlinkCatalog) ? source.setlinkCatalog : [],
-    setlinkSourceUrl: typeof source.setlinkSourceUrl === 'string' ? source.setlinkSourceUrl : '',
+    setlinkSourceUrl: typeof source.setlinkSourceUrl === 'string' && source.setlinkSourceUrl.trim()
+      ? source.setlinkSourceUrl.trim()
+      : defaultState.setlinkSourceUrl,
     setlinkCatalogMeta: source.setlinkCatalogMeta && typeof source.setlinkCatalogMeta === 'object' ? source.setlinkCatalogMeta : null,
     youtubePlaylistCatalog: Array.isArray(source.youtubePlaylistCatalog) ? source.youtubePlaylistCatalog : [],
     youtubePlaylistSourceUrl: typeof source.youtubePlaylistSourceUrl === 'string' ? source.youtubePlaylistSourceUrl : '',
