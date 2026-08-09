@@ -71,6 +71,12 @@ test('grounded lyrics require a direct matching citation and remain explicitly u
   assert.equal(candidate.sourceKind, 'gemini_grounded_web_lyrics');
   assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'namuwiki']);
   assert.deepEqual(candidate.lines, ['alpha', 'beta']);
+
+  const touhouCandidate = validateGroundedLyricsResult({
+    ...value,
+    sourceUrl: 'https://thwiki.cc/Lyrics:Fixture',
+  }, ['https://thwiki.cc/Lyrics:Fixture'], input);
+  assert.deepEqual(touhouCandidate.discoveryPath, ['lrclib', 'google_search', 'touhou_wiki']);
 });
 
 test('lyrics search falls through LRCLIB to one grounded Google and URL-context search', async () => {

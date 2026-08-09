@@ -95,3 +95,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 
 - The evidence parser now accepts a successful `url_context_result` URL as first-party tool provenance in addition to inline `url_citation` annotations.
 - Failed URL Context calls and non-success result entries remain unusable evidence.
+
+## 2026-08-09 - Touhou source classification (v0.2.56)
+
+- Added the public `thwiki.cc` Touhou Wiki family to the preparation evidence classifier.
+- Verified the deployed web fallback against an LRCLIB-miss subculture track without logging or displaying lyric text.

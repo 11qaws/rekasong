@@ -210,7 +210,8 @@ const samePublicPage = (left, right) => left.origin === right.origin
 const sourceCategory = (url) => {
   const host = url.hostname.toLocaleLowerCase('en');
   if (host === 'namu.wiki' || host.endsWith('.namu.wiki')) return 'namuwiki';
-  if (host === 'en.touhouwiki.net' || host.endsWith('.touhouwiki.net')) return 'touhou_wiki';
+  if (host === 'touhouwiki.net' || host.endsWith('.touhouwiki.net')
+    || host === 'thwiki.cc' || host.endsWith('.thwiki.cc')) return 'touhou_wiki';
   if (host === 'vocadb.net' || host.endsWith('.vocadb.net')) return 'vocadb';
   return 'general_web';
 };
