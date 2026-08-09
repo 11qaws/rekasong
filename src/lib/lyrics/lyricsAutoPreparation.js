@@ -21,6 +21,11 @@ const verbatimSourceKinds = new Set([
 
 const bounded = (value, max = 240) => String(value ?? '').trim().slice(0, max);
 
+export const automaticLyricsIdentity = (song) => JSON.stringify([
+  bounded(song?.title, 240).normalize('NFC'),
+  bounded(song?.artist, 240).normalize('NFC'),
+]);
+
 export class AutomaticLyricsPreparationError extends Error {
   constructor(code, cause = null) {
     super(code, { cause });

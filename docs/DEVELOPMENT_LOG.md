@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Retry lyrics after AI identity correction (v0.2.66)
+
+- Invalidated provisional automatic-lyrics jobs when AI title extraction or an artist edit changes the song identity for the same video.
+- Old failures and NamuWiki priority misses can no longer suppress a fresh search using the corrected title; generation guards still discard late results from the obsolete identity.
+
 ## 2026-08-09 - Local NamuWiki lyrics relay (v0.2.65)
 
 - Added a loopback-only Node helper for the case where NamuWiki serves the user's Windows IP but challenges Cloudflare and Oracle data-center egress.

@@ -109,6 +109,7 @@ import { sanitizeLyricsRef } from '../lib/lyrics/lyricsSchema';
 import {
   AUTOMATIC_LYRICS_PHASES,
   automaticLyricsCandidateSource,
+  automaticLyricsIdentity,
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
 import { searchLyricsWithNamuWikiHelper } from '../lib/lyrics/namuWikiLyricsHelper';
@@ -1008,6 +1009,7 @@ export default function Dashboard() {
   const automaticLyricsDraftsRef = useRef(new Map());
   const automaticLyricsJobsRef = useRef(new Map());
   const automaticLyricsGenerationsRef = useRef(new Map());
+  const automaticLyricsIdentitiesRef = useRef(new Map());
   // 나무위키→공식 웹 우선 수집이 실패한 곡은 오디오 준비가 끝날 때까지 다시
   // 호출하지 않는다. 준비 폴링마다 Gemini 요청을 반복하지 않는 탭 수명 캐시다.
   const automaticLyricsPriorityMissesRef = useRef(new Set());
@@ -1595,6 +1597,45 @@ export default function Dashboard() {
       },
     });
   }, []);
+
+  useEffect(() => {
+    if (!watchedVideoIds) return;
+    const watchedIds = new Set(watchedVideoIds.split(' '));
+    let nextStates = null;
+    for (const videoId of watchedIds) {
+      const song = songForAutomaticLyrics(videoId);
+      if (!song) continue;
+      const identity = automaticLyricsIdentity(song);
+      const previousIdentity = automaticLyricsIdentitiesRef.current.get(videoId);
+      automaticLyricsIdentitiesRef.current.set(videoId, identity);
+      if (!previousIdentity || previousIdentity === identity || song.lyricsRef?.status === 'ready') continue;
+
+      automaticLyricsGenerationsRef.current.set(
+        videoId,
+        (automaticLyricsGenerationsRef.current.get(videoId) || 0) + 1,
+      );
+      automaticLyricsJobsRef.current.delete(videoId);
+      automaticLyricsDraftsRef.current.delete(videoId);
+      automaticLyricsPriorityMissesRef.current.delete(videoId);
+      if (automaticLyricsStatesRef.current[videoId]) {
+        nextStates ||= { ...automaticLyricsStatesRef.current };
+        delete nextStates[videoId];
+      }
+    }
+    for (const videoId of automaticLyricsIdentitiesRef.current.keys()) {
+      if (!watchedIds.has(videoId)) automaticLyricsIdentitiesRef.current.delete(videoId);
+    }
+    if (nextStates) {
+      automaticLyricsStatesRef.current = nextStates;
+      setAutomaticLyricsStates(nextStates);
+    }
+  }, [
+    songForAutomaticLyrics,
+    songbookLyricsTargets,
+    stagedItem?.artist,
+    stagedItem?.title,
+    watchedVideoIds,
+  ]);
 
   useEffect(() => {
     if (!watchedVideoIds) return;

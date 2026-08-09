@@ -5,10 +5,22 @@ import {
   AUTOMATIC_LYRICS_PHASES,
   AutomaticLyricsPreparationError,
   automaticLyricsCandidateSource,
+  automaticLyricsIdentity,
   createAutomaticLyricsDraft,
   preparedCandidateToVtt,
   validatePreparedLyricsCandidate,
 } from '../src/lib/lyrics/lyricsAutoPreparation.js';
+
+test('automatic lyrics identity changes when AI replaces a provisional song title', () => {
+  assert.notEqual(
+    automaticLyricsIdentity({ title: 'HQ Instrumental', artist: '' }),
+    automaticLyricsIdentity({ title: '아이돌', artist: 'YOASOBI' }),
+  );
+  assert.equal(
+    automaticLyricsIdentity({ title: ' 아이돌 ', artist: 'YOASOBI' }),
+    automaticLyricsIdentity({ title: '아이돌', artist: 'YOASOBI' }),
+  );
+});
 
 const candidate = {
   schemaVersion: 1,
