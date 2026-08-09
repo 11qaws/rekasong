@@ -72,11 +72,9 @@ failed      실패 (reason, failureKind, attempts, nextRetryAt)
 
 If prepared audio is ready but YouTube reports no usable timed caption, the Dashboard calls
 `POST /api/lyrics-search` with the bounded video id, staged title, and artist. The Pages Function
-queries LRCLIB first, accepts synchronized LRC results, records the provider URL, and converts the
-best matching result to the same timed-candidate schema. If no synchronized match exists and a
-Gemini key is configured, Gemini public-YouTube video understanding provides a final generated
-timed-transcription candidate. Both sources remain `review_required`; neither is silently approved.
-These network fallbacks run during preparation only, never during playback.
+queries LRCLIB, accepts synchronized LRC results, records the provider URL, and converts the best
+matching result to the same timed-candidate schema. It remains `review_required`; it is never
+silently approved. This network fallback runs during preparation only, never during playback.
 
 ## 3. HTTP 계약
 

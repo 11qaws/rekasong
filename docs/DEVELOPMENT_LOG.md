@@ -1,28 +1,17 @@
 # Development log
 
-## 2026-08-09 — Gemini YouTube request compatibility
+## 2026-08-09 — Google caption integration boundary
 
-- Matched the official direct-YouTube Interactions input order and removed the structured-output option that Gemini rejected when combined with a YouTube URL.
-- The application still parses JSON and applies the same strict cue, timing, and size validation before accepting a generated candidate.
-- Bumped the compatibility deployment to `0.2.46`.
-
-## 2026-08-09 — bounded Gemini provider diagnostics
-
-- Added a bounded server-side diagnostic event for rejected Gemini video requests; client responses still expose only the stable application error code.
-- Bumped the diagnostic corrective deployment to `0.2.45`.
-
-## 2026-08-09 — Gemini YouTube video model correction
-
-- Pinned the final generated-transcript fallback to the current Gemini video-understanding model instead of the app's older text-oriented preview model.
-- Bumped the corrective deployment to `0.2.44` after the public endpoint rejected YouTube video input on `0.2.43`.
+- Public deployment probes confirmed that Gemini accepts direct public YouTube video input, but it did not produce a usable timed lyric candidate for a music video and added about 26 seconds to a miss.
+- Removed Gemini from the automatic path rather than delaying every LRCLIB miss. A future Google Cloud Speech-to-Text fallback belongs in the Oracle prepare worker after dedicated billing, storage, and credentials are configured.
+- Bumped the verified-provider deployment to `0.2.47`.
 
 ## 2026-08-09 — prepared lyrics web fallback
 
 - Added the missing `/api/lyrics-search` Pages Function from the lyrics implementation plan.
 - When YouTube manual and automatic captions are unavailable or fail, the Dashboard now searches LRCLIB for synchronized lyrics using the staged title and artist.
-- If LRCLIB has no synchronized match, the same preparation request can use Gemini's public YouTube video understanding as a final timed-transcription candidate source. The result is labeled as generated and never auto-approved.
 - The selected result keeps its LRCLIB source URL, is normalized into the existing bounded timed-candidate contract, and always stops at `review_required` before use.
-- Existing YouTube timed captions remain first priority; both fallback providers run during preparation only, never during playback.
+- Existing YouTube timed captions remain first priority; the web fallback runs during preparation only, never during playback.
 
 ## 2026-08-09 — prepare 파이프라인에 가사 자동 준비 통합
 
