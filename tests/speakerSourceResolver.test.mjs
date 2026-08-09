@@ -92,6 +92,47 @@ test('a rotated media session replaces the credential-bound resolver', async () 
   ]);
 });
 
+test('rejected media credentials refresh once and retry the exact source request', async () => {
+  const factoryOptions = [];
+  const contexts = [];
+  let refreshCalls = 0;
+  const oldSession = session();
+  const freshSession = session('room-2', 'player-2');
+  const resolveSource = createSpeakerSourceResolver({
+    baseUrl: 'https://worker.example',
+    ensureSession: async () => oldSession,
+    refreshSession: async (expected) => {
+      refreshCalls += 1;
+      assert.equal(expected, oldSession);
+      return freshSession;
+    },
+    resolverFactory: (options) => {
+      factoryOptions.push(options);
+      return async (context) => {
+        contexts.push(context);
+        if (options.room === oldSession.room) {
+          const error = new Error('source_resolver_http_failed');
+          error.code = 'source_resolver_http_failed';
+          error.detail = { status: 401 };
+          throw error;
+        }
+        return { kind: 'blob', blob: new Blob(['fresh']) };
+      };
+    },
+  });
+  const context = { song: { type: 'youtube', src: 'cv7zqJhKoVE' } };
+
+  const result = await resolveSource(context);
+
+  assert.equal(result.kind, 'blob');
+  assert.equal(refreshCalls, 1);
+  assert.deepEqual(factoryOptions.map(({ room, token }) => ({ room, token })), [
+    { room: 'room-1', token: 'player-1' },
+    { room: 'room-2', token: 'player-2' },
+  ]);
+  assert.deepEqual(contexts, [context, context]);
+});
+
 test('remote media fails explicitly when credentials cannot be established', async () => {
   const resolveSource = createSpeakerSourceResolver({
     baseUrl: 'https://worker.example',

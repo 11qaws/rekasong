@@ -233,7 +233,11 @@ test('Dashboard resets prepare state by session identity and fences stale async 
   assert.match(source, /prepareRequestedRef\.current\.clear\(\)/);
   assert.match(source, /prepareStatesRef\.current = \{\}/);
   assert.match(source, /generation !== prepareGenerationRef\.current/);
-  assert.match(source, /prepareSessionKey,\s+watchedVideoIds,/);
+  assert.match(source, /prepareSessionKey,[\s\S]*?runWithPrepareAuthRecovery,[\s\S]*?watchedVideoIds,/);
+  assert.match(
+    source,
+    /const runWithPrepareAuthRecovery = useCallback[\s\S]*?attempt < 2[\s\S]*?PREPARE_REQUEST_ERROR_CODES\.SESSION_INVALID[\s\S]*?refreshOnAirSession\(context\.session\)/,
+  );
   assert.match(source, /prepareStatus === 'session_invalid'/);
   assert.match(source, /prepareStatus === 'session_ended'/);
   assert.match(source, /recoverOnAirConnection\(\)/);

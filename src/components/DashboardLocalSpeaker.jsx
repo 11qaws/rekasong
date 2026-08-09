@@ -18,6 +18,7 @@ import { createSpeakerSourcePipeline } from '../lib/speakerSourceResolver.js';
 const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
   apiBaseUrl,
   ensureSession,
+  refreshSession,
   sinkId = '',
   onEvidence = null,
   onSinkError = null,
@@ -75,6 +76,7 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
       sourcePipeline = createSpeakerSourcePipeline({
         baseUrl: apiBaseUrl,
         ensureSession,
+        refreshSession,
       });
       controller = createLocalSpeakerController({
         audio,
@@ -120,7 +122,7 @@ const DashboardLocalSpeaker = forwardRef(function DashboardLocalSpeaker({
       controller?.dispose();
       sourcePipeline?.dispose();
     };
-  }, [apiBaseUrl, ensureSession]);
+  }, [apiBaseUrl, ensureSession, refreshSession]);
 
   return (
     <div data-local-speaker-state={state} aria-hidden="true">

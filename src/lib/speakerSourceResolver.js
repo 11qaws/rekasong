@@ -29,6 +29,11 @@ const isPageBlobSong = (song) => (
   && song.src.startsWith('blob:')
 );
 
+const isRejectedMediaCredential = (error) => (
+  error?.code === 'source_resolver_http_failed'
+  && [401, 403, 410].includes(error?.detail?.status)
+);
+
 /**
  * Speaker playback has two media sources but no output lease:
  * - a page-owned local Blob URL is already complete and must never wake the Worker;
@@ -40,6 +45,7 @@ const isPageBlobSong = (song) => (
 export function createSpeakerSourceResolver({
   baseUrl,
   ensureSession,
+  refreshSession,
   resolverFactory = loadOnAirSourceResolver,
   maxBytes = DEFAULT_MAX_BYTES,
 } = {}) {
@@ -55,19 +61,7 @@ export function createSpeakerSourceResolver({
   let cachedIdentity = null;
   let cachedResolverPromise = null;
 
-  return async function resolveSpeakerSource(context) {
-    const song = context?.song;
-    if (!song || typeof song !== 'object') {
-      throw new SpeakerSourceResolverError(
-        SPEAKER_SOURCE_RESOLVER_CODES.INVALID_CONTEXT,
-        { field: 'song' },
-      );
-    }
-    if (isPageBlobSong(song)) {
-      return Object.freeze({ kind: 'url', url: song.src });
-    }
-
-    const session = await ensureSession();
+  const resolverForSession = async (session) => {
     if (!session || typeof session.room !== 'string' || !session.room
       || typeof session.playerToken !== 'string' || !session.playerToken) {
       throw new SpeakerSourceResolverError(
@@ -101,8 +95,31 @@ export function createSpeakerSourceResolver({
         throw error;
       });
     }
-    const resolver = await cachedResolverPromise;
-    return resolver(context);
+    return cachedResolverPromise;
+  };
+
+  return async function resolveSpeakerSource(context) {
+    const song = context?.song;
+    if (!song || typeof song !== 'object') {
+      throw new SpeakerSourceResolverError(
+        SPEAKER_SOURCE_RESOLVER_CODES.INVALID_CONTEXT,
+        { field: 'song' },
+      );
+    }
+    if (isPageBlobSong(song)) {
+      return Object.freeze({ kind: 'url', url: song.src });
+    }
+
+    const session = await ensureSession();
+    const resolver = await resolverForSession(session);
+    try {
+      return await resolver(context);
+    } catch (error) {
+      if (typeof refreshSession !== 'function' || !isRejectedMediaCredential(error)) throw error;
+      const replacement = await refreshSession(session);
+      const replacementResolver = await resolverForSession(replacement);
+      return replacementResolver(context);
+    }
   };
 }
 
@@ -115,6 +132,7 @@ export function createSpeakerSourceResolver({
 export function createSpeakerSourcePipeline({
   baseUrl,
   ensureSession,
+  refreshSession,
   prefetchCacheLoader = loadOnAirPrefetchCache,
   loadMaxBytes = DEFAULT_MAX_BYTES,
   prefetchMaxBytes = DEFAULT_PREFETCH_MAX_BYTES,
@@ -151,11 +169,13 @@ export function createSpeakerSourcePipeline({
       const loadResolver = createSpeakerSourceResolver({
         baseUrl,
         ensureSession,
+        refreshSession,
         maxBytes: loadMaxBytes,
       });
       const prefetchResolver = createSpeakerSourceResolver({
         baseUrl,
         ensureSession,
+        refreshSession,
         maxBytes: prefetchMaxBytes,
       });
       const created = module.createOnAirPrefetchCache({

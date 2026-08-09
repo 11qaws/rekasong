@@ -10,6 +10,7 @@ import {
   buildOnAirDisplayUrl,
   buildOnAirPlayerUrl,
   clearStoredOnAirSession,
+  createOnAirSessionEnsurer,
   createLegacyControlSocketManager,
   isSameOnAirSessionIdentity,
   isSameOnAirSessionRecord,
@@ -29,6 +30,96 @@ const SESSION = Object.freeze({
 });
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+const sessionEnsurerHarness = ({
+  initialSession = SESSION,
+  validations = [{ status: ON_AIR_SESSION_VALIDATION_STATES.ACTIVE }],
+} = {}) => {
+  let current = initialSession;
+  let createCalls = 0;
+  let validateCalls = 0;
+  const created = [];
+  const ensurer = createOnAirSessionEnsurer({
+    getSession: () => current,
+    createSession: async ({ reuseStored }) => {
+      createCalls += 1;
+      if (reuseStored && current) return current;
+      const next = {
+        room: `room-created-${createCalls}`,
+        controlToken: `control-created-${createCalls}`,
+        playerToken: `player-created-${createCalls}`,
+      };
+      created.push(next);
+      current = next;
+      return next;
+    },
+    validateSession: async () => {
+      const index = Math.min(validateCalls, validations.length - 1);
+      validateCalls += 1;
+      return validations[index];
+    },
+  });
+  return {
+    ensurer,
+    created,
+    get current() { return current; },
+    get createCalls() { return createCalls; },
+    get validateCalls() { return validateCalls; },
+  };
+};
+
+test('lazy session demand validates a stored session once and reuses it', async () => {
+  const harness = sessionEnsurerHarness();
+
+  const [first, second, third] = await Promise.all([
+    harness.ensurer.ensure(),
+    harness.ensurer.ensure(),
+    harness.ensurer.ensure(),
+  ]);
+  const cached = await harness.ensurer.ensure();
+
+  assert.equal(first, SESSION);
+  assert.equal(second, SESSION);
+  assert.equal(third, SESSION);
+  assert.equal(cached, SESSION);
+  assert.equal(harness.validateCalls, 1);
+  assert.equal(harness.createCalls, 0);
+});
+
+test('authoritatively rejected stored credentials rotate automatically once', async () => {
+  const harness = sessionEnsurerHarness({
+    validations: [{ status: ON_AIR_SESSION_VALIDATION_STATES.INVALID }],
+  });
+
+  const replacements = await Promise.all([
+    harness.ensurer.ensure(),
+    harness.ensurer.ensure(),
+    harness.ensurer.ensure(),
+  ]);
+
+  assert.equal(harness.validateCalls, 1);
+  assert.equal(harness.createCalls, 1);
+  assert.equal(harness.created.length, 1);
+  assert.ok(replacements.every((replacement) => replacement === harness.current));
+  assert.notEqual(harness.current.room, SESSION.room);
+});
+
+test('retryable validation preserves credentials while explicit rejection refresh is single-flight', async () => {
+  const harness = sessionEnsurerHarness({
+    validations: [{ status: ON_AIR_SESSION_VALIDATION_STATES.RETRYABLE }],
+  });
+
+  assert.equal(await harness.ensurer.ensure(), SESSION);
+  assert.equal(harness.createCalls, 0, 'an offline validator must not discard credentials');
+  const replacements = await Promise.all([
+    harness.ensurer.refresh(SESSION),
+    harness.ensurer.refresh(SESSION),
+  ]);
+
+  assert.equal(harness.createCalls, 1);
+  assert.equal(replacements[0], replacements[1]);
+  assert.equal(replacements[0], harness.current);
+});
 
 class MemoryStorage {
   constructor(initial = {}) {

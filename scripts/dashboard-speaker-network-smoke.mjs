@@ -154,6 +154,10 @@ try {
   const prepareActivityRequests = [];
   let sessionSocketFramesSent = 0;
   let obsAssetUploadAttempts = 0;
+  let sessionCreationCount = 0;
+  let rejectSessionStatusForRoom = null;
+  let rejectNextAudioCredential = false;
+  const audioRequests = [];
 
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('request', (request) => {
@@ -194,13 +198,14 @@ try {
     });
     await page.route('**/v1/sessions', (route) => {
       if (route.request().method() !== 'POST') return route.continue();
+      sessionCreationCount += 1;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          room: 'speaker-demand-room',
-          controlToken: 'speaker-demand-control-token',
-          playerToken: 'speaker-demand-player-token',
+          room: `speaker-demand-room-${sessionCreationCount}`,
+          controlToken: `speaker-demand-control-token-${sessionCreationCount}`,
+          playerToken: `speaker-demand-player-token-${sessionCreationCount}`,
           workerOrigin: 'https://rekasong-session.11qaws.workers.dev',
         }),
       });
@@ -212,11 +217,41 @@ try {
     });
     await page.route('**/v1/prepare?**', readyPrepare);
     await page.route('**/v1/prepare/**', readyPrepare);
-    await page.route('**/v1/sessions/*/status', (route) => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ status: 'active' }),
-    }));
+    await page.route('**/v1/audio/*?**', (route) => {
+      const requestUrl = new URL(route.request().url());
+      if (!rejectNextAudioCredential) {
+        return route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'fixture_audio_not_armed' }),
+        });
+      }
+      const rejected = audioRequests.length === 0;
+      audioRequests.push({ room: requestUrl.searchParams.get('room'), status: rejected ? 401 : 200 });
+      if (rejected) {
+        return route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'fixture_expired_media_session' }),
+        });
+      }
+      const fixture = createWavFixture({ durationSeconds: 4 });
+      return route.fulfill({
+        status: 200,
+        contentType: 'audio/wav',
+        headers: { 'Content-Length': String(fixture.byteLength) },
+        body: fixture,
+      });
+    });
+    await page.route('**/v1/sessions/*/status', (route) => {
+      const room = new URL(route.request().url()).pathname.split('/').at(-2);
+      const rejected = room === rejectSessionStatusForRoom;
+      return route.fulfill({
+        status: rejected ? 401 : 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: rejected ? 'invalid' : 'active' }),
+      });
+    });
     await page.route('**/v1/sessions/*/assets', (route) => {
       obsAssetUploadAttempts += 1;
       if (obsAssetUploadAttempts === 1) {
@@ -557,6 +592,7 @@ try {
   assert.equal(sessionSockets.length, 0, 'Searching alone must not create an OBS control socket.');
 
   let stagedEvidence = null;
+  let rejectedAudioRecoveryEvidence = null;
   let persistedSessionReloadEvidence = null;
   let obsLocalFileEvidence = null;
   if (!requestedUrl) {
@@ -579,26 +615,65 @@ try {
     assert.equal(sessionSocketFramesSent, 0, 'Speaker media preparation must not send WebSocket frames.');
 
     sessionHttpRequests.length = 0;
+    rejectNextAudioCredential = true;
+    const preparedPlayButton = page.locator('.staging-action-buttons .go-live-btn').first();
+    await preparedPlayButton.waitFor({ state: 'visible' });
+    assert.equal(await preparedPlayButton.isEnabled(), true);
+    await preparedPlayButton.click();
+    await page.waitForFunction(() => {
+      const audio = document.querySelector('[data-local-speaker-state="ready"] audio');
+      return audio && audio.paused === false && audio.currentTime > 0.05;
+    });
+    rejectedAudioRecoveryEvidence = {
+      rejectedRequests: audioRequests.filter((request) => request.status === 401).length,
+      successfulRequests: audioRequests.filter((request) => request.status === 200).length,
+      freshSessions: sessionHttpRequests.filter((request) => request.method === 'POST'
+        && request.path === '/v1/sessions').length,
+      sessionSockets: sessionSockets.length,
+      sessionSocketFramesSent,
+    };
+    assert.deepEqual(rejectedAudioRecoveryEvidence, {
+      rejectedRequests: 1,
+      successfulRequests: 1,
+      freshSessions: 1,
+      sessionSockets: 0,
+      sessionSocketFramesSent: 0,
+    }, 'A rejected audio request must refresh once and resume without an OBS control socket.');
+
+    sessionHttpRequests.length = 0;
     sessionSockets.length = 0;
     sessionSocketFramesSent = 0;
+    rejectSessionStatusForRoom = await page.evaluate(() => JSON.parse(
+      localStorage.getItem('rekasong-on-air-session-v1') || 'null',
+    )?.room || null);
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
     await page.locator('#output-route-live-status.is-speaker').waitFor({ state: 'visible' });
     await page.locator('[data-local-speaker-state="ready"]').waitFor({ state: 'attached' });
-    await page.waitForTimeout(1_000);
+    await page.waitForFunction((staleRoom) => {
+      const stored = JSON.parse(localStorage.getItem('rekasong-on-air-session-v1') || 'null');
+      return stored?.room && stored.room !== staleRoom;
+    }, rejectSessionStatusForRoom);
+    await page.waitForTimeout(250);
     persistedSessionReloadEvidence = {
       sessionHttpRequests: sessionHttpRequests.length,
       sessionSockets: sessionSockets.length,
       sessionSocketFramesSent,
-      storedSession: Boolean(
-        await page.evaluate(() => localStorage.getItem('rekasong-on-air-session-v1')),
-      ),
+      statusChecks: sessionHttpRequests.filter((request) => request.method === 'GET'
+        && request.path.endsWith('/status')).length,
+      freshSessions: sessionHttpRequests.filter((request) => request.method === 'POST'
+        && request.path === '/v1/sessions').length,
+      sessionRotated: await page.evaluate((staleRoom) => JSON.parse(
+        localStorage.getItem('rekasong-on-air-session-v1') || 'null',
+      )?.room !== staleRoom, rejectSessionStatusForRoom),
     };
     assert.deepEqual(persistedSessionReloadEvidence, {
-      sessionHttpRequests: 0,
+      sessionHttpRequests: 2,
       sessionSockets: 0,
       sessionSocketFramesSent: 0,
-      storedSession: true,
-    }, 'A stored media session must not wake OBS control after a Speaker page reload.');
+      statusChecks: 1,
+      freshSessions: 1,
+      sessionRotated: true,
+    }, 'Rejected stored media credentials must rotate automatically without waking OBS control.');
 
     await page.locator('.song-composer input[type="file"][accept]').setInputFiles({
       name: 'speaker-after-obs.wav',
@@ -671,6 +746,7 @@ try {
       thumbnailEvidence,
     },
     stagedEvidence,
+    rejectedAudioRecoveryEvidence,
     persistedSessionReloadEvidence,
     obsLocalFileEvidence,
     workerHostRequests: workerHostRequests.length,

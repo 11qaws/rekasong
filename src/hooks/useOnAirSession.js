@@ -275,6 +275,99 @@ export async function validateOnAirSession({
 }
 
 /**
+ * Lazily validates persisted credentials and replaces only credentials that the
+ * Worker has authoritatively rejected. One shared flight covers prepare,
+ * Speaker media, and setup demand, so concurrent callers cannot create sibling
+ * sessions. Retryable network/5xx results deliberately keep the current record.
+ */
+export function createOnAirSessionEnsurer({
+  getSession,
+  createSession,
+  validateSession
+} = {}) {
+  if (typeof getSession !== 'function'
+    || typeof createSession !== 'function'
+    || typeof validateSession !== 'function') {
+    throw new TypeError('invalid_on_air_session_ensurer');
+  }
+
+  let ensureInFlight = null;
+  let refreshInFlight = null;
+  let validatedIdentity = null;
+
+  const identityOf = (candidate) => {
+    const session = parseOnAirSessionRecord(candidate);
+    return session
+      ? `${session.workerOrigin}\u0000${session.room}\u0000${session.controlToken}\u0000${session.playerToken}`
+      : '';
+  };
+
+  const ensureCurrent = async () => {
+    let candidate = getSession();
+    if (!candidate) candidate = await createSession({ reuseStored: true });
+
+    // A storage event can adopt another tab's canonical session while status is
+    // in flight. Follow at most two such handoffs instead of validating stale
+    // credentials or spinning on a hostile writer.
+    for (let handoff = 0; handoff < 3; handoff += 1) {
+      const identity = identityOf(candidate);
+      if (!identity) candidate = await createSession({ reuseStored: false });
+      else if (identity === validatedIdentity) return candidate;
+      else {
+        const validation = await validateSession(candidate);
+        const latest = getSession();
+        if (!isSameOnAirSessionIdentity(latest, candidate)) {
+          candidate = latest || await createSession({ reuseStored: true });
+          continue;
+        }
+        if (validation?.status === ON_AIR_SESSION_VALIDATION_STATES.ACTIVE) {
+          validatedIdentity = identity;
+          return candidate;
+        }
+        if (![ON_AIR_SESSION_VALIDATION_STATES.INVALID, ON_AIR_SESSION_VALIDATION_STATES.ENDED]
+          .includes(validation?.status)) {
+          return candidate;
+        }
+        candidate = await createSession({ reuseStored: false });
+      }
+
+      validatedIdentity = identityOf(candidate);
+      return candidate;
+    }
+    return candidate;
+  };
+
+  const ensure = () => {
+    if (refreshInFlight) return refreshInFlight;
+    const current = getSession();
+    if (current && identityOf(current) === validatedIdentity) return Promise.resolve(current);
+    if (!ensureInFlight) {
+      ensureInFlight = ensureCurrent()
+        .finally(() => { ensureInFlight = null; });
+    }
+    return ensureInFlight;
+  };
+
+  const refresh = (expectedSession = getSession()) => {
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = Promise.resolve(ensureInFlight)
+      .then(async () => {
+        const current = getSession();
+        // Another caller or tab already replaced the rejected credentials.
+        if (expectedSession && current
+          && !isSameOnAirSessionIdentity(current, expectedSession)) return current;
+        const replacement = await createSession({ reuseStored: false });
+        validatedIdentity = identityOf(replacement);
+        return replacement;
+      })
+      .finally(() => { refreshInFlight = null; });
+    return refreshInFlight;
+  };
+
+  return Object.freeze({ ensure, refresh });
+}
+
+/**
  * Owns the legacy control socket independently from React's effect lifetime.
  * Keeping one manager in a ref lets a StrictMode cleanup close the old socket
  * before the following setup creates its replacement.
@@ -573,7 +666,7 @@ export function useOnAirSession(onEvent, options) {
   // 겹쳐도 세션은 반드시 하나만 만든다. 두 개가 생기면 위젯과 대시보드가 서로 다른
   // 세션에 붙어 "주소를 넣었는데 초록불이 안 켜지는" 고아 세션이 된다(라이브 실측).
   const sessionRef = useRef(session);
-  const createInFlightRef = useRef(null);
+  const sessionEnsurerRef = useRef(null);
 
   const adoptSession = useCallback((candidate) => {
     const adoption = resolveOnAirSessionAdoption(sessionRef.current, candidate);
@@ -641,15 +734,22 @@ export function useOnAirSession(onEvent, options) {
     })
   ), [adoptSession]);
 
-  const ensureSession = useCallback(async () => {
-    // state 대신 ref 를 읽는다 — 렌더 클로저의 낡은 session 으로 중복 생성하지 않게.
-    if (sessionRef.current) return sessionRef.current;
-    if (!createInFlightRef.current) {
-      createInFlightRef.current = createSession({ reuseStored: true })
-        .finally(() => { createInFlightRef.current = null; });
-    }
-    return createInFlightRef.current;
-  }, [createSession]);
+  if (!sessionEnsurerRef.current) {
+    sessionEnsurerRef.current = createOnAirSessionEnsurer({
+      getSession: () => sessionRef.current,
+      createSession: (creationOptions) => createSession(creationOptions),
+      validateSession: (candidate) => validateOnAirSession({
+        baseUrl: SESSION_BASE_URL,
+        session: candidate,
+        fetchImpl: fetch
+      })
+    });
+  }
+  const ensureSession = useCallback(() => sessionEnsurerRef.current.ensure(), []);
+  const refreshSession = useCallback(
+    (expectedSession = sessionRef.current) => sessionEnsurerRef.current.refresh(expectedSession),
+    []
+  );
 
   const managerCallbacksRef = useRef(null);
   managerCallbacksRef.current = {
@@ -674,8 +774,8 @@ export function useOnAirSession(onEvent, options) {
       onTransport: (value) => managerCallbacksRef.current?.setTransport(value),
       onPresence: (value) => managerCallbacksRef.current?.setWidgetPresence(value),
       onSessionEnded: (endedSession) => managerCallbacksRef.current?.clearSession(endedSession),
-      // Invalid credentials remain visible until the user explicitly replaces
-      // them. This avoids silently orphaning an active OBS/session route.
+      // The manager reports authoritative invalidity; Dashboard and the lazy
+      // media ensurer decide when it is safe to rotate rejected credentials.
       onSessionInvalid: () => {},
       onEvent: (payload) => managerCallbacksRef.current?.emitEvent(payload)
     });
@@ -842,13 +942,7 @@ export function useOnAirSession(onEvent, options) {
     return adoptSession(nextSession);
   }, [adoptSession]);
 
-  const createFreshSession = useCallback(async () => {
-    if (!createInFlightRef.current) {
-      createInFlightRef.current = createSession({ reuseStored: false })
-        .finally(() => { createInFlightRef.current = null; });
-    }
-    return createInFlightRef.current;
-  }, [createSession]);
+  const createFreshSession = refreshSession;
 
   return {
     configured: Boolean(SESSION_BASE_URL),
@@ -864,6 +958,7 @@ export function useOnAirSession(onEvent, options) {
     preparePlayer,
     prepareDisplay,
     ensureSession,
+    refreshSession,
     replaceSession,
     createFreshSession,
     sendCommand,

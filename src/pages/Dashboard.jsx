@@ -110,6 +110,7 @@ import {
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
 import {
+  PREPARE_REQUEST_ERROR_CODES,
   YOUTUBE_ID_PATTERN,
   fetchPreparedLyricsCandidate,
   fetchPrepareStatus,
@@ -272,10 +273,10 @@ export default function Dashboard() {
   const onAirDisplayToken = onAirSession?.displayToken;
   const createFreshOnAirSession = onAir.createFreshSession;
   const ensureOnAirSession = onAir.ensureSession;
+  const refreshOnAirSession = onAir.refreshSession;
   const retryLocalSpeakerSession = useCallback(() => {
     if (!useOnAirPlayer) return Promise.resolve(null);
-    if (onAirSession) return Promise.resolve(onAirSession);
-    setLocalSpeakerState('initializing');
+    if (!onAirSession) setLocalSpeakerState('initializing');
     return Promise.resolve(ensureOnAirSession()).catch((error) => {
       setLocalSpeakerState('failed');
       localSpeakerCommandQueueRef.current.rejectAll(error);
@@ -1291,6 +1292,7 @@ export default function Dashboard() {
         auth: { room: activeSession.room, token: activeSession.playerToken },
         generation: prepareGenerationRef.current,
         sessionKey,
+        session: activeSession,
         stale: true
       };
     }
@@ -1299,17 +1301,44 @@ export default function Dashboard() {
       auth: { room: activeSession.room, token: activeSession.playerToken },
       generation,
       sessionKey,
+      session: activeSession,
       stale: false
     };
   }, [resetPrepareSession]);
+
+  const runWithPrepareAuthRecovery = useCallback(async (operation) => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const context = await getPrepareAuth();
+      if (context.stale) return { ...context, skipped: true };
+      try {
+        return { ...context, value: await operation(context.auth) };
+      } catch (error) {
+        const rejectedCredential = error?.code === PREPARE_REQUEST_ERROR_CODES.SESSION_INVALID
+          || error?.code === PREPARE_REQUEST_ERROR_CODES.SESSION_ENDED;
+        if (!rejectedCredential || attempt > 0) throw error;
+
+        // A prepare 401/403/410 is authoritative for these media credentials.
+        // Rotate once, reset the credential-bound evidence, and repeat the exact
+        // request without making the user press "연결 갱신".
+        let freshSession;
+        try {
+          freshSession = await refreshOnAirSession(context.session);
+        } catch {
+          throw error;
+        }
+        resetPrepareSession(prepareSessionIdentity(freshSession));
+      }
+    }
+    throw new Error('prepare_auth_recovery_exhausted');
+  }, [getPrepareAuth, refreshOnAirSession, resetPrepareSession]);
 
   const ensurePrepareRequested = useCallback((videoId, { force = false } = {}) => {
     if (!isPrepareConfigured() || !videoId || prepareRequestedRef.current.has(videoId)) return;
     let requestGeneration = prepareGenerationRef.current;
     prepareRequestedRef.current.add(videoId);
-    getPrepareAuth()
-      .then(async ({ auth, generation, sessionKey, stale }) => {
-        if (stale) {
+    runWithPrepareAuthRecovery((auth) => requestPrepare(videoId, auth, { force }))
+      .then(({ value: info, generation, sessionKey, skipped }) => {
+        if (skipped) {
           if (requestGeneration === prepareGenerationRef.current) {
             prepareRequestedRef.current.delete(videoId);
           }
@@ -1320,7 +1349,6 @@ export default function Dashboard() {
           || sessionKey !== prepareSessionKeyRef.current) return;
         // getPrepareAuth가 새 세션을 채택하며 집합을 비웠을 수 있다.
         prepareRequestedRef.current.add(videoId);
-        const info = await requestPrepare(videoId, auth, { force });
         notePrepare(videoId, info, generation);
       })
       .catch((error) => {
@@ -1331,7 +1359,7 @@ export default function Dashboard() {
           sessionState: prepareConnectionStateForCurrentAuth()
         }), requestGeneration);
       });
-  }, [getPrepareAuth, notePrepare, prepareConnectionStateForCurrentAuth]);
+  }, [notePrepare, prepareConnectionStateForCurrentAuth, runWithPrepareAuthRecovery]);
 
   // 준비를 지켜볼 YouTube 곡: 스테이징(준비 시작 시점) + 대기열 + 현재 곡.
   // 문자열로 합쳐 effect 의존성을 안정화한다(순서·중복 무관).
@@ -1375,12 +1403,16 @@ export default function Dashboard() {
     const pollPrepareStatus = async (videoId) => {
       let pollGeneration = prepareGenerationRef.current;
       try {
-        const { auth, generation, sessionKey, stale } = await getPrepareAuth();
+        const {
+          value: next,
+          generation,
+          sessionKey,
+          skipped,
+        } = await runWithPrepareAuthRecovery((auth) => fetchPrepareStatus(videoId, auth));
         pollGeneration = generation;
-        if (stale
+        if (skipped
           || generation !== prepareGenerationRef.current
           || sessionKey !== prepareSessionKeyRef.current) return;
-        const next = await fetchPrepareStatus(videoId, auth);
         if (generation !== prepareGenerationRef.current) return;
         // Worker의 작업 레코드가 정리돼 absent가 되면 GET만 반복해서는 영원히
         // '준비 중'에 갇힌다 — 예약을 지워 다음 틱이 다시 큐잉하게 한다.
@@ -1416,10 +1448,10 @@ export default function Dashboard() {
     // eslint 참고: ensurePrepareRequested/notePrepare는 ref·setState만 쓰는 안정적 로직.
   }, [
     ensurePrepareRequested,
-    getPrepareAuth,
     notePrepare,
     prepareConnectionStateForCurrentAuth,
     prepareSessionKey,
+    runWithPrepareAuthRecovery,
     watchedVideoIds,
   ]);
 
@@ -1870,9 +1902,9 @@ export default function Dashboard() {
   }, [recordObsMixerVerification]);
 
   // The local speaker downloads prepared media through a media session, but
-  // that HTTP credential is not an output route. Bootstrap it quietly once;
-  // a failure never changes the selected Speaker route, and the next explicit
-  // play command retries instead of waiting forever.
+  // that HTTP credential is not an output route. Validate a persisted record
+  // quietly once so an expired token never waits for a "연결 갱신" click. An
+  // empty Speaker page still creates no session or control socket.
   const sessionBootstrapAttemptedRef = useRef(false);
   useEffect(() => {
     if (!useOnAirPlayer) return;
@@ -1892,6 +1924,13 @@ export default function Dashboard() {
       recoverOnAirConnection()
         .then(() => showToast(t('onair.connection.recovery.created'), 'success'))
         .catch(() => showToast(t('onair.connection.recovery.failed'), 'error'));
+      return;
+    }
+
+    if (onAirSession && onAirSessionState === 'disabled'
+      && !sessionBootstrapAttemptedRef.current) {
+      sessionBootstrapAttemptedRef.current = true;
+      retryLocalSpeakerSession().catch(() => {});
       return;
     }
 
@@ -4195,6 +4234,7 @@ export default function Dashboard() {
               ref={localSpeakerRef}
               apiBaseUrl={onAir.baseUrl}
               ensureSession={ensureOnAirSession}
+              refreshSession={refreshOnAirSession}
               sinkId={speakerOutputDevice.deviceId}
               onEvidence={handleLocalSpeakerEvidence}
               onSinkError={handleSpeakerSinkRestoreFailure}

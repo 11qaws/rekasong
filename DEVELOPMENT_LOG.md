@@ -1015,3 +1015,24 @@
   count 13을 수신하고 즉시 빈 claim으로 돌아왔다. 게시 artifact와 CDN의
   index·CSS·JS·아이콘 21개는 크기와 SHA-256이 `21/21` exact match였다.
   검증 중 음악 재생·OBS 연결·방송·녹화는 시작하지 않았다.
+
+## 2026-08-09 (Codex) — 만료 미디어 세션 자동 갱신과 오디오 1회 재시도
+
+- Speaker 모드에서는 OBS legacy observer가 꺼져 있어 저장된 room/token을 상태
+  검증 없이 `ensureSession()`이 그대로 반환했다. 이 때문에 실제 준비·오디오
+  엔드포인트가 401을 반환해도 같은 토큰을 반복 사용하고 UI가 `연결 갱신`을
+  요구했다. R2 오디오 바이트나 VPS 준비 워커가 아니라 세션 수명 처리 문제였다.
+- 저장 세션이 있을 때만 첫 화면에서 status를 조용히 1회 검증한다. 200은 재사용,
+  401/410처럼 서버가 확정한 무효·종료만 새 세션으로 교체하고, 네트워크·5xx는
+  기존 자격 증명을 보존한다. 준비·Speaker 동시 수요와 여러 401은 하나의
+  single-flight 갱신을 공유해 고아 세션을 만들지 않는다.
+- prepare POST/GET과 Speaker 오디오 GET은 자격 증명 거절 시 새 세션으로 원래
+  요청을 정확히 한 번만 자동 재시도한다. 두 번째 실패는 기존 안전 실패로
+  수렴하며 무한 재시도하지 않는다. 빈 Speaker 화면과 로컬 Blob 재생은 계속
+  session HTTP/WebSocket/frame 0건을 유지한다.
+- 관련 단위·배선 테스트 57/57, 전체 테스트 812/812, lint 신규 오류 0(기존
+  `functions/api/gemini.js` escape 경고 2), production build를 통과했다.
+- production preview 실제 Chrome smoke에서 오디오 401 1건 뒤 성공 응답 1건,
+  새 세션 POST 1건으로 같은 곡이 재생됐다. reload의 만료 저장 세션도 status GET
+  1건과 새 세션 POST 1건으로 자동 교체됐다. 두 시나리오의 OBS WebSocket과 송신
+  프레임은 모두 0건이었다. 이번 작업은 배포·OBS 연결·방송·녹화를 수행하지 않았다.

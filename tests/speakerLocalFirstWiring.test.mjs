@@ -48,8 +48,8 @@ test('production Speaker keeps local files page-owned until explicit OBS demand'
   assert.match(restoreFlow, /restoreLocalBlobSong\(sourceEntry\.song/);
   assert.doesNotMatch(restoreFlow, /uploadAsset/);
 
-  assert.match(localSpeaker, /createSpeakerSourcePipeline\(\{[\s\S]*?ensureSession/);
-  assert.match(localSpeaker, /\[apiBaseUrl, ensureSession\]/);
+  assert.match(localSpeaker, /createSpeakerSourcePipeline\(\{[\s\S]*?ensureSession,[\s\S]*?refreshSession/);
+  assert.match(localSpeaker, /\[apiBaseUrl, ensureSession, refreshSession\]/);
   assert.doesNotMatch(localSpeaker, /\[apiBaseUrl, room, token\]/);
   assert.match(
     staging,
@@ -74,6 +74,11 @@ test('production Speaker keeps local files page-owned until explicit OBS demand'
     dashboard,
     /const handleLocalSpeakerStateChange = useCallback[\s\S]*?reconcileDeferredTransportState[\s\S]*?onStateChange=\{handleLocalSpeakerStateChange\}/,
     'every physical controller-ready notification must drain commands even across ready-to-ready remounts',
+  );
+  assert.match(
+    dashboard,
+    /const refreshOnAirSession = onAir\.refreshSession;[\s\S]*?refreshSession=\{refreshOnAirSession\}/,
+    'Speaker media rejection must share the session hook single-flight refresh path',
   );
 });
 
