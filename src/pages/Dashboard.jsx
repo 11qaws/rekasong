@@ -1185,6 +1185,7 @@ export default function Dashboard() {
   const [storedPrepareStates, setPrepareStates] = useState({});
   // POST /v1/prepare는 멱등이지만, 같은 곡에 대한 반복 요청 소음을 억제한다.
   const prepareRequestedRef = useRef(new Set());
+  const prepareRequestFlightsRef = useRef(new Set());
   const prepareSessionKey = prepareSessionIdentity(onAirSession);
   const prepareSessionKeyRef = useRef(prepareSessionKey);
   // room/token이 바뀐 첫 render부터 이전 세션의 ready 증거를 숨긴다. effect가
@@ -1250,9 +1251,13 @@ export default function Dashboard() {
   // 다른 비동기 응답은 아래 notePrepare에서 무시해 새 세션을 덮어쓰지 못한다.
   const resetPrepareSession = useCallback((nextSessionKey) => {
     if (prepareSessionKeyRef.current === nextSessionKey) return prepareGenerationRef.current;
+    const adoptingFirstSession = !prepareSessionKeyRef.current && Boolean(nextSessionKey);
     prepareSessionKeyRef.current = nextSessionKey;
     prepareGenerationRef.current += 1;
-    prepareRequestedRef.current.clear();
+    // The first prepare request may itself create the first media session. Keep
+    // that in-flight marker so the session-key render cannot enqueue the same
+    // song twice. Real credential replacement/removal still invalidates it.
+    if (!adoptingFirstSession) prepareRequestedRef.current.clear();
     prepareStatesRef.current = {};
     setPrepareStates({});
     return prepareGenerationRef.current;
@@ -1333,8 +1338,11 @@ export default function Dashboard() {
   }, [getPrepareAuth, refreshOnAirSession, resetPrepareSession]);
 
   const ensurePrepareRequested = useCallback((videoId, { force = false } = {}) => {
-    if (!isPrepareConfigured() || !videoId || prepareRequestedRef.current.has(videoId)) return;
+    if (!isPrepareConfigured() || !videoId
+      || prepareRequestedRef.current.has(videoId)
+      || prepareRequestFlightsRef.current.has(videoId)) return;
     let requestGeneration = prepareGenerationRef.current;
+    prepareRequestFlightsRef.current.add(videoId);
     prepareRequestedRef.current.add(videoId);
     runWithPrepareAuthRecovery((auth) => requestPrepare(videoId, auth, { force }))
       .then(({ value: info, generation, sessionKey, skipped }) => {
@@ -1358,7 +1366,8 @@ export default function Dashboard() {
         notePrepare(videoId, prepareFailureInfo(error, {
           sessionState: prepareConnectionStateForCurrentAuth()
         }), requestGeneration);
-      });
+      })
+      .finally(() => prepareRequestFlightsRef.current.delete(videoId));
   }, [notePrepare, prepareConnectionStateForCurrentAuth, runWithPrepareAuthRecovery]);
 
   // 준비를 지켜볼 YouTube 곡: 스테이징(준비 시작 시점) + 대기열 + 현재 곡.
