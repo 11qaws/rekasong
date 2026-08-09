@@ -172,18 +172,24 @@ export async function searchLrclibLyrics(input, fetchImpl = globalThis.fetch) {
 }
 
 const interactionOutput = (interaction) => {
-  const textBlocks = (interaction?.steps || [])
+  const steps = interaction?.steps || [];
+  const textBlocks = steps
     .filter((step) => step.type === 'model_output')
     .flatMap((step) => step.content || [])
     .filter((content) => content.type === 'text');
   const text = textBlocks.map((content) => content.text || '').join('\n')
     .replace(/^```(?:json)?\s*|\s*```$/gu, '')
     .trim();
-  const citations = textBlocks
+  const annotationCitations = textBlocks
     .flatMap((content) => content.annotations || [])
     .filter((annotation) => annotation.type === 'url_citation')
     .map((annotation) => annotation.url);
-  return { text, citations };
+  const urlContextCitations = steps
+    .filter((step) => step.type === 'url_context_result' && step.is_error !== true)
+    .flatMap((step) => Array.isArray(step.result) ? step.result : [])
+    .filter((result) => result?.status === 'success')
+    .map((result) => result.url);
+  return { text, citations: [...annotationCitations, ...urlContextCitations] };
 };
 
 const safePublicUrl = (value) => {

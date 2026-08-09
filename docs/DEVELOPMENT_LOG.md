@@ -90,3 +90,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 
 - Structured Google Search results without inline JSON citations now receive one bounded URL Context verification pass.
 - The verifier returns no lyrics and accepts the candidate only when the exact page contains every line in order, matches the requested title and artist, and cites that same public URL.
+
+## 2026-08-09 - URL Context result provenance (v0.2.55)
+
+- The evidence parser now accepts a successful `url_context_result` URL as first-party tool provenance in addition to inline `url_citation` annotations.
+- Failed URL Context calls and non-success result entries remain unusable evidence.

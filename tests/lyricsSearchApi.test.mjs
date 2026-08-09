@@ -186,14 +186,17 @@ test('grounded search verifies a structured result with URL Context when JSON ha
       }
       return new Response(JSON.stringify({
         status: 'completed',
-        steps: [{
-          type: 'model_output',
-          content: [{
-            type: 'text',
-            text: 'VERIFIED',
-            annotations: [{ type: 'url_citation', url: 'https://example.com/lyrics/synthetic' }],
-          }],
-        }],
+        steps: [
+          {
+            type: 'url_context_result',
+            is_error: false,
+            result: [{ status: 'success', url: 'https://example.com/lyrics/synthetic' }],
+          },
+          {
+            type: 'model_output',
+            content: [{ type: 'text', text: 'VERIFIED' }],
+          },
+        ],
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
   });
