@@ -112,3 +112,45 @@ test('lyrics search falls through LRCLIB to one grounded Google and URL-context 
   assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
   assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'general_web']);
 });
+
+test('grounded search retries once without URL Context when the combined tool request is rejected', async () => {
+  const interactionTools = [];
+  const candidate = await searchLyrics(input, {
+    apiKey: 'fixture-key',
+    fetchImpl: async (url, options = {}) => {
+      if (String(url).startsWith('https://lrclib.net/')) {
+        return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      const tools = JSON.parse(options.body).tools;
+      interactionTools.push(tools);
+      if (interactionTools.length === 1) {
+        return new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        steps: [{
+          type: 'model_output',
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              completeLyricsConfirmed: true,
+              language: 'en',
+              sourceTitle: 'Attributed lyric page',
+              sourceUrl: 'https://example.com/lyrics/synthetic',
+              lines: ['alpha', 'beta'],
+            }),
+            annotations: [{ type: 'url_citation', url: 'https://example.com/lyrics/synthetic' }],
+          }],
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  assert.deepEqual(interactionTools, [
+    [{ type: 'url_context' }, { type: 'google_search' }],
+    [{ type: 'google_search' }],
+  ]);
+  assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
+});

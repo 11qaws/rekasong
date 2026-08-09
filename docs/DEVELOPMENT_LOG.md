@@ -70,3 +70,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 
 - Matched the current Google URL Context example order by declaring URL Context before Google Search.
 - Added a bounded provider-status diagnostic that excludes prompts, lyrics, and credentials.
+
+## 2026-08-09 - Grounding compatibility fallback (v0.2.51)
+
+- If Gemini rejects the combined URL Context and Google Search request, the preparation pipeline retries Google Search once within the same 25-second budget.
+- The retry keeps the same exact-title matching, complete-page confirmation, direct citation match, and manual-review requirements.

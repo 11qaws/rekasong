@@ -268,40 +268,45 @@ Rules:
 
 Song title: ${JSON.stringify(input.title)}
 Artist: ${JSON.stringify(input.artist)}`;
+  const interactionRequest = (tools) => ({
+    model: GEMINI_MODEL,
+    input: prompt,
+    generation_config: { max_output_tokens: 32_768, thinking_level: 'low' },
+    tools,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: {
+        type: 'object',
+        properties: {
+          completeLyricsConfirmed: { type: 'boolean' },
+          language: { type: 'string' },
+          sourceTitle: { type: 'string' },
+          sourceUrl: { type: 'string' },
+          lines: {
+            type: 'array',
+            maxItems: MAX_CUES,
+            items: { type: 'string' },
+          },
+        },
+        required: ['completeLyricsConfirmed', 'language', 'sourceTitle', 'sourceUrl', 'lines'],
+      },
+    },
+  });
+  const requestInteraction = (tools, signal) => fetchImpl(GEMINI_INTERACTIONS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    signal,
+    body: JSON.stringify(interactionRequest(tools)),
+  });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25_000);
   let response;
   try {
-    response = await fetchImpl(GEMINI_INTERACTIONS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: GEMINI_MODEL,
-        input: prompt,
-        generation_config: { max_output_tokens: 32_768, thinking_level: 'low' },
-        tools: [{ type: 'url_context' }, { type: 'google_search' }],
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: {
-            type: 'object',
-            properties: {
-              completeLyricsConfirmed: { type: 'boolean' },
-              language: { type: 'string' },
-              sourceTitle: { type: 'string' },
-              sourceUrl: { type: 'string' },
-              lines: {
-                type: 'array',
-                maxItems: MAX_CUES,
-                items: { type: 'string' },
-              },
-            },
-            required: ['completeLyricsConfirmed', 'language', 'sourceTitle', 'sourceUrl', 'lines'],
-          },
-        },
-      }),
-    });
+    response = await requestInteraction([{ type: 'url_context' }, { type: 'google_search' }], controller.signal);
+    if (!response.ok && response.status !== 429) {
+      response = await requestInteraction([{ type: 'google_search' }], controller.signal);
+    }
   } catch (cause) {
     throw Object.assign(new Error('lyrics_web_provider_unavailable', { cause }), { status: 502 });
   } finally {
