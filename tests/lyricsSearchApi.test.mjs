@@ -252,7 +252,7 @@ test('validated local NamuWiki relay bypasses blocked server fetch and stays ver
   }), null);
 });
 
-test('citation-free NamuWiki discovery returns the verified URL for local relay', async () => {
+test('citation-free NamuWiki discovery returns a host-validated URL when URL Context is blocked', async () => {
   const priorityInput = validateLyricsSearchRequest({ ...input, sourcePriority: 'namuwiki_only' });
   const sourceUrl = 'https://namu.wiki/w/Discovered';
   await assert.rejects(searchLyrics(priorityInput, {
@@ -267,16 +267,11 @@ test('citation-free NamuWiki discovery returns the verified URL for local relay'
       const text = isDiscovery
         ? JSON.stringify({ sourceFound: true, sourceTitle: 'Discovered', sourceUrl, sourceCategory: 'namuwiki' })
         : isIdentityVerification
-          ? 'VERIFIED'
+          ? 'REJECTED'
           : JSON.stringify({ completeLyricsConfirmed: false, language: 'und', lines: [] });
       return new Response(JSON.stringify({
         status: 'completed',
         steps: [
-          ...(!isDiscovery ? [{
-            type: 'url_context_result',
-            is_error: false,
-            result: [{ status: 'success', url: sourceUrl }],
-          }] : []),
           { type: 'model_output', content: [{ type: 'text', text }] },
         ],
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });

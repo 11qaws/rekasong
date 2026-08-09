@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Host-validated local NamuWiki handoff (v0.2.70)
+
+- When Google discovery identifies a NamuWiki page but server-side URL Context is blocked, the host-validated `namu.wiki` URL is now handed to the localhost helper.
+- The helper still accepts only NamuWiki pages, and the returned bounded blocks still require exact-song and complete-lyrics selection before any original text is accepted.
+
 ## 2026-08-09 - Lyrics artist provenance (v0.2.69)
 
 - AI title cleanup now returns and caches the canonical recording/composition artist separately from the YouTube uploader.

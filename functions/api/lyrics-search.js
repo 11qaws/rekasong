@@ -743,6 +743,12 @@ Artist: ${JSON.stringify(input.artist)}`;
     : null;
   if (!candidate) {
     const sourceUrl = safePublicUrl(parsed?.sourceUrl);
+    const safeLocalNamuRelayUrl = requiredCategory === 'namuwiki'
+      && parsed?.sourceFound === true
+      && sourceUrl
+      && sourceCategory(sourceUrl) === 'namuwiki'
+      ? sourceUrl.toString()
+      : '';
     throw Object.assign(new Error('lyrics_web_candidate_not_found'), {
       status: 404,
       diagnostics: Object.freeze({
@@ -753,7 +759,9 @@ Artist: ${JSON.stringify(input.artist)}`;
         sourceFound: parsed?.sourceFound === true,
         extractedLineCount: Array.isArray(extracted?.lines) ? extracted.lines.length : 0,
         sourceHost: sourceUrl?.hostname || '',
-        namuRelayUrl: discovery?.sourceCategory === 'namuwiki' ? discovery.sourceUrl : '',
+        namuRelayUrl: discovery?.sourceCategory === 'namuwiki'
+          ? discovery.sourceUrl
+          : safeLocalNamuRelayUrl,
         directNamu: Object.freeze({ ...directNamuDiagnostics }),
       }),
     });
