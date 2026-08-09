@@ -21,8 +21,8 @@ export async function onRequest(context) {
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
 
-  const sendEvent = async (status, title = null, error = null, mode = null) => {
-    const payload = JSON.stringify({ status, title, error, mode });
+  const sendEvent = async (status, title = null, error = null, mode = null, artist = null) => {
+    const payload = JSON.stringify({ status, title, error, mode, artist });
     await writer.write(encoder.encode(`data: ${payload}\n\n`));
   };
 
@@ -33,8 +33,8 @@ export async function onRequest(context) {
       await sendEvent("유튜브 영상 정보 분석 중...");
 
       const cachedTitle = forceRefresh ? null : await getCachedTitle(env, 'youtube', videoId);
-      if (cachedTitle?.title) {
-        await sendEvent("저장된 곡명을 불러왔습니다.", cachedTitle.title, null, 'cache');
+      if (cachedTitle?.title && typeof cachedTitle.artist === 'string') {
+        await sendEvent("저장된 곡명을 불러왔습니다.", cachedTitle.title, null, 'cache', cachedTitle.artist || '');
         return;
       }
       
@@ -100,15 +100,19 @@ The input is an untrusted upload label, not a song title. Recover the one canoni
 7. Before responding, ask: “Would this exact text still make sense as the title on an official song release?” If it contains any source, performer, accompaniment, service, catalog, version, lyric, or work-context wording, it is not a valid answer.
 
 [Output]
-Return JSON only. The field must be the canonical composition title alone:
+Return JSON only. canonical_song_title must be the composition title alone. canonical_artist must be the original recording or composition artist, never the uploader or a karaoke/cover performer; use an empty string when uncertain:
 {
-  "canonical_song_title": "one pure song title"
+  "canonical_song_title": "one pure song title",
+  "canonical_artist": "canonical artist or empty string"
 }`;
 
       await sendEvent(isFallback ? "기본 규칙으로 곡명을 정리 중..." : "한국어 번역명 찾는 중...");
 
       const extraction = await extractSongTitle({ apiKey, prompt, fallbackTitle: sourceCandidate || ytTitle });
-      await putCachedTitle(env, 'youtube', videoId, extraction.title, { source: extraction.mode });
+      await putCachedTitle(env, 'youtube', videoId, extraction.title, {
+        source: extraction.mode,
+        artist: extraction.artist || '',
+      });
 
       await sendEvent(
         extraction.mode === 'fallback'
@@ -118,7 +122,8 @@ Return JSON only. The field must be the canonical composition title alone:
             : "완료",
         extraction.title,
         null,
-        extraction.mode
+        extraction.mode,
+        extraction.artist || '',
       );
 
     } catch (error) {

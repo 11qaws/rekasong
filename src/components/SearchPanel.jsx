@@ -14,9 +14,15 @@ const YOUTUBE_THUMBNAIL_FALLBACK = `data:image/svg+xml,${encodeURIComponent(
 const songbookCacheKey = (platform, songId) => `${platform}:${songId}`;
 
 async function readYoutubeTitle(videoId, signal) {
-  const title = await readTitleEventStream(apiUrl(`/api/extract-title?id=${encodeURIComponent(videoId)}`), {}, { signal });
+  let artist = '';
+  const title = await readTitleEventStream(apiUrl(`/api/extract-title?id=${encodeURIComponent(videoId)}`), {}, {
+    signal,
+    onEvent: (event) => {
+      if (typeof event.artist === 'string' && event.artist.trim()) artist = event.artist.trim();
+    },
+  });
   if (!title) throw new Error('AI title was not returned');
-  return title;
+  return { title, artist };
 }
 
 export default function SearchPanel({
@@ -147,13 +153,14 @@ export default function SearchPanel({
     };
 
     const resolveTitles = async () => {
-      const pending = sourceSongs.filter((song) => !(song.titleStatus === 'ready' && song.title?.trim()));
+      const pending = sourceSongs.filter((song) => !(song.titleStatus === 'ready'
+        && song.artistStatus === 'ready' && song.title?.trim()));
       const completedFromState = sourceSongs.length - pending.length;
       setSharedStateRef.current((previous) => ({
         ...previous,
         youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((song) => {
-          if (song.titleStatus === 'ready' && song.title?.trim()) return song;
-          return { ...song, rawTitle: song.rawTitle || song.title, title: '', titleStatus: 'pending' };
+          if (song.titleStatus === 'ready' && song.artistStatus === 'ready' && song.title?.trim()) return song;
+          return { ...song, rawTitle: song.rawTitle || song.title, title: '', titleStatus: 'pending', artistStatus: 'pending' };
         })
       }));
       setPlaylistTitleProgress({ total: sourceSongs.length, completed: completedFromState, active: pending.length > 0 });
@@ -165,11 +172,17 @@ export default function SearchPanel({
           const song = pending[nextIndex++];
           if (!song) return;
           try {
-            const title = await readYoutubeTitle(song.sourceId, controller.signal);
-            if (!controller.signal.aborted) updatePlaylistSong(song.sourceId, { title, titleStatus: 'ready' });
+            const metadata = await readYoutubeTitle(song.sourceId, controller.signal);
+            if (!controller.signal.aborted) updatePlaylistSong(song.sourceId, {
+              title: metadata.title,
+              artist: metadata.artist,
+              artistProvenance: metadata.artist ? 'ai' : 'uploader',
+              titleStatus: 'ready',
+              artistStatus: 'ready',
+            });
           } catch (error) {
             if (error.name !== 'AbortError' && !controller.signal.aborted) {
-              updatePlaylistSong(song.sourceId, { title: '', titleStatus: 'error' });
+              updatePlaylistSong(song.sourceId, { title: '', titleStatus: 'error', artistStatus: 'error' });
             }
           } finally {
             if (!controller.signal.aborted) {
@@ -256,24 +269,31 @@ export default function SearchPanel({
       ...previous,
       youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
         catalogSong.sourceId === sourceId
-          ? { ...catalogSong, rawTitle: catalogSong.rawTitle || catalogSong.title, title: '', titleStatus: 'pending' }
+          ? { ...catalogSong, rawTitle: catalogSong.rawTitle || catalogSong.title, title: '', titleStatus: 'pending', artistStatus: 'pending' }
           : catalogSong
       ))
     }));
 
     try {
-      const title = await readYoutubeTitle(sourceId);
+      const metadata = await readYoutubeTitle(sourceId);
       setSharedStateRef.current((previous) => ({
         ...previous,
         youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
-          catalogSong.sourceId === sourceId ? { ...catalogSong, title, titleStatus: 'ready' } : catalogSong
+          catalogSong.sourceId === sourceId ? {
+            ...catalogSong,
+            title: metadata.title,
+            artist: metadata.artist,
+            artistProvenance: metadata.artist ? 'ai' : 'uploader',
+            titleStatus: 'ready',
+            artistStatus: 'ready',
+          } : catalogSong
         ))
       }));
     } catch {
       setSharedStateRef.current((previous) => ({
         ...previous,
         youtubePlaylistCatalog: (previous.youtubePlaylistCatalog || []).map((catalogSong) => (
-          catalogSong.sourceId === sourceId ? { ...catalogSong, title: '', titleStatus: 'error' } : catalogSong
+          catalogSong.sourceId === sourceId ? { ...catalogSong, title: '', titleStatus: 'error', artistStatus: 'error' } : catalogSong
         ))
       }));
     } finally {
@@ -295,6 +315,8 @@ export default function SearchPanel({
       ? {
         ...video,
         title: pendingSongbookMatch.title || video.title,
+        channelTitle: pendingSongbookMatch.artist || video.channelTitle,
+        artistProvenance: pendingSongbookMatch.artist ? 'catalog' : 'uploader',
         source: pendingSongbookMatch.source,
         songbookId: pendingSongbookMatch.songbookId,
         tags: pendingSongbookMatch.tags || [],
@@ -331,6 +353,7 @@ export default function SearchPanel({
       id: mrId,
       title: cachedTitle || song.title,
       channelTitle: song.artist,
+      artistProvenance: song.artistProvenance || (platform === 'setlink' ? 'catalog' : 'uploader'),
       src: mrId,
       tags: song.tags,
       source: platform,
@@ -344,7 +367,13 @@ export default function SearchPanel({
   const startSongbookMrSearch = (song, platform) => {
     const tagQuery = Array.isArray(song.tags) ? song.tags.filter(Boolean).join(' ') : '';
     const searchQuery = [song.artist, song.title, tagQuery].filter(Boolean).join(' ').trim();
-    setPendingSongbookMatch({ title: song.title, source: platform, songbookId: song.id, tags: song.tags || [] });
+    setPendingSongbookMatch({
+      title: song.title,
+      artist: song.artist || '',
+      source: platform,
+      songbookId: song.id,
+      tags: song.tags || [],
+    });
     setQuery(searchQuery);
     setResults([]);
     handleTabChange('youtube');

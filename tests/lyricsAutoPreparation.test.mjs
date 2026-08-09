@@ -6,6 +6,7 @@ import {
   AutomaticLyricsPreparationError,
   automaticLyricsCandidateSource,
   automaticLyricsIdentity,
+  automaticLyricsSearchArtist,
   createAutomaticLyricsDraft,
   preparedCandidateToVtt,
   validatePreparedLyricsCandidate,
@@ -20,6 +21,24 @@ test('automatic lyrics identity changes when AI replaces a provisional song titl
     automaticLyricsIdentity({ title: ' 아이돌 ', artist: 'YOASOBI' }),
     automaticLyricsIdentity({ title: '아이돌', artist: 'YOASOBI' }),
   );
+});
+
+test('automatic lyrics search does not mistake a YouTube uploader for the artist', () => {
+  assert.equal(automaticLyricsSearchArtist({
+    source: 'youtube', artist: 'fulltimehololivestan',
+  }), '');
+  assert.equal(automaticLyricsSearchArtist({
+    source: 'youtube-playlist', artist: 'Uploader Channel',
+  }), '');
+  assert.equal(automaticLyricsSearchArtist({
+    source: 'youtube-playlist', artist: 'YOASOBI', artistProvenance: 'ai',
+  }), 'YOASOBI');
+  assert.equal(automaticLyricsSearchArtist({
+    source: 'youtube', artist: 'YOASOBI', isArtistEdited: true,
+  }), 'YOASOBI');
+  assert.equal(automaticLyricsSearchArtist({
+    source: 'setlink', artist: 'YOASOBI',
+  }), 'YOASOBI');
 });
 
 const candidate = {

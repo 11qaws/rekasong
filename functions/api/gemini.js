@@ -127,9 +127,16 @@ function getModelTitle(result) {
   return '';
 }
 
-export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', audioBase64 = '', audioMimeType = 'audio/mp3' }) {
+function getModelArtist(result) {
+  if (!result || typeof result !== 'object') return '';
+  const value = result.canonical_artist ?? result.canonicalArtist ?? result.artist ?? '';
+  const artist = String(value || '').replace(/\s+/gu, ' ').trim();
+  return /^(?:unknown|n\/?a|none|null)$/iu.test(artist) ? '' : artist.slice(0, 160);
+}
+
+export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', audioBase64 = '', audioMimeType = 'audio/mp3', fetchImpl = globalThis.fetch }) {
   if (isFallbackGeminiKey(apiKey)) {
-    return { title: cleanTitle(fallbackTitle), mode: 'fallback' };
+    return { title: cleanTitle(fallbackTitle), artist: '', mode: 'fallback' };
   }
 
   const input = audioBase64
@@ -139,7 +146,7 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
       ]
     : prompt;
 
-  const response = await fetch(GEMINI_INTERACTIONS_URL, {
+  const response = await fetchImpl(GEMINI_INTERACTIONS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -158,9 +165,13 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
             canonical_song_title: {
               type: 'string',
               description: 'Canonical standalone composition title only. Exclude all source, performer, release, format, service, version, and work-context metadata.'
+            },
+            canonical_artist: {
+              type: 'string',
+              description: 'Canonical original recording artist or composition artist. Return an empty string when the evidence identifies only an uploader or cover performer.'
             }
           },
-          required: ['canonical_song_title']
+          required: ['canonical_song_title', 'canonical_artist']
         }
       }
     })
@@ -171,12 +182,14 @@ export async function extractSongTitle({ apiKey, prompt, fallbackTitle = '', aud
     const details = interaction.error?.message || interaction.error?.status || JSON.stringify(interaction.error || {});
     throw new Error(`Gemini request failed (${response.status}): ${details}`);
   }
-  const modelTitle = getModelTitle(parseJsonResponse(getInteractionText(interaction)));
+  const parsed = parseJsonResponse(getInteractionText(interaction));
+  const modelTitle = getModelTitle(parsed);
   const useModelTitle = isUsableSongTitle(modelTitle);
   // A malformed structured response must not leave the streamer without a title.
   // The source title is still normalized by the same safety rules in that case.
   return {
     title: chooseCatalogTitle(useModelTitle ? modelTitle : fallbackTitle, fallbackTitle).replace(/^["']|["']$/g, ''),
+    artist: getModelArtist(parsed),
     mode: useModelTitle ? 'ai' : 'rules'
   };
 }

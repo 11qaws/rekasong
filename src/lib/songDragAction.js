@@ -26,6 +26,7 @@ export const DEFERRED_SONG_DROP_PLAY_STATES = Object.freeze({
 });
 
 const cleanText = (value) => typeof value === 'string' ? value.trim() : '';
+const ARTIST_PROVENANCE = new Set(['ai', 'catalog', 'uploader', 'user']);
 
 /**
  * The drag payload is deliberately a small, page-owned value. It is never
@@ -41,6 +42,9 @@ export const normalizeSongDragCandidate = (value) => {
     id,
     title,
     channelTitle: cleanText(source.channelTitle || source.artist),
+    artistProvenance: ARTIST_PROVENANCE.has(source.artistProvenance)
+      ? source.artistProvenance
+      : (cleanText(source.source) && cleanText(source.source) !== 'youtube' ? 'catalog' : 'uploader'),
     tags: Array.isArray(source.tags) ? source.tags.filter((tag) => typeof tag === 'string') : [],
     source: cleanText(source.source) || 'youtube',
     songbookId: source.songbookId || null,
@@ -59,6 +63,7 @@ export const stagedItemFromSongDragCandidate = (candidate, stagingId) => {
     src: normalized.id,
     title: normalized.title,
     artist: normalized.channelTitle,
+    artistProvenance: normalized.artistProvenance,
     tags: normalized.tags,
     source: normalized.source,
     songbookId: normalized.songbookId,

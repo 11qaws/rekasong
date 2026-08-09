@@ -43,6 +43,9 @@ export function useAiTitleExtraction(setStagedItem, translate = getAppMessage) {
               return {
                 ...prev,
                 title: data.title.trim(),
+                ...(typeof data.artist === 'string' && data.artist.trim() && !prev.isArtistEdited
+                  ? { artist: data.artist.trim(), artistProvenance: 'ai' }
+                  : {}),
                 ...(overwriteTitle ? { isTitleEdited: false } : {})
               };
             });

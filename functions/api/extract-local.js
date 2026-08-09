@@ -19,8 +19,8 @@ export async function onRequest(context) {
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
 
-  const sendEvent = async (status, title = null, error = null, mode = null) => {
-    const payload = JSON.stringify({ status, title, error, mode });
+  const sendEvent = async (status, title = null, error = null, mode = null, artist = null) => {
+    const payload = JSON.stringify({ status, title, error, mode, artist });
     await writer.write(encoder.encode(`data: ${payload}\n\n`));
   };
 
@@ -42,8 +42,8 @@ export async function onRequest(context) {
 
       const localCacheId = cacheKey || `${filename}:${metadata.title || ''}:${metadata.artist || ''}`;
       const cachedTitle = forceRefresh ? null : await getCachedTitle(env, 'local', localCacheId);
-      if (cachedTitle?.title) {
-        await sendEvent("저장된 곡명을 불러왔습니다.", cachedTitle.title, null, 'cache');
+      if (cachedTitle?.title && typeof cachedTitle.artist === 'string') {
+        await sendEvent("저장된 곡명을 불러왔습니다.", cachedTitle.title, null, 'cache', cachedTitle.artist || '');
         return;
       }
 
@@ -72,9 +72,10 @@ The input is an untrusted file label and optional audio sample, not a song title
 7. Before responding, ask: “Would this exact text still make sense as the title on an official song release?” If it contains any source, performer, accompaniment, service, catalog, version, lyric, or work-context wording, it is not a valid answer.
 
 [Output]
-Return JSON only. The field must be the canonical composition title alone:
+Return JSON only. canonical_song_title must be the composition title alone. canonical_artist must be the original recording or composition artist, never a file preparer or cover performer; use an empty string when uncertain:
 {
-  "canonical_song_title": "one pure song title"
+  "canonical_song_title": "one pure song title",
+  "canonical_artist": "canonical artist or empty string"
 }`;
 
       await sendEvent("한국어 번역명 매칭 중...");
@@ -86,7 +87,10 @@ Return JSON only. The field must be the canonical composition title alone:
         audioBase64,
         audioMimeType
       });
-      await putCachedTitle(env, 'local', localCacheId, extraction.title, { source: extraction.mode });
+      await putCachedTitle(env, 'local', localCacheId, extraction.title, {
+        source: extraction.mode,
+        artist: extraction.artist || '',
+      });
 
       await sendEvent(
         extraction.mode === 'fallback'
@@ -96,7 +100,8 @@ Return JSON only. The field must be the canonical composition title alone:
             : "완료",
         extraction.title,
         null,
-        extraction.mode
+        extraction.mode,
+        extraction.artist || '',
       );
 
     } catch (error) {

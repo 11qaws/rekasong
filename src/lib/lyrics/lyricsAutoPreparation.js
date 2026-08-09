@@ -26,6 +26,14 @@ export const automaticLyricsIdentity = (song) => JSON.stringify([
   bounded(song?.artist, 240).normalize('NFC'),
 ]);
 
+export const automaticLyricsSearchArtist = (song) => {
+  const artist = bounded(song?.artist, 240).normalize('NFC');
+  if (!artist) return '';
+  if (song?.isArtistEdited === true
+    || ['ai', 'catalog', 'user'].includes(song?.artistProvenance)) return artist;
+  return ['youtube', 'youtube-playlist'].includes(song?.source) ? '' : artist;
+};
+
 export class AutomaticLyricsPreparationError extends Error {
   constructor(code, cause = null) {
     super(code, { cause });
@@ -155,7 +163,7 @@ export async function createAutomaticLyricsDraft({
     result = await translate({
       contentHash,
       title: song?.title || '',
-      artist: song?.artist || '',
+      artist: automaticLyricsSearchArtist(song),
       originalLanguage: candidate.language,
       preserveOriginal,
       originalLines,

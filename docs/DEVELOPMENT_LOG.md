@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Lyrics artist provenance (v0.2.69)
+
+- AI title cleanup now returns and caches the canonical recording/composition artist separately from the YouTube uploader.
+- YouTube uploader names are no longer treated as artists; AI-resolved, user-edited, and Setlink catalog artists remain trusted search hints for caption and NamuWiki discovery.
+
 ## 2026-08-09 - Application-owned verified originals (v0.2.68)
 
 - Verified NamuWiki or official lyrics are no longer requested in the model output; the application keeps the fetched source lines byte-for-byte after NFC normalization.

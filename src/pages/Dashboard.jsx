@@ -110,6 +110,7 @@ import {
   AUTOMATIC_LYRICS_PHASES,
   automaticLyricsCandidateSource,
   automaticLyricsIdentity,
+  automaticLyricsSearchArtist,
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
 import { searchLyricsWithNamuWikiHelper } from '../lib/lyrics/namuWikiLyricsHelper';
@@ -1393,7 +1394,7 @@ export default function Dashboard() {
     const song = songForAutomaticLyrics(videoId);
     const lyricsSearch = song?.title ? {
       title: song.title,
-      artist: song.artist || '',
+      artist: automaticLyricsSearchArtist(song),
       source: song.source || '',
     } : null;
     prepareRequestFlightsRef.current.add(videoId);
@@ -1591,7 +1592,7 @@ export default function Dashboard() {
       input: {
         videoId,
         title: song?.title || '',
-        artist: song?.artist || '',
+        artist: automaticLyricsSearchArtist(song),
         sourcePriority,
         ...(Number.isFinite(song?.durationMs) ? { durationMs: song.durationMs } : {}),
       },
@@ -2510,7 +2511,7 @@ export default function Dashboard() {
       ...prev,
       [field]: value,
       ...(field === 'title' ? { isTitleEdited: true } : {}),
-      ...(field === 'artist' ? { isArtistEdited: true } : {})
+      ...(field === 'artist' ? { isArtistEdited: true, artistProvenance: 'user' } : {})
     }) : prev);
   };
 

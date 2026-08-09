@@ -25,6 +25,9 @@ export const sanitizeSongDef = (song) => {
     src: localSourceExpired ? '' : (typeof source.src === 'string' ? source.src : ''),
     title: typeof source.title === 'string' ? source.title : '',
     artist: typeof source.artist === 'string' ? source.artist : '',
+    ...(['ai', 'catalog', 'uploader', 'user'].includes(source.artistProvenance)
+      ? { artistProvenance: source.artistProvenance }
+      : {}),
     tags: Array.isArray(source.tags) ? source.tags : [],
     source: typeof source.source === 'string' && source.source
       ? source.source
