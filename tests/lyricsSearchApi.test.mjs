@@ -406,7 +406,7 @@ test('citation-free NamuWiki discovery returns a host-validated URL when URL Con
   }), (error) => error.message === 'lyrics_web_candidate_not_found'
     && error.diagnostics?.namuCandidateUrl === sourceUrl
     && error.diagnostics?.namuCandidateUrls?.includes(modelUrl)
-    && error.diagnostics?.directNamu?.apiAttempts?.length >= 2
+    && error.diagnostics?.directNamu?.apiAttempts?.length === 1
     && error.diagnostics.directNamu.apiAttempts.every((attempt) => (
       attempt.status === 403 && attempt.outcome === 'authorization_rejected'
     )));

@@ -13,6 +13,7 @@ const MAX_NAMUWIKI_API_RESPONSE_LENGTH = 2_400_000;
 const MAX_LYRICS_BLOCKS = 20;
 const MAX_AI_BLOCK_CHARACTERS = 80_000;
 const NAMUWIKI_API_ORIGIN = 'https://namu.wiki';
+const TERMINAL_NAMUWIKI_API_OUTCOMES = new Set(['authorization_rejected', 'rate_limited']);
 const NAMUWIKI_LYRICS_CACHE_VERSION = 1;
 const NAMUWIKI_LYRICS_CACHE_PREFIX = `lyrics:v${NAMUWIKI_LYRICS_CACHE_VERSION}:`;
 
@@ -963,6 +964,8 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
           });
         }
       } catch { /* try the next deterministic page candidate */ }
+      const latestApiAttempt = directNamuDiagnostics.apiAttempts.at(-1);
+      if (TERMINAL_NAMUWIKI_API_OUTCOMES.has(latestApiAttempt?.outcome)) break;
     }
   }
   const sourceOrder = requiredCategory === 'namuwiki'
@@ -1026,7 +1029,9 @@ Artist: ${JSON.stringify(input.artist)}`;
       apiKey,
       fetchImpl,
       null,
-      namuWikiApiToken,
+      directNamuDiagnostics.apiAttempts.some((attempt) => (
+        TERMINAL_NAMUWIKI_API_OUTCOMES.has(attempt.outcome)
+      )) ? '' : namuWikiApiToken,
     )
     : null;
   const citations = extracted?.sourceCategory === 'namuwiki'

@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-10 - Bounded NamuWiki API attempts (v0.2.78)
+
+- A NamuWiki API authorization rejection or rate limit now stops additional API candidates within the same lyrics request.
+- Existing cache, HTML, URL Context, and grounded search fallbacks remain available without repeating a terminal API request.
+
 ## 2026-08-10 - Safe NamuWiki API diagnostics (v0.2.77)
 
 - NamuWiki source API misses now report only bounded HTTP status and semantic outcome fields such as `authorization_rejected` or `document_not_found`.
