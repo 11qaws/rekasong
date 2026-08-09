@@ -111,6 +111,7 @@ import {
   automaticLyricsCandidateSource,
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
+import { searchLyricsWithNamuWikiHelper } from '../lib/lyrics/namuWikiLyricsHelper';
 import {
   PREPARE_REQUEST_ERROR_CODES,
   YOUTUBE_ID_PATTERN,
@@ -1583,25 +1584,16 @@ export default function Dashboard() {
   }, []);
 
   const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default') => {
-    const response = await fetch(apiUrl('/api/lyrics-search'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    return searchLyricsWithNamuWikiHelper({
+      endpoint: apiUrl('/api/lyrics-search'),
+      input: {
         videoId,
         title: song?.title || '',
         artist: song?.artist || '',
         sourcePriority,
         ...(Number.isFinite(song?.durationMs) ? { durationMs: song.durationMs } : {}),
-      }),
+      },
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(result.error || 'lyrics_web_search_failed');
-      error.code = result.error || 'lyrics_web_search_failed';
-      error.status = response.status;
-      throw error;
-    }
-    return result;
   }, []);
 
   useEffect(() => {

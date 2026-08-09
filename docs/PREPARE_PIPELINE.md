@@ -76,6 +76,23 @@ queries LRCLIB, accepts synchronized LRC results, records the provider URL, and 
 matching result to the same timed-candidate schema. It remains `review_required`; it is never
 silently approved. This network fallback runs during preparation only, never during playback.
 
+### NamuWiki local helper
+
+Cloudflare and Oracle data-center egress can receive a NamuWiki challenge even when the same
+public page is available from the user's Windows connection. Run `npm run helper:namuwiki` on
+the Rekasong PC to open the loopback-only helper at `http://127.0.0.1:47653`. During a
+`namuwiki_only` preparation pass, the Dashboard probes that address, fetches the exact title or
+the URL independently verified by Gemini, and sends only bounded table-cell candidate blocks to
+the existing Pages Function block selector.
+
+The helper binds only to `127.0.0.1`, accepts only `https://namu.wiki/w/...`, follows at most three
+same-site redirects, caps the source HTML at 2 MB, and permits browser calls only from Rekasong's
+GitHub Pages, Cloudflare Pages, or localhost origins. It also answers Chromium Private Network
+Access preflights. The selected text stays `originalTextPolicy=verbatim`, is marked with
+`local_namuwiki_helper -> namuwiki`, and remains `review_required`; the model returns only a block
+index and validation booleans. If the helper is not running, the existing official, YouTube, and
+LRCLIB fallbacks continue normally.
+
 ### Songbook-first captions and cross-track timing
 
 Setlink, YouTube playlist, and Eureka songbook preparation requests may carry bounded

@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-08-09 - Local NamuWiki lyrics relay (v0.2.65)
+
+- Added a loopback-only Node helper for the case where NamuWiki serves the user's Windows IP but challenges Cloudflare and Oracle data-center egress.
+- NamuWiki-first preparation detects the helper, relays only bounded candidate blocks, and reuses the existing AI block-index selection plus mandatory review without regenerating source text.
+- Added an explicit URL Context identity check for citation-free Google discovery so the verified public NamuWiki URL can be retried through the local helper.
+- The helper accepts only `namu.wiki/w` pages, same-site redirects, bounded HTML, and allowlisted Rekasong origins including Chromium Private Network Access preflights.
+
 ## 2026-08-09 — grounded lyrics discovery and whole-song polish
 
 - Extended the preparation fallback from LRCLIB exact/broad search to one bounded Gemini Google Search + URL Context pass, ordered from dedicated or official lyric sources through NamuWiki/Touhou Wiki/VocaDB discovery and finally the general web.
