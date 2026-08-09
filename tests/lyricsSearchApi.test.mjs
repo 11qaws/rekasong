@@ -57,6 +57,41 @@ test('web search request rejects missing identity or unbounded metadata', () => 
   assert.equal(validateLyricsSearchRequest({ videoId: 'bad', title: 'Synthetic Song' }), null);
 });
 
+test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page', async () => {
+  const priorityInput = validateLyricsSearchRequest({
+    ...input,
+    sourcePriority: 'namuwiki_only',
+  });
+  const requests = [];
+  const candidate = await searchLyrics(priorityInput, {
+    apiKey: 'fixture-key',
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify({
+        status: 'completed',
+        steps: [{
+          type: 'model_output',
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              completeLyricsConfirmed: true,
+              language: 'ko',
+              sourceTitle: 'NamuWiki fixture',
+              sourceUrl: 'https://namu.wiki/w/Synthetic',
+              lines: ['alpha', 'beta'],
+            }),
+            annotations: [{ type: 'url_citation', url: 'https://namu.wiki/w/Synthetic' }],
+          }],
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0], 'https://generativelanguage.googleapis.com/v1beta/interactions');
+  assert.deepEqual(candidate.discoveryPath, ['google_search', 'namuwiki']);
+});
+
 test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {
   const value = {
     completeLyricsConfirmed: true,
@@ -115,7 +150,7 @@ test('lyrics search falls through LRCLIB to one grounded Google and URL-context 
   const interactionBody = JSON.parse(requests[2].options.body);
   assert.deepEqual(interactionBody.tools, [{ type: 'url_context' }, { type: 'google_search' }]);
   assert.equal(interactionBody.response_format.schema.properties.lines.maxItems, undefined);
-  assert.match(interactionBody.input, /NamuWiki, Touhou Wiki, and VocaDB/);
+  assert.match(interactionBody.input, /1\. NamuWiki\.[\s\S]*3\. Other subculture[\s\S]*Touhou Wiki and VocaDB/);
   assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
   assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'general_web']);
 });

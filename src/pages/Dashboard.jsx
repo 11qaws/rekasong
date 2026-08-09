@@ -1530,7 +1530,7 @@ export default function Dashboard() {
     return result;
   }, []);
 
-  const searchAutomaticLyrics = useCallback(async (videoId, song) => {
+  const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default') => {
     const response = await fetch(apiUrl('/api/lyrics-search'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1538,6 +1538,7 @@ export default function Dashboard() {
         videoId,
         title: song?.title || '',
         artist: song?.artist || '',
+        sourcePriority,
         ...(Number.isFinite(song?.durationMs) ? { durationMs: song.durationMs } : {}),
       }),
     });
@@ -1545,6 +1546,7 @@ export default function Dashboard() {
     if (!response.ok) {
       const error = new Error(result.error || 'lyrics_web_search_failed');
       error.code = result.error || 'lyrics_web_search_failed';
+      error.status = response.status;
       throw error;
     }
     return result;
@@ -1599,12 +1601,17 @@ export default function Dashboard() {
       const generation = (automaticLyricsGenerationsRef.current.get(videoId) || 0) + 1;
       automaticLyricsGenerationsRef.current.set(videoId, generation);
       noteAutomaticLyricsState(videoId, generation, AUTOMATIC_LYRICS_PHASES.COLLECTING);
-      const candidateRequest = candidateSource === 'web'
-        ? searchAutomaticLyrics(videoId, song).then((candidate) => ({ candidate, sessionKey: '' }))
-        : getPrepareAuth().then(async ({ auth, sessionKey, stale }) => {
+      const preparedCandidateRequest = () => getPrepareAuth().then(async ({ auth, sessionKey, stale }) => {
           if (stale || sessionKey !== prepareSessionKeyRef.current) return null;
           return { candidate: await fetchPreparedLyricsCandidate(videoId, auth), sessionKey };
         });
+      const fallbackCandidateRequest = () => candidateSource === 'web'
+        ? searchAutomaticLyrics(videoId, song).then((candidate) => ({ candidate, sessionKey: '' }))
+        : preparedCandidateRequest().catch(() => searchAutomaticLyrics(videoId, song)
+          .then((candidate) => ({ candidate, sessionKey: '' })));
+      const candidateRequest = searchAutomaticLyrics(videoId, song, 'namuwiki_only')
+        .then((candidate) => ({ candidate, sessionKey: '' }))
+        .catch(() => fallbackCandidateRequest());
       const job = candidateRequest
         .then(async (loaded) => {
           if (!loaded) return;
