@@ -101,6 +101,30 @@ cell text verbatim; URL Context output must pass a separate exact-page verificat
 can become a candidate. Every collected candidate remains `review_required`, uses
 `originalTextPolicy=verbatim`, and keeps estimated timing until the operator reviews it.
 
+### Hosted NamuWiki original cache
+
+When Cloudflare egress is challenged and an approved `api_access` token is not available, a
+developer can fetch a NamuWiki page from a reachable network and send only the bounded candidate
+blocks to the protected `POST /api/lyrics-ingest` route. The route requires the server-only
+`LYRICS_INGEST_SECRET`, asks Gemini only for a block index, and stores the selected original lines
+under a hashed title-and-artist key in the existing `TITLE_CACHE` KV binding.
+
+NamuWiki lyric tables commonly place original text, pronunciation, and translation in parallel.
+The HTML parser keeps a sufficiently complete styled original layer and removes ruby annotation
+text before candidate selection. It never asks a model to reconstruct or rewrite a line. A stored
+result is returned by `/api/lyrics-search` as `namuwiki_cached_verbatim_lyrics`, still requiring
+operator review and timeline alignment.
+
+Administrator seed example:
+
+```powershell
+$env:REKASONG_LYRICS_INGEST_SECRET = '<configured secret>'
+node scripts/seed-namuwiki-lyrics.mjs --title '아이돌' --artist 'YOASOBI' --source-url 'https://namu.wiki/w/アイドル'
+```
+
+This command is a developer ingestion operation only. Ordinary users and other computers load the
+hosted result from Rekasong and do not install Node.js, run npm, or connect to a localhost helper.
+
 ### Songbook-first captions and cross-track timing
 
 Setlink, YouTube playlist, and Eureka songbook preparation requests may carry bounded

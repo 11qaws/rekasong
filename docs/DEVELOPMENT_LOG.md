@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-08-10 - Hosted NamuWiki original cache (v0.2.76)
+
+- Added a secret-protected administrator ingestion route that stores selected NamuWiki originals in the existing Cloudflare `TITLE_CACHE` KV namespace.
+- The developer fetches the source page from a network where NamuWiki is reachable; public Rekasong clients read the hosted cache and do not run npm, a localhost helper, or NamuWiki requests.
+- Gemini selects only a bounded candidate block index. Rekasong deterministically removes parallel pronunciation and translation layers, stores the remaining displayed original lines verbatim, and returns only safe line-count metadata from ingestion.
+- Cached candidates remain `review_required`, `originalTextPolicy=verbatim`, `timingEstimated=true`, and are served ahead of challenged data-center source requests.
+
 ## 2026-08-10 - Official NamuWiki source API (v0.2.75)
 
 - Added the current authenticated `namu.wiki/api/edit/<document>` source path ahead of challenged HTML and URL Context fallbacks.
