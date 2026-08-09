@@ -108,6 +108,7 @@ test('lyrics search falls through LRCLIB to one grounded Google and URL-context 
   assert.equal(requests.length, 3);
   const interactionBody = JSON.parse(requests[2].options.body);
   assert.deepEqual(interactionBody.tools, [{ type: 'url_context' }, { type: 'google_search' }]);
+  assert.equal(interactionBody.response_format.schema.properties.lines.maxItems, undefined);
   assert.match(interactionBody.input, /NamuWiki, Touhou Wiki, and VocaDB/);
   assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
   assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'general_web']);

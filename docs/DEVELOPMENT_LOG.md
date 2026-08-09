@@ -75,3 +75,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 
 - If Gemini rejects the combined URL Context and Google Search request, the preparation pipeline retries Google Search once within the same 25-second budget.
 - The retry keeps the same exact-title matching, complete-page confirmation, direct citation match, and manual-review requirements.
+
+## 2026-08-09 - Grounded schema compatibility (v0.2.52)
+
+- Removed the provider-side `maxItems: 2000` state-space constraint from the grounded-search response schema.
+- The application still rejects more than 2,000 lines, 50,000 total characters, overlong lines, invalid URLs, and responses without an exact citation match.

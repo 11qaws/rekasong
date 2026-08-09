@@ -285,7 +285,6 @@ Artist: ${JSON.stringify(input.artist)}`;
           sourceUrl: { type: 'string' },
           lines: {
             type: 'array',
-            maxItems: MAX_CUES,
             items: { type: 'string' },
           },
         },
