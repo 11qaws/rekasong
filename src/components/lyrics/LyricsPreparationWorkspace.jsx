@@ -28,6 +28,7 @@ import { apiUrl } from '../../lib/api.js';
 import './LyricsPreparationWorkspace.css';
 
 const STEPS = ['identity', 'original', 'translation', 'timing', 'preview'];
+const EMPTY_REVIEW_CHECKS = Object.freeze({ song: false, original: false, translation: false, timing: false });
 const SOURCE_TIERS = [
   ['official_same_release', 'source.officialSameRelease'],
   ['official_same_work', 'source.officialSameWork'],
@@ -57,6 +58,8 @@ const discoveryLabel = (value) => t({
   touhou_wiki: 'automatic.path.touhouWiki',
   vocadb: 'automatic.path.vocadb',
   general_web: 'automatic.path.generalWeb',
+  official_web: 'automatic.path.officialWeb',
+  structured_lyrics: 'automatic.path.structuredLyrics',
 }[value] || 'automatic.path.generalWeb');
 
 function initialCues(original, mappings) {
@@ -145,6 +148,9 @@ export default function LyricsPreparationWorkspace({
   });
   const [saveState, setSaveState] = useState({ status: 'idle', message: '' });
   const [aiState, setAiState] = useState({ status: 'idle', message: '' });
+  const [reviewChecks, setReviewChecks] = useState(EMPTY_REVIEW_CHECKS);
+  const reviewGateRequired = initialDraft?.reviewRequired === true;
+  const reviewConfirmed = !reviewGateRequired || Object.values(reviewChecks).every(Boolean);
 
   const original = useMemo(() => importLyricsText({
     text: originalText,
@@ -261,6 +267,8 @@ export default function LyricsPreparationWorkspace({
           title,
           artist,
           originalLanguage,
+          preserveOriginal: initialDraft?.originalTextLocked === true
+            || ['official_same_release', 'official_same_work'].includes(originalSourceTier),
           originalLines: original.lines.map((line) => line.text),
         }),
       });
@@ -291,6 +299,7 @@ export default function LyricsPreparationWorkspace({
     if (step === 2 && cueHistory.present.length === 0) {
       setCueHistory({ past: [], present: initialCues(original, mappings), future: [] });
     }
+    if (step === 3 && reviewGateRequired) setReviewChecks(EMPTY_REVIEW_CHECKS);
     setStep((current) => Math.min(STEPS.length - 1, current + 1));
   };
 
@@ -302,6 +311,10 @@ export default function LyricsPreparationWorkspace({
           : true;
 
   const complete = async () => {
+    if (!reviewConfirmed) {
+      setSaveState({ status: 'warning', message: t('review.incomplete') });
+      return;
+    }
     setSaveState({ status: 'saving', message: '' });
     try {
       const now = Date.now();
@@ -459,7 +472,9 @@ export default function LyricsPreparationWorkspace({
                   {initialDraft.discoveryPath?.length > 0 && (
                     <span>{t('automatic.discoveryPath', { path: initialDraft.discoveryPath.map(discoveryLabel).join(' → ') })}</span>
                   )}
-                  <span>{t('automatic.corrections', { count: initialDraft.correctionCount || 0 })}</span>
+                  <span>{initialDraft.originalTextLocked
+                    ? t('automatic.originalLocked')
+                    : t('automatic.corrections', { count: initialDraft.correctionCount || 0 })}</span>
                   <span>{t(initialDraft.timingEstimated ? 'automatic.timingEstimated' : 'automatic.timingSynced')}</span>
                   {originalSourceUrl && <a href={originalSourceUrl} target="_blank" rel="noreferrer">{t('automatic.openSource')}</a>}
                 </aside>
@@ -511,6 +526,23 @@ export default function LyricsPreparationWorkspace({
               <LyricsOverlayPreview playbackPackage={draftPackage} timeMs={previewTimeMs} />
               <label><span>{t('preview.time')} · {(previewTimeMs / 1_000).toFixed(2)}s</span><input type="range" min="0" max={Math.max(1_000, ...sortedCues.map((cue) => cue.anchorMs + 1_000))} step="16" value={previewTimeMs} onChange={(event) => setPreviewTimeMs(Number(event.target.value))} /></label>
               <div className="lyrics-preview-meta"><span>{t('preview.source', { source: t(SOURCE_TIERS.find(([value]) => value === translationSourceTier)?.[1] || 'source.trustedWeb') })}</span><span>{t('preview.timing', { mode: t(tempoMap.segments.length > 0 ? 'timing.mode.tempo' : 'timing.mode.fallback') })}</span></div>
+              {reviewGateRequired && (
+                <fieldset className="lyrics-review-gate">
+                  <legend>{t('review.title')}</legend>
+                  <p>{t('review.help')}</p>
+                  {['song', 'original', 'translation', 'timing'].map((name) => (
+                    <label className="lyrics-check" key={name}>
+                      <input
+                        type="checkbox"
+                        checked={reviewChecks[name]}
+                        onChange={(event) => setReviewChecks((current) => ({ ...current, [name]: event.target.checked }))}
+                      />
+                      {t(`review.${name}`)}
+                    </label>
+                  ))}
+                  {!reviewConfirmed && <output>{t('review.incomplete')}</output>}
+                </fieldset>
+              )}
               <label className="lyrics-check"><input type="checkbox" checked={requireLyrics} onChange={(event) => setRequireLyrics(event.target.checked)} /> {t('preview.require')}</label>
               <details className="lyrics-style-settings">
                 <summary>{t('preview.style')}</summary>
@@ -535,7 +567,7 @@ export default function LyricsPreparationWorkspace({
           {step < STEPS.length - 1 ? (
             <button type="button" className="primary" onClick={nextStep} disabled={!canContinue}>{t('workspace.next')} <ArrowRight size={15} /></button>
           ) : (
-            <button type="button" className="primary" onClick={complete} disabled={!canContinue || saveState.status === 'saving'}>{saveState.status === 'saving' ? t('workspace.saving') : t('workspace.complete')}</button>
+            <button type="button" className="primary" onClick={complete} disabled={!canContinue || !reviewConfirmed || saveState.status === 'saving'}>{saveState.status === 'saving' ? t('workspace.saving') : t('workspace.complete')}</button>
           )}
         </footer>
       </section>

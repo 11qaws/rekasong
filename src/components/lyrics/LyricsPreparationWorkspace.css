@@ -128,6 +128,9 @@
 .lyrics-preview-translation { margin-top: 8px; font-size: 24px; color: #f1f5f9; }
 .lyrics-preview-empty { color: #94a3b8; }
 .lyrics-preview-meta { display: flex; gap: 16px; color: #cbd5e1; font-size: .82rem; }
+.lyrics-review-gate { display: grid; gap: 10px; padding: 14px; border: 1px solid rgb(251 191 36 / 55%); border-radius: 12px; background: rgb(120 53 15 / 16%); }
+.lyrics-review-gate legend { padding: 0 6px; color: #fde68a; font-weight: 800; }
+.lyrics-review-gate output { color: #fcd34d; font-size: .78rem; }
 .lyrics-save-message { margin-top: 14px; padding: 10px 12px; border-radius: 9px; background: #1e293b; }
 .lyrics-save-message.is-error { color: #fecaca; }
 .lyrics-save-message.is-warning { color: #fde68a; }

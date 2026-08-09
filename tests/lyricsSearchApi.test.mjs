@@ -17,6 +17,39 @@ const input = validateLyricsSearchRequest({
   durationMs: 180_000,
 });
 
+function groundedResponse(options, {
+  sourceUrl = 'https://example.com/lyrics/synthetic',
+  sourceCategory = 'other',
+  verify = true,
+} = {}) {
+  const body = JSON.parse(options.body);
+  const isDiscovery = body.tools.some((tool) => tool.type === 'google_search');
+  const isExtraction = !isDiscovery && body.response_format;
+  const text = isDiscovery
+    ? JSON.stringify({ sourceFound: true, sourceTitle: 'Attributed lyric page', sourceUrl, sourceCategory })
+    : isExtraction
+      ? JSON.stringify({ completeLyricsConfirmed: true, language: 'en', lines: ['alpha', 'beta'] })
+      : verify ? 'VERIFIED' : 'REJECTED';
+  return new Response(JSON.stringify({
+    status: 'completed',
+    steps: [
+      ...(!isDiscovery ? [{
+        type: 'url_context_result',
+        is_error: false,
+        result: [{ status: 'success', url: sourceUrl }],
+      }] : []),
+      {
+        type: 'model_output',
+        content: [{
+          type: 'text',
+          text,
+          ...(isDiscovery ? { annotations: [{ type: 'url_citation', url: sourceUrl }] } : {}),
+        }],
+      },
+    ],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
 test('synced web lyrics normalize into bounded timed cues', () => {
   assert.deepEqual(parseSyncedLyrics('[00:01.20]alpha\r\n[00:02.345][00:03.00]<00:02.34>beta'), [
     { anchorMs: 1_200, text: 'alpha' },
@@ -65,31 +98,24 @@ test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page',
   const requests = [];
   const candidate = await searchLyrics(priorityInput, {
     apiKey: 'fixture-key',
-    fetchImpl: async (url) => {
-      requests.push(String(url));
-      return new Response(JSON.stringify({
-        status: 'completed',
-        steps: [{
-          type: 'model_output',
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              completeLyricsConfirmed: true,
-              language: 'ko',
-              sourceTitle: 'NamuWiki fixture',
-              sourceUrl: 'https://namu.wiki/w/Synthetic',
-              lines: ['alpha', 'beta'],
-            }),
-            annotations: [{ type: 'url_citation', url: 'https://namu.wiki/w/Synthetic' }],
-          }],
-        }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    fetchImpl: async (url, options) => {
+      requests.push({ url: String(url), options });
+      return groundedResponse(options, {
+        sourceUrl: 'https://namu.wiki/w/Synthetic',
+        sourceCategory: 'namuwiki',
+      });
     },
   });
 
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0], 'https://generativelanguage.googleapis.com/v1beta/interactions');
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every((request) => request.url === 'https://generativelanguage.googleapis.com/v1beta/interactions'));
+  assert.deepEqual(requests.map((request) => JSON.parse(request.options.body).tools), [
+    [{ type: 'google_search' }],
+    [{ type: 'url_context' }],
+    [{ type: 'url_context' }],
+  ]);
   assert.deepEqual(candidate.discoveryPath, ['google_search', 'namuwiki']);
+  assert.equal(candidate.originalTextPolicy, 'verbatim');
 });
 
 test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {
@@ -106,15 +132,24 @@ test('grounded lyrics require a direct matching citation and remain explicitly u
   assert.equal(candidate.sourceKind, 'gemini_grounded_web_lyrics');
   assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'namuwiki']);
   assert.deepEqual(candidate.lines, ['alpha', 'beta']);
+  assert.equal(candidate.originalTextPolicy, 'verbatim');
 
   const touhouCandidate = validateGroundedLyricsResult({
     ...value,
     sourceUrl: 'https://thwiki.cc/Lyrics:Fixture',
   }, ['https://thwiki.cc/Lyrics:Fixture'], input);
   assert.deepEqual(touhouCandidate.discoveryPath, ['lrclib', 'google_search', 'touhou_wiki']);
+
+  const officialCandidate = validateGroundedLyricsResult({
+    ...value,
+    sourceUrl: 'https://artist.example/lyrics/synthetic',
+    sourceCategory: 'official_web',
+  }, ['https://artist.example/lyrics/synthetic'], input);
+  assert.equal(officialCandidate.sourceKind, 'gemini_grounded_official_web_lyrics');
+  assert.deepEqual(officialCandidate.discoveryPath, ['lrclib', 'google_search', 'official_web']);
 });
 
-test('lyrics search falls through LRCLIB to one grounded Google and URL-context search', async () => {
+test('lyrics search falls through LRCLIB to AI discovery, verbatim extraction, and independent verification', async () => {
   const requests = [];
   const candidate = await searchLyrics(input, {
     apiKey: 'fixture-key',
@@ -123,128 +158,34 @@ test('lyrics search falls through LRCLIB to one grounded Google and URL-context 
       if (String(url).startsWith('https://lrclib.net/')) {
         return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({
-        steps: [{
-          type: 'model_output',
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              completeLyricsConfirmed: true,
-              language: 'en',
-              sourceTitle: 'Attributed lyric page',
-              sourceUrl: 'https://example.com/lyrics/synthetic',
-              lines: ['alpha', 'beta'],
-            }),
-            annotations: [{
-              type: 'url_citation',
-              url: 'https://example.com/lyrics/synthetic',
-              title: 'example.com',
-            }],
-          }],
-        }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return groundedResponse(options);
     },
   });
 
-  assert.equal(requests.length, 3);
-  const interactionBody = JSON.parse(requests[2].options.body);
-  assert.deepEqual(interactionBody.tools, [{ type: 'url_context' }, { type: 'google_search' }]);
-  assert.equal(interactionBody.response_format.schema.properties.lines.maxItems, undefined);
-  assert.match(interactionBody.input, /1\. NamuWiki\.[\s\S]*3\. Other subculture[\s\S]*Touhou Wiki and VocaDB/);
+  assert.equal(requests.length, 5);
+  const interactionBodies = requests.slice(2).map((request) => JSON.parse(request.options.body));
+  assert.deepEqual(interactionBodies.map((body) => body.tools), [
+    [{ type: 'google_search' }],
+    [{ type: 'url_context' }],
+    [{ type: 'url_context' }],
+  ]);
+  assert.equal(interactionBodies[0].response_format.schema.properties.lines, undefined);
+  assert.equal(interactionBodies[1].response_format.schema.properties.lines.items.type, 'string');
+  assert.match(interactionBodies[0].input, /1\. NamuWiki\.[\s\S]*2\. An official artist[\s\S]*Touhou Wiki and VocaDB/);
+  assert.match(interactionBodies[1].input, /Never reconstruct, correct, translate, paraphrase, summarize, or complete it/);
   assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
   assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'general_web']);
 });
 
-test('grounded search retries once without URL Context when the combined tool request is rejected', async () => {
-  const interactionTools = [];
-  const candidate = await searchLyrics(input, {
+test('grounded lyrics are rejected when the independent page comparison fails', async () => {
+  await assert.rejects(searchLyrics(input, {
     apiKey: 'fixture-key',
     fetchImpl: async (url, options = {}) => {
       if (String(url).startsWith('https://lrclib.net/')) {
         return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      const tools = JSON.parse(options.body).tools;
-      interactionTools.push(tools);
-      if (interactionTools.length === 1) {
-        return new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return new Response(JSON.stringify({
-        steps: [{
-          type: 'model_output',
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              completeLyricsConfirmed: true,
-              language: 'en',
-              sourceTitle: 'Attributed lyric page',
-              sourceUrl: 'https://example.com/lyrics/synthetic',
-              lines: ['alpha', 'beta'],
-            }),
-            annotations: [{ type: 'url_citation', url: 'https://example.com/lyrics/synthetic' }],
-          }],
-        }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const body = JSON.parse(options.body);
+      return groundedResponse(options, { verify: Boolean(body.response_format) });
     },
-  });
-
-  assert.deepEqual(interactionTools, [
-    [{ type: 'url_context' }, { type: 'google_search' }],
-    [{ type: 'google_search' }],
-  ]);
-  assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
-});
-
-test('grounded search verifies a structured result with URL Context when JSON has no inline citation', async () => {
-  const interactionTools = [];
-  const candidate = await searchLyrics(input, {
-    apiKey: 'fixture-key',
-    fetchImpl: async (url, options = {}) => {
-      if (String(url).startsWith('https://lrclib.net/')) {
-        return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
-      const tools = JSON.parse(options.body).tools;
-      interactionTools.push(tools);
-      if (interactionTools.length === 1) {
-        return new Response(JSON.stringify({
-          status: 'completed',
-          steps: [{
-            type: 'model_output',
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                completeLyricsConfirmed: true,
-                language: 'en',
-                sourceTitle: 'Attributed lyric page',
-                sourceUrl: 'https://example.com/lyrics/synthetic',
-                lines: ['alpha', 'beta'],
-              }),
-            }],
-          }],
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
-      return new Response(JSON.stringify({
-        status: 'completed',
-        steps: [
-          {
-            type: 'url_context_result',
-            is_error: false,
-            result: [{ status: 'success', url: 'https://example.com/lyrics/synthetic' }],
-          },
-          {
-            type: 'model_output',
-            content: [{ type: 'text', text: 'VERIFIED' }],
-          },
-        ],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    },
-  });
-
-  assert.deepEqual(interactionTools, [
-    [{ type: 'url_context' }, { type: 'google_search' }],
-    [{ type: 'url_context' }],
-  ]);
-  assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
+  }), (error) => error.message === 'lyrics_web_candidate_not_found' && error.status === 404);
 });

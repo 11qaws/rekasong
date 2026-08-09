@@ -35,7 +35,7 @@ test('contextual translation validates bounded whole-song input and stable cache
     originalLines: ['alpha', 'beta'],
   });
   assert.ok(request);
-  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v2/);
+  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v3-verbatim/);
   assert.deepEqual(validateLyricsTranslationResult({
     correctedOriginalLines: ['alpha', 'beta'],
     translations: ['가', '나'],

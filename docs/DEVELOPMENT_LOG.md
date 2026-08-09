@@ -106,3 +106,10 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - Every automatic lyrics job now probes a verified `namu.wiki` page before using prepared YouTube captions, LRCLIB, or the broader web fallback.
 - A NamuWiki miss or provider failure falls through without blocking the existing timed-caption path.
 - NamuWiki candidates still require an exact public-page provenance check and remain `review_required` with estimated timing.
+
+## 2026-08-09 - Verbatim source lyrics and mandatory review (v0.2.58)
+
+- Split AI web collection into three trust boundaries: Google Search discovers one direct NamuWiki or official/public source page, URL Context extracts only the page's visible lyrics verbatim, and a separate URL Context pass verifies every extracted line against the same page.
+- NamuWiki, official web, LRCLIB, and human-authored YouTube caption candidates now lock their original wording. Translation output cannot correct, reinterpret, or replace those lines; automatic captions accept only bounded typo-scale corrections and reject unrelated replacements.
+- Automatic drafts require four explicit human confirmations for exact song/source identity, line-by-line original text, Korean translation, and previewed timing before local save or session publication.
+- Bumped the deployment version to `0.2.58`.

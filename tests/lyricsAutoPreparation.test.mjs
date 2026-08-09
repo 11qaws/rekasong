@@ -15,7 +15,7 @@ const candidate = {
   videoId: 'abcdefghijk',
   status: 'review_required',
   language: 'ja',
-  sourceKind: 'youtube_manual_caption',
+  sourceKind: 'youtube_auto_caption',
   sourceTitle: 'Synthetic timed captions',
   sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk',
   retrievedAt: 123,
@@ -30,6 +30,10 @@ test('prepared lyrics candidates remain bounded, ordered, and tied to one video'
   const normalized = validatePreparedLyricsCandidate(candidate, 'abcdefghijk');
   assert.equal(normalized.cues.length, 2);
   assert.equal(validatePreparedLyricsCandidate(candidate, 'different01'), null);
+  assert.equal(validatePreparedLyricsCandidate({
+    ...candidate,
+    sourceKind: 'youtube_manual_caption',
+  }, candidate.videoId).originalTextPolicy, 'verbatim');
   assert.equal(validatePreparedLyricsCandidate({
     ...candidate,
     cues: [...candidate.cues].reverse(),
@@ -93,6 +97,7 @@ test('automatic preparation contextually corrects Korean captions without skippi
 });
 
 test('grounded plain lyrics enter review with explicit estimated timing', async () => {
+  let translationRequest = null;
   const draft = await createAutomaticLyricsDraft({
     song: { src: candidate.videoId },
     candidate: {
@@ -103,18 +108,52 @@ test('grounded plain lyrics enter review with explicit estimated timing', async 
       timingEstimated: true,
       discoveryPath: ['lrclib', 'google_search', 'namuwiki'],
     },
-    translate: async ({ originalLines }) => ({
-      correctedOriginalLines: originalLines,
-      translations: ['알파', '베타'],
-      sourceTier: 'machine_contextual',
-      providerId: 'fixture-translator',
-    }),
+    translate: async (request) => {
+      translationRequest = request;
+      return {
+        correctedOriginalLines: request.originalLines,
+        translations: ['알파', '베타'],
+        sourceTier: 'machine_contextual',
+        providerId: 'fixture-translator',
+      };
+    },
   });
 
+  assert.equal(translationRequest.preserveOriginal, true);
   assert.equal(draft.originalFileName, `automatic-${candidate.videoId}.txt`);
   assert.equal(draft.originalText, 'alpha\nbeta');
+  assert.equal(draft.originalTextLocked, true);
   assert.equal(draft.timingEstimated, true);
   assert.deepEqual(draft.discoveryPath, ['lrclib', 'google_search', 'namuwiki']);
+});
+
+test('verified web lyrics fail closed when the model rewrites the source text', async () => {
+  await assert.rejects(createAutomaticLyricsDraft({
+    song: { src: candidate.videoId },
+    candidate: {
+      ...candidate,
+      sourceKind: 'gemini_grounded_web_lyrics',
+      cues: undefined,
+      lines: ['source lyric'],
+    },
+    translate: async () => ({
+      correctedOriginalLines: ['unrelated generated sentence'],
+      translations: ['무관한 생성 문장'],
+    }),
+  }), (error) => error instanceof AutomaticLyricsPreparationError
+    && error.code === 'lyrics_original_rewrite_blocked');
+});
+
+test('caption correction rejects unrelated replacement text', async () => {
+  await assert.rejects(createAutomaticLyricsDraft({
+    song: { src: candidate.videoId },
+    candidate,
+    translate: async () => ({
+      correctedOriginalLines: ['completely unrelated prose', 'second line'],
+      translations: ['무관한 문장', '둘째 줄'],
+    }),
+  }), (error) => error instanceof AutomaticLyricsPreparationError
+    && error.code === 'lyrics_correction_untrusted');
 });
 
 test('automatic preparation never fabricates a translation when the provider fails', async () => {

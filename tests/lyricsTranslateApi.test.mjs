@@ -16,12 +16,14 @@ test('whole-song polish request preserves the source language and all lines', ()
     title: 'Synthetic',
     artist: 'Fixture',
     originalLanguage: 'ko',
+    preserveOriginal: true,
     originalLines: ['첫 줄 오타', '둘째 줄'],
   });
   assert.equal(request.originalLanguage, 'ko');
+  assert.equal(request.preserveOriginal, true);
   assert.deepEqual(request.originalLines, ['첫 줄 오타', '둘째 줄']);
-  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v2/);
-  assert.equal(LYRICS_TRANSLATION_POLICY_VERSION, 'lyrics-ko-context-v2');
+  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v3-verbatim/);
+  assert.equal(LYRICS_TRANSLATION_POLICY_VERSION, 'lyrics-ko-context-v3-verbatim');
 });
 
 test('whole-song polish result cannot add or drop corrected or translated lines', () => {
