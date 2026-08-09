@@ -4772,8 +4772,11 @@ export class PrepareQueue {
     if (job?.status === 'ready') {
       // 수동/TTL 정리로 바이트만 사라진 ready는 거짓 안전이다. 폴링(GET)이 아닌
       // 스테이징 시점에만 실존을 확인해 R2 head 비용을 요청 1회로 묶는다.
-      // force도 여기엔 적용하지 않는다 — 실존하는 바이트를 다시 받을 이유가 없다.
+      // 오디오가 준비됐어도 가사 수집 실패는 force로 다시 대기열에 넣는다.
       if (await this.env.MEDIA_BUCKET.head(audioKey(videoId)) && job.lyrics) {
+        if (body?.force === true && ['failed', 'unavailable'].includes(job.lyrics.status)) {
+          return json(this.publicJob(await this.enqueue(videoId, job)), 202);
+        }
         return json(this.publicJob(job));
       }
       return json(this.publicJob(await this.enqueue(videoId, job)), 202);

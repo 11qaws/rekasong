@@ -154,3 +154,43 @@ test('prepare jobs persist a bounded lyrics outcome before audio readiness', asy
   });
   assert.ok(stored.has('lyrics-candidates/youtube/abcdefghijk.json'));
 });
+
+test('force retry requeues a ready audio job whose lyrics alone failed', async () => {
+  const jobs = new Map([['job:abcdefghijk', {
+    videoId: 'abcdefghijk',
+    status: 'ready',
+    createdAt: 1,
+    attempts: 1,
+    lyrics: {
+      status: 'failed',
+      language: 'en',
+      sourceKind: 'youtube_manual_caption',
+      cueCount: 0,
+      reason: 'caption_download_failed',
+    },
+  }]]);
+  const queue = new PrepareQueue({
+    storage: {
+      get: async (key) => jobs.get(key),
+      put: async (key, value) => jobs.set(key, value),
+    },
+    getWebSockets: () => [],
+  }, {
+    MEDIA_BUCKET: { head: async () => ({ size: 1 }) },
+  });
+
+  const response = await queue.requestPrepare(new Request('https://worker.test/v1/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoId: 'abcdefghijk', force: true }),
+  }));
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(jobs.get('job:abcdefghijk').lyrics, {
+    status: 'collecting',
+    language: '',
+    sourceKind: '',
+    cueCount: 0,
+    reason: '',
+  });
+});
