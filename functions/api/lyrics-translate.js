@@ -1,6 +1,6 @@
 import { GEMINI_MODEL, isFallbackGeminiKey, selectGeminiApiKey } from './gemini.js';
 
-export const LYRICS_TRANSLATION_POLICY_VERSION = 'lyrics-ko-context-v3-verbatim';
+export const LYRICS_TRANSLATION_POLICY_VERSION = 'lyrics-ko-context-v4-verbatim';
 const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const MAX_LINES = 2_000;
 const MAX_LINE_LENGTH = 500;
@@ -64,7 +64,7 @@ export function validateLyricsTranslationResult(value, expectedCount) {
   });
 }
 
-async function translateWithGemini(apiKey, request) {
+export async function translateWithGemini(apiKey, request, fetchImpl = globalThis.fetch) {
   const originalRule = request.preserveOriginal
     ? 'The source is verified lyrics. Copy every original line exactly into correctedOriginalLines. Do not change spelling, spacing, punctuation, repetition, or wording.'
     : 'The source is a caption transcript. In correctedOriginalLines, fix only obvious caption, ASR, spacing, or orthographic mistakes that become clear from the whole-song context. Leave uncertain text unchanged.';
@@ -86,7 +86,7 @@ Song title: ${JSON.stringify(request.title)}
 Artist: ${JSON.stringify(request.artist)}
 Original language: ${JSON.stringify(request.originalLanguage)}
 Original lines JSON: ${JSON.stringify(request.originalLines)}`;
-  const response = await fetch(GEMINI_INTERACTIONS_URL, {
+  const response = await fetchImpl(GEMINI_INTERACTIONS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
@@ -101,14 +101,10 @@ Original lines JSON: ${JSON.stringify(request.originalLines)}`;
           properties: {
             correctedOriginalLines: {
               type: 'array',
-              minItems: request.originalLines.length,
-              maxItems: request.originalLines.length,
               items: { type: 'string' },
             },
             translations: {
               type: 'array',
-              minItems: request.originalLines.length,
-              maxItems: request.originalLines.length,
               items: { type: 'string' },
             },
           },

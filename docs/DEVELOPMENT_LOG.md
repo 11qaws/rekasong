@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Large verified-lyrics translation schema (v0.2.67)
+
+- Removed provider-side dynamic array-length constraints that caused Gemini to reject a real 245-line NamuWiki candidate before translation.
+- The application validator still requires both returned arrays to match the exact source-line count and still rejects any source-line rewrite for verified lyrics.
+
 ## 2026-08-09 - Retry lyrics after AI identity correction (v0.2.66)
 
 - Invalidated provisional automatic-lyrics jobs when AI title extraction or an artist edit changes the song identity for the same video.

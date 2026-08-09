@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   LYRICS_TRANSLATION_POLICY_VERSION,
   lyricsTranslationCacheKey,
+  translateWithGemini,
   validateLyricsTranslationRequest,
   validateLyricsTranslationResult,
 } from '../functions/api/lyrics-translate.js';
@@ -22,8 +23,8 @@ test('whole-song polish request preserves the source language and all lines', ()
   assert.equal(request.originalLanguage, 'ko');
   assert.equal(request.preserveOriginal, true);
   assert.deepEqual(request.originalLines, ['첫 줄 오타', '둘째 줄']);
-  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v3-verbatim/);
-  assert.equal(LYRICS_TRANSLATION_POLICY_VERSION, 'lyrics-ko-context-v3-verbatim');
+  assert.match(lyricsTranslationCacheKey(request), new RegExp(LYRICS_TRANSLATION_POLICY_VERSION));
+  assert.equal(LYRICS_TRANSLATION_POLICY_VERSION, 'lyrics-ko-context-v4-verbatim');
 });
 
 test('whole-song polish result cannot add or drop corrected or translated lines', () => {
@@ -42,4 +43,37 @@ test('whole-song polish result cannot add or drop corrected or translated lines'
   }, 2);
   assert.deepEqual(result.correctedOriginalLines, ['one', 'two']);
   assert.deepEqual(result.translations, ['하나', '둘']);
+});
+
+test('Gemini schema leaves array length to the exact application validator', async () => {
+  const request = validateLyricsTranslationRequest({
+    contentHash: `sha256:${'b'.repeat(64)}`,
+    title: 'Synthetic Song',
+    artist: 'Example Artist',
+    originalLanguage: 'ja',
+    preserveOriginal: true,
+    originalLines: ['line one', 'line two'],
+  });
+  const result = await translateWithGemini('fixture-key', request, async (_url, options) => {
+    const body = JSON.parse(options.body);
+    const properties = body.response_format.schema.properties;
+    assert.equal(properties.correctedOriginalLines.minItems, undefined);
+    assert.equal(properties.correctedOriginalLines.maxItems, undefined);
+    assert.equal(properties.translations.minItems, undefined);
+    assert.equal(properties.translations.maxItems, undefined);
+    return Response.json({
+      steps: [{
+        type: 'model_output',
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            correctedOriginalLines: request.originalLines,
+            translations: ['첫째 줄', '둘째 줄'],
+          }),
+        }],
+      }],
+    });
+  });
+  assert.deepEqual(result.correctedOriginalLines, request.originalLines);
+  assert.equal(result.translations.length, request.originalLines.length);
 });
