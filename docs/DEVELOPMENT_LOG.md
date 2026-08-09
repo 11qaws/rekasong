@@ -65,3 +65,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - Moved the shared Interactions API model from `gemini-3-flash-preview` to the production-stable `gemini-3.6-flash`.
 - The same stable model now powers title detection, grounded lyrics discovery, and whole-song lyrics correction/translation.
 - This follows Google's current production migration guidance and keeps Search Grounding, URL Context, and structured output support.
+
+## 2026-08-09 - Grounding tool compatibility (v0.2.50)
+
+- Matched the current Google URL Context example order by declaring URL Context before Google Search.
+- Added a bounded provider-status diagnostic that excludes prompts, lyrics, and credentials.

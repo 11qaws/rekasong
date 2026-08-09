@@ -280,7 +280,7 @@ Artist: ${JSON.stringify(input.artist)}`;
         model: GEMINI_MODEL,
         input: prompt,
         generation_config: { max_output_tokens: 32_768, thinking_level: 'low' },
-        tools: [{ type: 'google_search' }, { type: 'url_context' }],
+        tools: [{ type: 'url_context' }, { type: 'google_search' }],
         response_format: {
           type: 'text',
           mime_type: 'application/json',
@@ -310,6 +310,8 @@ Artist: ${JSON.stringify(input.artist)}`;
   let interaction;
   try { interaction = await response.json(); } catch { interaction = null; }
   if (!response.ok) {
+    const providerDetail = bounded(interaction?.error?.message || interaction?.error?.status, 500);
+    console.error('lyrics_web_provider_error', response.status, providerDetail || 'unknown');
     throw Object.assign(new Error(response.status === 429 ? 'rate_limited' : 'lyrics_web_provider_unavailable'), {
       status: response.status === 429 ? 429 : 502,
     });
