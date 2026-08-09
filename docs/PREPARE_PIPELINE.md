@@ -83,6 +83,18 @@ do not run an npm script or a loopback service. The Pages Function probes determ
 titles first, then uses grounded discovery, official/YouTube captions, LRCLIB, and the remaining
 verified web fallbacks in the existing preparation flow.
 
+The preferred hosted NamuWiki path is its authenticated public source API. Configure an account
+token that has the NamuWiki `api_access` permission only as a Cloudflare Pages secret:
+
+```powershell
+npx wrangler pages secret put NAMUWIKI_API_TOKEN --project-name rekasong
+```
+
+The browser never receives this token. The Function requests only the fixed
+`https://namu.wiki/api/edit/<document>` origin, refuses redirects, bounds the JSON and source text,
+and recovers displayed lines from NamuMark without asking a model to rewrite them. Gemini receives
+the bounded candidate blocks only to select the exact-song, complete-lyrics block.
+
 NamuWiki can challenge data-center traffic. A challenged or inaccessible page is treated as a
 source miss, never as permission to invent replacement lines. Direct HTML keeps its bounded table
 cell text verbatim; URL Context output must pass a separate exact-page verification call before it

@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-08-10 - Official NamuWiki source API (v0.2.75)
+
+- Added the current authenticated `namu.wiki/api/edit/<document>` source path ahead of challenged HTML and URL Context fallbacks.
+- The `NAMUWIKI_API_TOKEN` stays in the Cloudflare Pages Function environment; it is never returned to or requested from a browser.
+- The application removes NamuMark presentation syntax deterministically, while Gemini selects only a bounded block index. Original lyric wording and line order are not regenerated.
+- API-derived candidates remain `review_required`, `originalTextPolicy=verbatim`, and explicitly report `namuwiki_api` provenance.
+
 ## 2026-08-09 - Chrome Local Network Access request (v0.2.73)
 
 - Local NamuWiki helper requests now declare `targetAddressSpace: "local"` so current Chrome can apply its Local Network Access permission flow and mixed-content exemption.

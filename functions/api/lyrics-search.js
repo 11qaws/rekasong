@@ -8,8 +8,11 @@ const MAX_SYNCED_LYRICS_LENGTH = 200_000;
 const MAX_CUE_TEXT_LENGTH = 500;
 const MAX_TOTAL_CHARACTERS = 50_000;
 const MAX_SOURCE_HTML_LENGTH = 2_000_000;
+const MAX_SOURCE_WIKITEXT_LENGTH = 2_000_000;
+const MAX_NAMUWIKI_API_RESPONSE_LENGTH = 2_400_000;
 const MAX_LYRICS_BLOCKS = 20;
 const MAX_AI_BLOCK_CHARACTERS = 80_000;
+const NAMUWIKI_API_ORIGIN = 'https://namu.wiki';
 
 const corsHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -309,6 +312,64 @@ export function extractNamuWikiLyricsBlocks(value) {
     .map((block, blockIndex) => Object.freeze({ ...block, blockIndex })));
 }
 
+const namuWikiSourceText = (value) => decodeHtmlEntities(String(value || ''))
+  .replace(/\[br(?:\s+[^\]]*)?\]|<br\b[^>]*>/giu, '\n')
+  .replace(/\[ruby\(([^,\]]+),[^\]]*\)\]/giu, '$1')
+  .replace(/\[\[파일:[^\]]+\]\]/giu, '')
+  .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/gu, '$2')
+  .replace(/\[\[([^\]]+)\]\]/gu, '$1')
+  .replace(/\[\*(?:[^\]]*)\]/gu, '')
+  .replace(/\[(?:include|youtube|age|date|datetime|dday)\([^\]]*\)\]/giu, '')
+  .replace(/\[(?:목차|각주|clearfix)\]/gu, '')
+  .replace(/\{\{\{#!(?:wiki|folding)[^\n]*\n?/giu, '')
+  .replace(/\{\{\{(?:#[\da-f]{3,8}|[+-]\d+)\s+/giu, '')
+  .replace(/\}\}\}/gu, '')
+  .replace(/'{2,5}/gu, '')
+  .replace(/^\s*(?:<[^>\n]{1,160}>)+\s*/gmu, '')
+  .replace(/<[^>\n]+>/gu, '')
+  .replace(/[\u200B-\u200D\uFEFF]/gu, '')
+  .normalize('NFC');
+
+export function extractNamuWikiSourceBlocks(value) {
+  const source = String(value || '').replace(/\r\n?/gu, '\n');
+  if (!source || source.length > MAX_SOURCE_WIKITEXT_LENGTH) return [];
+  const headings = [...source.matchAll(/^(={1,6})\s*(.*?)\s*\1\s*$/gmu)].map((match) => ({
+    index: match.index,
+    text: namuWikiSourceText(match[2]).replace(/\s+/gu, ' ').trim().slice(0, 240),
+  }));
+  const delimiters = [...source.matchAll(/\|\|/gu)];
+  const blocks = [];
+  for (let index = 0; index + 1 < delimiters.length; index += 1) {
+    const start = delimiters[index].index + 2;
+    const end = delimiters[index + 1].index;
+    const lines = namuWikiSourceText(source.slice(start, end))
+      .split('\n')
+      .map((line) => line.replace(/[\t ]+/gu, ' ').trim())
+      .filter((line) => line && !/^##/u.test(line));
+    const totalCharacters = lines.reduce((total, line) => total + line.length, 0);
+    if (lines.length < 5 || lines.length > MAX_CUES
+      || totalCharacters < 80 || totalCharacters > MAX_TOTAL_CHARACTERS
+      || lines.some((line) => line.length > MAX_CUE_TEXT_LENGTH)) continue;
+    const heading = headings.filter((item) => item.index < start).at(-1)?.text || '';
+    blocks.push(Object.freeze({
+      blockIndex: blocks.length,
+      heading,
+      lines: Object.freeze(lines),
+    }));
+  }
+  let selectedCharacters = 0;
+  return Object.freeze(blocks
+    .sort((left, right) => right.lines.length - left.lines.length)
+    .filter((block) => {
+      const characters = block.lines.reduce((total, line) => total + line.length, 0);
+      if (selectedCharacters + characters > MAX_AI_BLOCK_CHARACTERS) return false;
+      selectedCharacters += characters;
+      return true;
+    })
+    .slice(0, MAX_LYRICS_BLOCKS)
+    .map((block, blockIndex) => Object.freeze({ ...block, blockIndex })));
+}
+
 async function requestGeminiInteraction({ apiKey, fetchImpl, input, tools, schema, maxOutputTokens = 32_768, timeoutMs = 25_000 }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -369,6 +430,53 @@ async function fetchNamuWikiHtml(value, fetchImpl) {
       const html = await response.text();
       return html.length <= MAX_SOURCE_HTML_LENGTH ? html : '';
     }
+    return '';
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const namuWikiPageTitle = (value) => {
+  const url = safePublicUrl(value);
+  if (!url || url.hostname.toLocaleLowerCase('en') !== 'namu.wiki'
+    || !url.pathname.startsWith('/w/')) return '';
+  let title;
+  try { title = decodeURIComponent(url.pathname.slice(3)); } catch { return ''; }
+  if (!title || title.length > 500
+    || [...title].some((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint <= 0x1F || codePoint === 0x7F;
+    })) return '';
+  return title;
+};
+
+async function fetchNamuWikiSource(value, apiToken, fetchImpl) {
+  const title = namuWikiPageTitle(value);
+  const token = String(apiToken || '').trim();
+  if (!title || !token || token.length > 4_096) return '';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetchImpl(`${NAMUWIKI_API_ORIGIN}/api/edit/${encodeURIComponent(title)}`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'Rekasong/0.2 (+https://github.com/11qaws/rekasong)',
+      },
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get('content-type') || '';
+    const declaredLength = Number(response.headers.get('content-length'));
+    if (!response.ok || !/^application\/json(?:;|$)/iu.test(contentType)
+      || (Number.isFinite(declaredLength) && declaredLength > MAX_NAMUWIKI_API_RESPONSE_LENGTH)) return '';
+    const body = await response.text();
+    if (!body || body.length > MAX_NAMUWIKI_API_RESPONSE_LENGTH) return '';
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { return ''; }
+    const source = typeof parsed?.text === 'string' ? parsed.text : '';
+    return parsed?.exists === true && source.length <= MAX_SOURCE_WIKITEXT_LENGTH ? source : '';
+  } catch {
     return '';
   } finally {
     clearTimeout(timeout);
@@ -478,8 +586,25 @@ Source URL: ${JSON.stringify(sourceUrl.toString())}`;
   });
 }
 
-async function extractNamuWikiLyricsPage(discovery, input, apiKey, fetchImpl, diagnostics = null) {
+async function extractNamuWikiLyricsPage(
+  discovery,
+  input,
+  apiKey,
+  fetchImpl,
+  diagnostics = null,
+  namuWikiApiToken = '',
+) {
   if (discovery.sourceCategory !== 'namuwiki') return null;
+  if (diagnostics) diagnostics.apiAttempted = Boolean(String(namuWikiApiToken || '').trim());
+  const source = await fetchNamuWikiSource(discovery.sourceUrl, namuWikiApiToken, fetchImpl);
+  if (diagnostics) diagnostics.apiRetrieved = Boolean(source);
+  const sourceBlocks = extractNamuWikiSourceBlocks(source);
+  if (diagnostics) diagnostics.apiBlockCount = sourceBlocks.length;
+  const sourceSelected = await selectNamuWikiLyricsBlock(sourceBlocks, discovery, input, apiKey, fetchImpl);
+  if (sourceSelected) {
+    if (diagnostics) diagnostics.selected = true;
+    return { ...sourceSelected, evidenceKind: 'namuwiki_api' };
+  }
   const html = await fetchNamuWikiHtml(discovery.sourceUrl, fetchImpl);
   if (diagnostics) diagnostics.htmlRetrieved = Boolean(html);
   const blocks = extractNamuWikiLyricsBlocks(html);
@@ -489,9 +614,23 @@ async function extractNamuWikiLyricsPage(discovery, input, apiKey, fetchImpl, di
   return selected ? { ...selected, evidenceKind: 'direct_html' } : null;
 }
 
-async function extractGroundedLyricsPage(discovery, input, apiKey, fetchImpl, diagnostics = null) {
+async function extractGroundedLyricsPage(
+  discovery,
+  input,
+  apiKey,
+  fetchImpl,
+  diagnostics = null,
+  namuWikiApiToken = '',
+) {
   try {
-    const selected = await extractNamuWikiLyricsPage(discovery, input, apiKey, fetchImpl, diagnostics);
+    const selected = await extractNamuWikiLyricsPage(
+      discovery,
+      input,
+      apiKey,
+      fetchImpl,
+      diagnostics,
+      namuWikiApiToken,
+    );
     if (selected) return selected;
   } catch { /* fall through to URL Context */ }
   if (diagnostics) diagnostics.urlContextAttempted = true;
@@ -588,8 +727,9 @@ export function validateGroundedLyricsResult(value, citationValues, input) {
   if (!citedSource) return null;
 
   const category = groundedSourceCategory(value, citedSource);
+  const apiEvidence = category === 'namuwiki' && value.evidenceKind === 'namuwiki_api';
   const discoveryPath = input.sourcePriority === 'namuwiki_only'
-      ? ['google_search', 'namuwiki']
+      ? ['google_search', ...(apiEvidence ? ['namuwiki_api'] : []), 'namuwiki']
     : input.sourcePriority === 'official_only'
       ? ['google_search', 'official_web']
       : ['lrclib', 'google_search', category];
@@ -598,13 +738,15 @@ export function validateGroundedLyricsResult(value, citationValues, input) {
     videoId: input.videoId,
     status: 'review_required',
     language: bounded(value.language, 16) || 'und',
-    sourceKind: category === 'official_web'
-      ? 'gemini_grounded_official_web_lyrics'
-      : 'gemini_grounded_web_lyrics',
+    sourceKind: apiEvidence
+      ? 'namuwiki_api_verbatim_lyrics'
+      : category === 'official_web'
+        ? 'gemini_grounded_official_web_lyrics'
+        : 'gemini_grounded_web_lyrics',
     sourceTitle: bounded(value.sourceTitle, 240) || `${input.title} lyrics`,
     sourceUrl: citedSource.toString(),
     retrievedAt: Date.now(),
-    autoGenerated: true,
+    autoGenerated: !['direct_html', 'namuwiki_api'].includes(value.evidenceKind),
     originalTextPolicy: 'verbatim',
     timingEstimated: true,
     discoveryPath: Object.freeze(discoveryPath),
@@ -614,6 +756,7 @@ export function validateGroundedLyricsResult(value, citationValues, input) {
 
 export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalThis.fetch, {
   requiredCategory = '',
+  namuWikiApiToken = '',
 } = {}) {
   if (isFallbackGeminiKey(apiKey)) {
     throw Object.assign(new Error('lyrics_web_search_credentials_unavailable'), { status: 503 });
@@ -624,6 +767,9 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
     htmlRetrieved: false,
     blockCount: 0,
     selected: false,
+    apiAttempted: false,
+    apiRetrieved: false,
+    apiBlockCount: 0,
     urlContextAttempted: false,
     urlContextSucceeded: false,
   };
@@ -639,8 +785,9 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
           apiKey,
           fetchImpl,
           directNamuDiagnostics,
+          namuWikiApiToken,
         );
-        const directCitations = directExtracted?.evidenceKind === 'direct_html'
+        const directCitations = ['direct_html', 'namuwiki_api'].includes(directExtracted?.evidenceKind)
           ? [directExtracted.sourceUrl]
           : directExtracted
             ? await verifyGroundedLyricsPage(directExtracted, input, apiKey, fetchImpl)
@@ -653,6 +800,7 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
             ...directCandidate,
             discoveryPath: Object.freeze([
               'deterministic_namuwiki_url',
+              ...(directExtracted.evidenceKind === 'namuwiki_api' ? ['namuwiki_api'] : []),
               ...(directNamuDiagnostics.urlContextSucceeded ? ['url_context'] : []),
               'namuwiki',
             ]),
@@ -716,9 +864,17 @@ Artist: ${JSON.stringify(input.artist)}`;
     );
   }
   const extracted = discovery
-    ? await extractGroundedLyricsPage(discovery, input, apiKey, fetchImpl)
+    ? await extractGroundedLyricsPage(
+      discovery,
+      input,
+      apiKey,
+      fetchImpl,
+      null,
+      namuWikiApiToken,
+    )
     : null;
-  const citations = extracted?.sourceCategory === 'namuwiki' && extracted?.evidenceKind === 'direct_html'
+  const citations = extracted?.sourceCategory === 'namuwiki'
+    && ['direct_html', 'namuwiki_api'].includes(extracted?.evidenceKind)
     ? [extracted.sourceUrl]
     : extracted
     ? await verifyGroundedLyricsPage(extracted, input, apiKey, fetchImpl)
@@ -762,10 +918,15 @@ Artist: ${JSON.stringify(input.artist)}`;
   return candidate;
 }
 
-export async function searchLyrics(input, { apiKey, fetchImpl = globalThis.fetch } = {}) {
+export async function searchLyrics(input, {
+  apiKey,
+  fetchImpl = globalThis.fetch,
+  namuWikiApiToken = '',
+} = {}) {
   if (input.sourcePriority === 'namuwiki_only') {
     return searchGroundedWebLyrics(input, apiKey, fetchImpl, {
       requiredCategory: 'namuwiki',
+      namuWikiApiToken,
     });
   }
   if (input.sourcePriority === 'official_only') {
@@ -790,6 +951,7 @@ export async function onRequest({ request, env }) {
   try {
     return json(await searchLyrics(input, {
       apiKey: selectGeminiApiKey(env || {}),
+      namuWikiApiToken: env?.NAMUWIKI_API_TOKEN,
     }));
   } catch (error) {
     return json({
