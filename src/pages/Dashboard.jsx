@@ -106,6 +106,7 @@ import { getAppMessage as t } from '../copy/appMessages';
 import { useAppLocale } from '../hooks/useAppLocale';
 import {
   AUTOMATIC_LYRICS_PHASES,
+  automaticLyricsCandidateSource,
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
 import {
@@ -1488,6 +1489,26 @@ export default function Dashboard() {
     return result;
   }, []);
 
+  const searchAutomaticLyrics = useCallback(async (videoId, song) => {
+    const response = await fetch(apiUrl('/api/lyrics-search'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoId,
+        title: song?.title || '',
+        artist: song?.artist || '',
+        ...(Number.isFinite(song?.durationMs) ? { durationMs: song.durationMs } : {}),
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(result.error || 'lyrics_web_search_failed');
+      error.code = result.error || 'lyrics_web_search_failed';
+      throw error;
+    }
+    return result;
+  }, []);
+
   const songForAutomaticLyrics = useCallback((videoId) => {
     const staged = stagedItemRef.current;
     if (staged?.type === 'youtube' && staged.src === videoId) return staged;
@@ -1527,16 +1548,8 @@ export default function Dashboard() {
       }
       if (prepareInfo?.status !== 'ready') continue;
       const lyricsInfo = prepareInfo.lyrics;
-      if (!lyricsInfo || ['failed', 'unavailable'].includes(lyricsInfo.status)) {
-        const failed = {
-          phase: AUTOMATIC_LYRICS_PHASES.FAILED,
-          reason: lyricsInfo?.reason || 'lyrics_not_reported',
-        };
-        automaticLyricsStatesRef.current = { ...automaticLyricsStatesRef.current, [videoId]: failed };
-        setAutomaticLyricsStates((previous) => ({ ...previous, [videoId]: failed }));
-        continue;
-      }
-      if (!['ready', 'review_required'].includes(lyricsInfo.status)
+      const candidateSource = automaticLyricsCandidateSource(lyricsInfo);
+      if (!candidateSource
         || automaticLyricsJobsRef.current.has(videoId)
         || automaticLyricsStatesRef.current[videoId]?.phase === AUTOMATIC_LYRICS_PHASES.REVIEW_REQUIRED) {
         continue;
@@ -1545,10 +1558,16 @@ export default function Dashboard() {
       const generation = (automaticLyricsGenerationsRef.current.get(videoId) || 0) + 1;
       automaticLyricsGenerationsRef.current.set(videoId, generation);
       noteAutomaticLyricsState(videoId, generation, AUTOMATIC_LYRICS_PHASES.COLLECTING);
-      const job = getPrepareAuth()
-        .then(async ({ auth, sessionKey, stale }) => {
-          if (stale || sessionKey !== prepareSessionKeyRef.current) return;
-          const candidate = await fetchPreparedLyricsCandidate(videoId, auth);
+      const candidateRequest = candidateSource === 'web'
+        ? searchAutomaticLyrics(videoId, song).then((candidate) => ({ candidate, sessionKey: '' }))
+        : getPrepareAuth().then(async ({ auth, sessionKey, stale }) => {
+          if (stale || sessionKey !== prepareSessionKeyRef.current) return null;
+          return { candidate: await fetchPreparedLyricsCandidate(videoId, auth), sessionKey };
+        });
+      const job = candidateRequest
+        .then(async (loaded) => {
+          if (!loaded) return;
+          const { candidate, sessionKey } = loaded;
           const draft = await createAutomaticLyricsDraft({
             song,
             candidate,
@@ -1556,7 +1575,7 @@ export default function Dashboard() {
             onPhase: (phase) => noteAutomaticLyricsState(videoId, generation, phase),
           });
           if (automaticLyricsGenerationsRef.current.get(videoId) !== generation
-            || sessionKey !== prepareSessionKeyRef.current) return;
+            || (sessionKey && sessionKey !== prepareSessionKeyRef.current)) return;
           automaticLyricsDraftsRef.current.set(videoId, draft);
           noteAutomaticLyricsState(videoId, generation, AUTOMATIC_LYRICS_PHASES.REVIEW_REQUIRED);
         })
@@ -1578,7 +1597,10 @@ export default function Dashboard() {
     noteAutomaticLyricsState,
     prepareStates,
     prepareSessionKey,
+    searchAutomaticLyrics,
     songForAutomaticLyrics,
+    stagedItem?.artist,
+    stagedItem?.title,
     translateAutomaticLyrics,
     watchedVideoIds,
   ]);

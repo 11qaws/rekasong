@@ -79,6 +79,11 @@ export function preparedCandidateToVtt(candidate) {
 
 const isKorean = (language) => /^ko(?:-|$)/iu.test(language || '');
 
+export function automaticLyricsCandidateSource(lyricsInfo) {
+  if (!lyricsInfo || ['failed', 'unavailable'].includes(lyricsInfo.status)) return 'web';
+  return ['ready', 'review_required'].includes(lyricsInfo.status) ? 'prepare' : null;
+}
+
 export async function createAutomaticLyricsDraft({
   song,
   candidate: rawCandidate,

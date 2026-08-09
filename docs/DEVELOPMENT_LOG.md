@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-08-09 — prepared lyrics web fallback
+
+- Added the missing `/api/lyrics-search` Pages Function from the lyrics implementation plan.
+- When YouTube manual and automatic captions are unavailable or fail, the Dashboard now searches LRCLIB for synchronized lyrics using the staged title and artist.
+- If LRCLIB has no synchronized match, the same preparation request can use Gemini's public YouTube video understanding as a final timed-transcription candidate source. The result is labeled as generated and never auto-approved.
+- The selected result keeps its LRCLIB source URL, is normalized into the existing bounded timed-candidate contract, and always stops at `review_required` before use.
+- Existing YouTube timed captions remain first priority; both fallback providers run during preparation only, never during playback.
+
 ## 2026-08-09 — prepare 파이프라인에 가사 자동 준비 통합
 
 - 전역 YouTube prepare 작업이 오디오와 같은 claim에서 metadata와 timed caption을 수집하도록 계약을 확장했다.

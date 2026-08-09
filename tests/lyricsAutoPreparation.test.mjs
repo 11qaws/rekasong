@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   AUTOMATIC_LYRICS_PHASES,
   AutomaticLyricsPreparationError,
+  automaticLyricsCandidateSource,
   createAutomaticLyricsDraft,
   preparedCandidateToVtt,
   validatePreparedLyricsCandidate,
@@ -70,4 +71,13 @@ test('automatic preparation never fabricates a translation when the provider fai
     (error) => error instanceof AutomaticLyricsPreparationError
       && error.code === 'lyrics_translation_failed',
   );
+});
+
+test('automatic preparation falls back to web only when prepared captions are absent or terminal', () => {
+  assert.equal(automaticLyricsCandidateSource(null), 'web');
+  assert.equal(automaticLyricsCandidateSource({ status: 'unavailable' }), 'web');
+  assert.equal(automaticLyricsCandidateSource({ status: 'failed' }), 'web');
+  assert.equal(automaticLyricsCandidateSource({ status: 'review_required' }), 'prepare');
+  assert.equal(automaticLyricsCandidateSource({ status: 'ready' }), 'prepare');
+  assert.equal(automaticLyricsCandidateSource({ status: 'collecting' }), null);
 });
