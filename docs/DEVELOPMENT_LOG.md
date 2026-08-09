@@ -113,3 +113,10 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - NamuWiki, official web, LRCLIB, and human-authored YouTube caption candidates now lock their original wording. Translation output cannot correct, reinterpret, or replace those lines; automatic captions accept only bounded typo-scale corrections and reject unrelated replacements.
 - Automatic drafts require four explicit human confirmations for exact song/source identity, line-by-line original text, Korean translation, and previewed timing before local save or session publication.
 - Bumped the deployment version to `0.2.58`.
+
+## 2026-08-09 - NamuWiki direct-text AI block selection (v0.2.59)
+
+- Production evidence showed Google Search could identify the exact NamuWiki page while Gemini URL Context returned zero lyric lines, consistent with the provider's separate recitation/output restriction.
+- NamuWiki fallback now fetches only bounded `namu.wiki` HTML through a same-site redirect guard, preserves candidate table-cell text directly, and asks Gemini to return only the matching block index and validation fields instead of regenerating lyrics.
+- Candidate HTML, block count, line length, total characters, redirect count, and fetch time are bounded. The selected text remains verbatim and still stops at the four-item human review gate with estimated timing.
+- Bumped the deployment version to `0.2.59`.

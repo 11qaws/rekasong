@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  extractNamuWikiLyricsBlocks,
   parseSyncedLyrics,
   searchLyrics,
   searchLrclibLyrics,
@@ -23,10 +24,13 @@ function groundedResponse(options, {
   verify = true,
 } = {}) {
   const body = JSON.parse(options.body);
-  const isDiscovery = body.tools.some((tool) => tool.type === 'google_search');
+  const isDiscovery = (body.tools || []).some((tool) => tool.type === 'google_search');
+  const isBlockSelection = body.input.startsWith('Select the one candidate block');
   const isExtraction = !isDiscovery && body.response_format;
   const text = isDiscovery
     ? JSON.stringify({ sourceFound: true, sourceTitle: 'Attributed lyric page', sourceUrl, sourceCategory })
+    : isBlockSelection
+      ? JSON.stringify({ selectedBlockIndex: 0, exactSongMatch: true, completeLyricsConfirmed: true, language: 'ko', selectedLineCount: 5 })
     : isExtraction
       ? JSON.stringify({ completeLyricsConfirmed: true, language: 'en', lines: ['alpha', 'beta'] })
       : verify ? 'VERIFIED' : 'REJECTED';
@@ -49,6 +53,28 @@ function groundedResponse(options, {
     ],
   }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
+
+test('NamuWiki HTML candidates preserve displayed line text without model rewriting', () => {
+  const blocks = extractNamuWikiLyricsBlocks(`
+    <h3><span>1. Exact Song</span></h3>
+    <table><tr><td>
+      first <strong>verbatim</strong> lyric line<br data-v-x>
+      second verbatim lyric line<br>
+      third verbatim lyric line<br>
+      fourth verbatim lyric line<br>
+      fifth verbatim lyric line
+    </td></tr></table>
+  `);
+  assert.equal(blocks.length, 1);
+  assert.deepEqual(blocks[0].lines, [
+    'first verbatim lyric line',
+    'second verbatim lyric line',
+    'third verbatim lyric line',
+    'fourth verbatim lyric line',
+    'fifth verbatim lyric line',
+  ]);
+  assert.match(blocks[0].heading, /Exact Song/);
+});
 
 test('synced web lyrics normalize into bounded timed cues', () => {
   assert.deepEqual(parseSyncedLyrics('[00:01.20]alpha\r\n[00:02.345][00:03.00]<00:02.34>beta'), [
@@ -98,8 +124,20 @@ test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page',
   const requests = [];
   const candidate = await searchLyrics(priorityInput, {
     apiKey: 'fixture-key',
-    fetchImpl: async (url, options) => {
+    fetchImpl: async (url, options = {}) => {
       requests.push({ url: String(url), options });
+      if (String(url).startsWith('https://namu.wiki/')) {
+        return new Response(`
+          <h3>1. Synthetic Song</h3>
+          <table><tr><td>
+            first synthetic lyric line<br>
+            second synthetic lyric line<br>
+            third synthetic lyric line<br>
+            fourth synthetic lyric line<br>
+            fifth synthetic lyric line
+          </td></tr></table>
+        `, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }
       return groundedResponse(options, {
         sourceUrl: 'https://namu.wiki/w/Synthetic',
         sourceCategory: 'namuwiki',
@@ -108,14 +146,14 @@ test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page',
   });
 
   assert.equal(requests.length, 3);
-  assert.ok(requests.every((request) => request.url === 'https://generativelanguage.googleapis.com/v1beta/interactions'));
-  assert.deepEqual(requests.map((request) => JSON.parse(request.options.body).tools), [
+  assert.equal(requests[1].url, 'https://namu.wiki/w/Synthetic');
+  assert.deepEqual([requests[0], requests[2]].map((request) => JSON.parse(request.options.body).tools || []), [
     [{ type: 'google_search' }],
-    [{ type: 'url_context' }],
-    [{ type: 'url_context' }],
+    [],
   ]);
   assert.deepEqual(candidate.discoveryPath, ['google_search', 'namuwiki']);
   assert.equal(candidate.originalTextPolicy, 'verbatim');
+  assert.equal(candidate.lines.length, 5);
 });
 
 test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {
