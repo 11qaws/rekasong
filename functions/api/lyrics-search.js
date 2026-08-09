@@ -1,7 +1,8 @@
-import { GEMINI_MODEL, isFallbackGeminiKey, selectGeminiApiKey } from './gemini.js';
+import { isFallbackGeminiKey, selectGeminiApiKey } from './gemini.js';
 
 const LRCLIB_SEARCH_URL = 'https://lrclib.net/api/search';
 const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+export const GEMINI_VIDEO_MODEL = 'gemini-3.6-flash';
 const MAX_RESULTS = 50;
 const MAX_CUES = 2_000;
 const MAX_SYNCED_LYRICS_LENGTH = 200_000;
@@ -226,7 +227,7 @@ Catalog artist: ${JSON.stringify(input.artist)}`;
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       signal: controller.signal,
       body: JSON.stringify({
-        model: GEMINI_MODEL,
+        model: GEMINI_VIDEO_MODEL,
         input: [
           { type: 'video', uri: `https://www.youtube.com/watch?v=${input.videoId}` },
           { type: 'text', text: prompt },

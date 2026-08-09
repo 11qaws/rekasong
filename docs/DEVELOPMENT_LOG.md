@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 — Gemini YouTube video model correction
+
+- Pinned the final generated-transcript fallback to the current Gemini video-understanding model instead of the app's older text-oriented preview model.
+- Bumped the corrective deployment to `0.2.44` after the public endpoint rejected YouTube video input on `0.2.43`.
+
 ## 2026-08-09 — prepared lyrics web fallback
 
 - Added the missing `/api/lyrics-search` Pages Function from the lyrics implementation plan.
