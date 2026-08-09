@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Local-helper test boundary and safe diagnostics (v0.2.72)
+
+- The song-drag production smoke now models an absent localhost NamuWiki helper with an explicit unavailable health response instead of an operating-system connection error.
+- Failed automatic lyrics state keeps its bounded semantic reason on the status element for deployment diagnosis without exposing provider text or lyric content.
+
 ## 2026-08-09 - Grounded NamuWiki result URLs (v0.2.71)
 
 - NamuWiki relay candidates now prefer the actual URLs in Gemini's Google Search result steps over a model-rewritten URL.

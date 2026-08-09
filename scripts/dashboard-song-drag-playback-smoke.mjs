@@ -179,6 +179,12 @@ try {
     page.on('console', (message) => {
       if (message.type() === 'error') metrics.consoleErrors.push(message.text());
     });
+    await page.route('http://127.0.0.1:47653/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok: false }),
+    }));
     page.on('response', (response) => {
       if (response.status() >= 400) {
         metrics.httpErrors.push({ status: response.status(), url: response.url() });

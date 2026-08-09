@@ -167,7 +167,10 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             <p className="mr-cache-note">{getLyricsMessage('status.reviewRequired')}</p>
           )}
           {type === 'youtube' && lyricsPreparationState?.phase === 'failed' && (
-            <p className="mr-unavailable">
+            <p
+              className="mr-unavailable"
+              data-lyrics-failure-reason={lyricsPreparationState.reason || 'unknown'}
+            >
               {getLyricsMessage('status.failed')}
               {onRetryLyrics && <button type="button" className="ai-retry-button" onClick={() => onRetryLyrics(src)}>{getLyricsMessage('action.retry')}</button>}
             </p>
