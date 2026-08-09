@@ -1,4 +1,4 @@
-export const GEMINI_MODEL = 'gemini-3-flash-preview';
+export const GEMINI_MODEL = 'gemini-3.6-flash';
 
 const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 const FALLBACK_KEY = '__rekasong_title_fallback__';

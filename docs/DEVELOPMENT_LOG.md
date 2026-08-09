@@ -60,3 +60,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - 전체 `791/791` 테스트, lint, production build를 통과했다. 로컬 브라우저에서 실제 WAV 재생과 가사 준비를 거쳐 1440×900, 1024×768, 375×900, 320×900 레이아웃과 콘솔 오류 0건을 확인했다.
 
 이번 변경은 아직 커밋·배포하지 않았으며 실제 OBS Studio mixer/CEF frame/녹화 검증은 수행하지 않았다.
+# 2026-08-09 - Gemini stable model migration (v0.2.49)
+
+- Moved the shared Interactions API model from `gemini-3-flash-preview` to the production-stable `gemini-3.6-flash`.
+- The same stable model now powers title detection, grounded lyrics discovery, and whole-song lyrics correction/translation.
+- This follows Google's current production migration guidance and keeps Search Grounding, URL Context, and structured output support.
