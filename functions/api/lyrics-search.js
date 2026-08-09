@@ -386,15 +386,13 @@ Candidate blocks JSON: ${JSON.stringify(blocks.map((block) => ({
         exactSongMatch: { type: 'boolean' },
         completeLyricsConfirmed: { type: 'boolean' },
         language: { type: 'string' },
-        selectedLineCount: { type: 'integer' },
       },
-      required: ['selectedBlockIndex', 'exactSongMatch', 'completeLyricsConfirmed', 'language', 'selectedLineCount'],
+      required: ['selectedBlockIndex', 'exactSongMatch', 'completeLyricsConfirmed', 'language'],
     },
   });
   const selected = parseInteractionJson(interaction);
   const block = blocks.find((item) => item.blockIndex === selected?.selectedBlockIndex);
-  if (!block || selected.exactSongMatch !== true || selected.completeLyricsConfirmed !== true
-    || selected.selectedLineCount !== block.lines.length) return null;
+  if (!block || selected.exactSongMatch !== true || selected.completeLyricsConfirmed !== true) return null;
   return {
     completeLyricsConfirmed: true,
     language: bounded(selected.language, 16) || 'und',
@@ -422,10 +420,15 @@ function validateGroundedPageDiscovery(value, citationValues, requiredCategory =
   });
 }
 
-async function extractNamuWikiLyricsPage(discovery, input, apiKey, fetchImpl) {
+async function extractNamuWikiLyricsPage(discovery, input, apiKey, fetchImpl, diagnostics = null) {
   if (discovery.sourceCategory !== 'namuwiki') return null;
-  const blocks = extractNamuWikiLyricsBlocks(await fetchNamuWikiHtml(discovery.sourceUrl, fetchImpl));
-  return selectNamuWikiLyricsBlock(blocks, discovery, input, apiKey, fetchImpl);
+  const html = await fetchNamuWikiHtml(discovery.sourceUrl, fetchImpl);
+  if (diagnostics) diagnostics.htmlRetrieved = Boolean(html);
+  const blocks = extractNamuWikiLyricsBlocks(html);
+  if (diagnostics) diagnostics.blockCount = blocks.length;
+  const selected = await selectNamuWikiLyricsBlock(blocks, discovery, input, apiKey, fetchImpl);
+  if (diagnostics) diagnostics.selected = Boolean(selected);
+  return selected;
 }
 
 async function extractGroundedLyricsPage(discovery, input, apiKey, fetchImpl) {
@@ -552,14 +555,22 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
   if (isFallbackGeminiKey(apiKey)) {
     throw Object.assign(new Error('lyrics_web_search_credentials_unavailable'), { status: 503 });
   }
+  const directNamuDiagnostics = { attempted: false, htmlRetrieved: false, blockCount: 0, selected: false };
   if (requiredCategory === 'namuwiki') {
+    directNamuDiagnostics.attempted = true;
     const directDiscovery = Object.freeze({
       sourceTitle: `${input.title} - NamuWiki`,
       sourceUrl: `https://namu.wiki/w/${encodeURIComponent(input.title)}`,
       sourceCategory: 'namuwiki',
     });
     try {
-      const directExtracted = await extractNamuWikiLyricsPage(directDiscovery, input, apiKey, fetchImpl);
+      const directExtracted = await extractNamuWikiLyricsPage(
+        directDiscovery,
+        input,
+        apiKey,
+        fetchImpl,
+        directNamuDiagnostics,
+      );
       const directCandidate = directExtracted
         ? validateGroundedLyricsResult(directExtracted, [directExtracted.sourceUrl], input)
         : null;
@@ -632,6 +643,7 @@ Artist: ${JSON.stringify(input.artist)}`;
         sourceFound: parsed?.sourceFound === true,
         extractedLineCount: Array.isArray(extracted?.lines) ? extracted.lines.length : 0,
         sourceHost: sourceUrl?.hostname || '',
+        directNamu: Object.freeze({ ...directNamuDiagnostics }),
       }),
     });
   }

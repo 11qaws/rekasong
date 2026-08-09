@@ -126,3 +126,9 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - Added a first probe for the exact `namu.wiki/w/{song title}` page so a transient Google Search miss cannot skip an otherwise public exact-title document.
 - Gemini still has to confirm the selected HTML block matches the requested title and artist and contains the complete lyrics; a missing or rejected exact-title page falls through to grounded AI discovery.
 - Bumped the deployment version to `0.2.60`.
+
+## 2026-08-09 - Safe NamuWiki probe diagnostics (v0.2.61)
+
+- Removed the redundant requirement for Gemini to restate the server-known selected line count; the model now only selects a block and confirms exact-song and complete-lyrics status.
+- Candidate misses expose only safe direct-probe structure (`attempted`, HTML available, block count, selected), never the page body, lyric lines, prompts, or credentials.
+- Bumped the deployment version to `0.2.61`.

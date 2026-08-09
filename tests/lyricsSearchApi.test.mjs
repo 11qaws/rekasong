@@ -30,7 +30,7 @@ function groundedResponse(options, {
   const text = isDiscovery
     ? JSON.stringify({ sourceFound: true, sourceTitle: 'Attributed lyric page', sourceUrl, sourceCategory })
     : isBlockSelection
-      ? JSON.stringify({ selectedBlockIndex: 0, exactSongMatch: true, completeLyricsConfirmed: true, language: 'ko', selectedLineCount: 5 })
+      ? JSON.stringify({ selectedBlockIndex: 0, exactSongMatch: true, completeLyricsConfirmed: true, language: 'ko' })
     : isExtraction
       ? JSON.stringify({ completeLyricsConfirmed: true, language: 'en', lines: ['alpha', 'beta'] })
       : verify ? 'VERIFIED' : 'REJECTED';
