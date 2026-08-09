@@ -58,6 +58,7 @@ const throwSearchError = ({ response, body }) => {
   const error = new Error(body.error || 'lyrics_web_search_failed');
   error.code = body.error || 'lyrics_web_search_failed';
   error.status = response.status;
+  error.diagnostics = body.diagnostics || null;
   throw error;
 };
 
@@ -82,8 +83,14 @@ export async function searchLyricsWithNamuWikiHelper({
   let result = await postLyricsSearch(endpoint, input, fetchImpl, exactRelay);
   if (result.response.ok) return result.body;
 
-  const discoveredUrl = String(result.body?.diagnostics?.namuRelayUrl || '');
-  if (available && discoveredUrl && discoveredUrl !== exactRelay?.sourceUrl) {
+  const discoveredUrls = [...new Set([
+    result.body?.diagnostics?.namuRelayUrl,
+    ...(Array.isArray(result.body?.diagnostics?.namuRelayUrls)
+      ? result.body.diagnostics.namuRelayUrls
+      : []),
+  ].map((value) => String(value || '')).filter(Boolean))].slice(0, 3);
+  for (const discoveredUrl of discoveredUrls) {
+    if (!available || discoveredUrl === exactRelay?.sourceUrl) continue;
     const discoveredRelay = await fetchRelay(helperUrl, { sourceUrl: discoveredUrl }, fetchImpl);
     if (discoveredRelay) {
       result = await postLyricsSearch(endpoint, input, fetchImpl, discoveredRelay);

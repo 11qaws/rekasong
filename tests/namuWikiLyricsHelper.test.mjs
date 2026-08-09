@@ -54,9 +54,10 @@ test('browser client sends an exact-title local relay with NamuWiki-first search
   ]);
 });
 
-test('browser client retries a citation-verified discovered NamuWiki URL through the helper', async () => {
+test('browser client skips a bad model URL and retries the real Google result through the helper', async () => {
   let helperPostCount = 0;
   let remotePostCount = 0;
+  const wrongUrl = 'https://namu.wiki/w/Synthetci';
   const candidate = await searchLyricsWithNamuWikiHelper({
     endpoint: 'https://example.test/api/lyrics-search',
     input,
@@ -66,7 +67,9 @@ test('browser client retries a citation-verified discovered NamuWiki URL through
       if (requestUrl.endsWith('/v1/namuwiki')) {
         helperPostCount += 1;
         const body = JSON.parse(options.body);
-        return body.sourceUrl ? Response.json(relay) : Response.json({ error: 'not_found' }, { status: 404 });
+        return body.sourceUrl === relay.sourceUrl
+          ? Response.json(relay)
+          : Response.json({ error: 'not_found' }, { status: 404 });
       }
       remotePostCount += 1;
       const body = JSON.parse(options.body);
@@ -74,13 +77,16 @@ test('browser client retries a citation-verified discovered NamuWiki URL through
         ? Response.json({ status: 'review_required', sourceUrl: relay.sourceUrl })
         : Response.json({
           error: 'lyrics_web_candidate_not_found',
-          diagnostics: { namuRelayUrl: relay.sourceUrl },
+          diagnostics: {
+            namuRelayUrl: wrongUrl,
+            namuRelayUrls: [wrongUrl, relay.sourceUrl],
+          },
         }, { status: 404 });
     },
   });
 
   assert.equal(candidate.status, 'review_required');
-  assert.equal(helperPostCount, 2);
+  assert.equal(helperPostCount, 3);
   assert.equal(remotePostCount, 2);
 });
 

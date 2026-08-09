@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Grounded NamuWiki result URLs (v0.2.71)
+
+- NamuWiki relay candidates now prefer the actual URLs in Gemini's Google Search result steps over a model-rewritten URL.
+- The localhost helper tries at most three host-validated NamuWiki results, while the server still accepts only an exact-song complete-lyrics block.
+
 ## 2026-08-09 - Host-validated local NamuWiki handoff (v0.2.70)
 
 - When Google discovery identifies a NamuWiki page but server-side URL Context is blocked, the host-validated `namu.wiki` URL is now handed to the localhost helper.

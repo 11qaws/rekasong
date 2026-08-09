@@ -198,7 +198,16 @@ const interactionOutput = (interaction) => {
     .flatMap((step) => Array.isArray(step.result) ? step.result : [])
     .filter((result) => result?.status === 'success')
     .map((result) => result.url);
-  return { text, citations: [...annotationCitations, ...urlContextCitations] };
+  const searchResultUrls = steps
+    .filter((step) => step.type === 'google_search_result' && step.is_error !== true)
+    .flatMap((step) => Array.isArray(step.result) ? step.result : [])
+    .map((result) => result?.url)
+    .filter(Boolean);
+  return {
+    text,
+    citations: [...annotationCitations, ...urlContextCitations],
+    searchResultUrls,
+  };
 };
 
 const safePublicUrl = (value) => {
@@ -749,6 +758,15 @@ Artist: ${JSON.stringify(input.artist)}`;
       && sourceCategory(sourceUrl) === 'namuwiki'
       ? sourceUrl.toString()
       : '';
+    const searchedNamuRelayUrls = output.searchResultUrls
+      .map(safePublicUrl)
+      .filter((url) => url && sourceCategory(url) === 'namuwiki')
+      .map((url) => url.toString());
+    const namuRelayUrls = [...new Set([
+      ...(discovery?.sourceCategory === 'namuwiki' ? [discovery.sourceUrl] : []),
+      ...searchedNamuRelayUrls,
+      safeLocalNamuRelayUrl,
+    ].filter(Boolean))].slice(0, 3);
     throw Object.assign(new Error('lyrics_web_candidate_not_found'), {
       status: 404,
       diagnostics: Object.freeze({
@@ -759,9 +777,8 @@ Artist: ${JSON.stringify(input.artist)}`;
         sourceFound: parsed?.sourceFound === true,
         extractedLineCount: Array.isArray(extracted?.lines) ? extracted.lines.length : 0,
         sourceHost: sourceUrl?.hostname || '',
-        namuRelayUrl: discovery?.sourceCategory === 'namuwiki'
-          ? discovery.sourceUrl
-          : safeLocalNamuRelayUrl,
+        namuRelayUrl: namuRelayUrls[0] || '',
+        namuRelayUrls: Object.freeze(namuRelayUrls),
         directNamu: Object.freeze({ ...directNamuDiagnostics }),
       }),
     });

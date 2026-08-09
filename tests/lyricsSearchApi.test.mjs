@@ -255,6 +255,7 @@ test('validated local NamuWiki relay bypasses blocked server fetch and stays ver
 test('citation-free NamuWiki discovery returns a host-validated URL when URL Context is blocked', async () => {
   const priorityInput = validateLyricsSearchRequest({ ...input, sourcePriority: 'namuwiki_only' });
   const sourceUrl = 'https://namu.wiki/w/Discovered';
+  const modelUrl = 'https://namu.wiki/w/Discvered';
   await assert.rejects(searchLyrics(priorityInput, {
     apiKey: 'fixture-key',
     fetchImpl: async (url, options = {}) => {
@@ -265,19 +266,24 @@ test('citation-free NamuWiki discovery returns a host-validated URL when URL Con
       const isDiscovery = (body.tools || []).some((tool) => tool.type === 'google_search');
       const isIdentityVerification = body.input.startsWith('Open this exact source URL');
       const text = isDiscovery
-        ? JSON.stringify({ sourceFound: true, sourceTitle: 'Discovered', sourceUrl, sourceCategory: 'namuwiki' })
+        ? JSON.stringify({ sourceFound: true, sourceTitle: 'Discovered', sourceUrl: modelUrl, sourceCategory: 'namuwiki' })
         : isIdentityVerification
           ? 'REJECTED'
           : JSON.stringify({ completeLyricsConfirmed: false, language: 'und', lines: [] });
       return new Response(JSON.stringify({
         status: 'completed',
         steps: [
+          ...(isDiscovery ? [{
+            type: 'google_search_result',
+            result: [{ title: 'Discovered', url: sourceUrl, snippet: 'fixture' }],
+          }] : []),
           { type: 'model_output', content: [{ type: 'text', text }] },
         ],
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
   }), (error) => error.message === 'lyrics_web_candidate_not_found'
-    && error.diagnostics?.namuRelayUrl === sourceUrl);
+    && error.diagnostics?.namuRelayUrl === sourceUrl
+    && error.diagnostics?.namuRelayUrls?.includes(modelUrl));
 });
 
 test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {
