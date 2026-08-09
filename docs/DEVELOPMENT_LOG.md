@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Chrome Local Network Access request (v0.2.73)
+
+- Local NamuWiki helper requests now declare `targetAddressSpace: "local"` so current Chrome can apply its Local Network Access permission flow and mixed-content exemption.
+- The health probe now allows ten seconds for the first permission decision instead of treating the permission prompt as an unavailable helper after 800 ms.
+
 ## 2026-08-09 - Local-helper test boundary and safe diagnostics (v0.2.72)
 
 - The song-drag production smoke now models an absent localhost NamuWiki helper with an explicit unavailable health response instead of an operating-system connection error.

@@ -16,9 +16,9 @@ const helperAvailable = async (helperUrl, fetchImpl) => {
   try {
     const { response, body } = await requestJson(
       `${helperUrl}/health`,
-      { method: 'GET', cache: 'no-store' },
+      { method: 'GET', cache: 'no-store', targetAddressSpace: 'local' },
       fetchImpl,
-      800,
+      10_000,
     );
     return response.ok && body.ok === true;
   } catch { return false; }
@@ -31,6 +31,7 @@ const fetchRelay = async (helperUrl, input, fetchImpl) => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        targetAddressSpace: 'local',
         body: JSON.stringify(input),
       },
       fetchImpl,

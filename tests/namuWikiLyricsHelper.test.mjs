@@ -47,6 +47,8 @@ test('browser client sends an exact-title local relay with NamuWiki-first search
   });
 
   assert.equal(candidate.status, 'review_required');
+  assert.equal(requests[0].options.targetAddressSpace, 'local');
+  assert.equal(requests[1].options.targetAddressSpace, 'local');
   assert.deepEqual(requests.map(({ url }) => url), [
     'http://127.0.0.1:47653/health',
     'http://127.0.0.1:47653/v1/namuwiki',
