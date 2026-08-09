@@ -33,6 +33,8 @@ fadeEndTick   = anchorTick - 480     # 1/8음표 전
 
 가사 시계의 유일한 권위는 Protocol v2 Player의 실제 `<audio>.currentTime`이다. 서버 position, Dashboard 추정 시각, 누적 wall-clock timer는 사용하지 않는다.
 
+별도 원곡/공식 lyric 영상의 자막 시각은 현재 반주의 시각으로 자동 확정하지 않는다. 검수 단계에서 같은 첫 구절과 마지막 구절의 원곡·반주 시각 두 쌍을 확인하고 affine mapping으로 전체 cue를 이동·확대한 뒤, 미리보기와 개별 cue 조정을 거친다. 서로 다른 편곡이나 중간 템포 변화는 이 매핑의 자동 승인 대상이 아니다.
+
 - 매 animation frame에서 절대 media time을 조회한다.
 - pause와 buffering으로 media time이 멈추면 화면도 멈춘다.
 - seek와 역탐색은 해당 절대 시각의 opacity를 즉시 다시 계산한다.

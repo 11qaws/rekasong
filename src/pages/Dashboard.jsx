@@ -1022,6 +1022,16 @@ export default function Dashboard() {
   stagedItemRef.current = stagedItem;
   const obsAssetReadyNoticeRef = useRef(new Set());
 
+  const songForAutomaticLyrics = useCallback((videoId) => {
+    const songbookTarget = songbookLyricsTargetsRef.current[videoId];
+    if (songbookTarget?.song) return songbookTarget.song;
+    const staged = stagedItemRef.current;
+    if (staged?.type === 'youtube' && staged.src === videoId) return staged;
+    const snapshot = stateRef.current || {};
+    const entries = [snapshot.currentEntry, ...(snapshot.queue || []), ...(snapshot.history || [])];
+    return entries.find((entry) => entry?.song?.type === 'youtube' && entry.song.src === videoId)?.song || null;
+  }, []);
+
   const applyLyricsRefToYoutubeVideo = useCallback((videoId, lyricsRef) => {
     if (!videoId || !lyricsRef) return;
     setStagedItem((previous) => previous?.type === 'youtube' && previous.src === videoId
@@ -1377,9 +1387,15 @@ export default function Dashboard() {
       || prepareRequestedRef.current.has(videoId)
       || prepareRequestFlightsRef.current.has(videoId)) return;
     let requestGeneration = prepareGenerationRef.current;
+    const song = songForAutomaticLyrics(videoId);
+    const lyricsSearch = song?.title ? {
+      title: song.title,
+      artist: song.artist || '',
+      source: song.source || '',
+    } : null;
     prepareRequestFlightsRef.current.add(videoId);
     prepareRequestedRef.current.add(videoId);
-    runWithPrepareAuthRecovery((auth) => requestPrepare(videoId, auth, { force }))
+    runWithPrepareAuthRecovery((auth) => requestPrepare(videoId, auth, { force, lyricsSearch }))
       .then(({ value: info, generation, sessionKey, skipped }) => {
         if (skipped) {
           if (requestGeneration === prepareGenerationRef.current) {
@@ -1403,7 +1419,7 @@ export default function Dashboard() {
         }), requestGeneration);
       })
       .finally(() => prepareRequestFlightsRef.current.delete(videoId));
-  }, [notePrepare, prepareConnectionStateForCurrentAuth, runWithPrepareAuthRecovery]);
+  }, [notePrepare, prepareConnectionStateForCurrentAuth, runWithPrepareAuthRecovery, songForAutomaticLyrics]);
 
   // 준비를 지켜볼 YouTube 곡: 스테이징(준비 시작 시점) + 대기열 + 현재 곡.
   // 문자열로 합쳐 effect 의존성을 안정화한다(순서·중복 무관).
@@ -1586,16 +1602,6 @@ export default function Dashboard() {
       throw error;
     }
     return result;
-  }, []);
-
-  const songForAutomaticLyrics = useCallback((videoId) => {
-    const songbookTarget = songbookLyricsTargetsRef.current[videoId];
-    if (songbookTarget?.song) return songbookTarget.song;
-    const staged = stagedItemRef.current;
-    if (staged?.type === 'youtube' && staged.src === videoId) return staged;
-    const snapshot = stateRef.current || {};
-    const entries = [snapshot.currentEntry, ...(snapshot.queue || []), ...(snapshot.history || [])];
-    return entries.find((entry) => entry?.song?.type === 'youtube' && entry.song.src === videoId)?.song || null;
   }, []);
 
   useEffect(() => {

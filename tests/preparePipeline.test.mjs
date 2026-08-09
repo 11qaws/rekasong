@@ -86,6 +86,21 @@ test('successful prepare requests preserve the API contract and normalize respon
   assert.deepEqual(info, { status: 'ready', failureKind: null, reason: '', lyrics: null });
 });
 
+test('prepare request carries bounded song identity for caption discovery', async () => {
+  let payload;
+  await requestPrepare(VIDEO_ID, AUTH, {
+    lyricsSearch: { title: 'Moon Song', artist: 'Artist A', source: 'songbook' },
+    fetchImpl: async (_url, init) => {
+      payload = JSON.parse(init.body);
+      return { ok: true, status: 202, json: async () => ({ status: 'queued' }) };
+    },
+  });
+  assert.deepEqual(payload, {
+    videoId: VIDEO_ID,
+    lyricsSearch: { title: 'Moon Song', artist: 'Artist A', source: 'songbook' },
+  });
+});
+
 test('prepare status carries only a compact lyrics outcome and fetches content separately', async () => {
   const info = await fetchPrepareStatus(VIDEO_ID, AUTH, {
     fetchImpl: async () => ({

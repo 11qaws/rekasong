@@ -149,11 +149,15 @@ export const prepareFailureInfo = (error, { sessionState = '' } = {}) => {
 export const requestPrepare = async (
   videoId,
   auth,
-  { force = false, fetchImpl = globalThis.fetch } = {}
+  { force = false, lyricsSearch = null, fetchImpl = globalThis.fetch } = {}
 ) => fetchPrepareJson(`${configuredBase}/v1/prepare?${authQuery(auth)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ videoId: String(videoId || ''), ...(force ? { force: true } : {}) })
+    body: JSON.stringify({
+      videoId: String(videoId || ''),
+      ...(force ? { force: true } : {}),
+      ...(lyricsSearch ? { lyricsSearch } : {}),
+    })
   }, fetchImpl);
 
 // 앱 시작·복귀를 준비 워커에 알리는 일회성 힌트다. 실제 작업 상태를 바꾸지

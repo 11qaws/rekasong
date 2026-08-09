@@ -13,6 +13,7 @@ const MAX_TEXT_LENGTH = 500;
 const allowedCandidateStatuses = new Set(['ready', 'review_required']);
 const verbatimSourceKinds = new Set([
   'youtube_manual_caption',
+  'youtube_discovered_manual_caption',
   'lrclib_synced_lyrics',
   'gemini_grounded_web_lyrics',
   'gemini_grounded_official_web_lyrics',

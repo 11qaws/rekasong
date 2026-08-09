@@ -36,6 +36,11 @@ test('prepared lyrics candidates remain bounded, ordered, and tied to one video'
   }, candidate.videoId).originalTextPolicy, 'verbatim');
   assert.equal(validatePreparedLyricsCandidate({
     ...candidate,
+    sourceKind: 'youtube_discovered_manual_caption',
+    timingEstimated: true,
+  }, candidate.videoId).originalTextPolicy, 'verbatim');
+  assert.equal(validatePreparedLyricsCandidate({
+    ...candidate,
     cues: [...candidate.cues].reverse(),
   }, candidate.videoId), null);
   assert.match(preparedCandidateToVtt(normalized), /00:00:01\.000 --> 00:00:04\.499/);

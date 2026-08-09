@@ -194,3 +194,39 @@ test('force retry requeues a ready audio job whose lyrics alone failed', async (
     reason: '',
   });
 });
+
+test('prepare queue sanitizes song identity and passes it only to the claimed worker job', async () => {
+  const jobs = new Map();
+  const storage = {
+    get: async (key) => jobs.get(key),
+    put: async (key, value) => jobs.set(key, value),
+    list: async ({ prefix }) => new Map([...jobs].filter(([key]) => key.startsWith(prefix))),
+    setAlarm: async () => {},
+    deleteAlarm: async () => {},
+  };
+  const queue = new PrepareQueue({ storage, getWebSockets: () => [] }, { PREPARE_TOKEN: 'secret' });
+  const queued = await queue.requestPrepare(new Request('https://worker.test/v1/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      videoId: 'abcdefghijk',
+      lyricsSearch: {
+        title: '  Moon\u0000   Song  ',
+        artist: ' Artist A ',
+        source: 'songbook',
+      },
+    }),
+  }));
+  assert.equal(queued.status, 202);
+
+  const claimed = await queue.claim(new Request('https://worker.test/v1/prepare/claim', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer secret' },
+  }));
+  assert.equal(claimed.status, 200);
+  assert.deepEqual((await claimed.json()).lyricsSearch, {
+    title: 'Moon Song',
+    artist: 'Artist A',
+    source: 'songbook',
+  });
+});

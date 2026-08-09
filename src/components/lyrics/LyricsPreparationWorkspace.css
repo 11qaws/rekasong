@@ -93,6 +93,9 @@
 .lyrics-grid-three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .lyrics-timing-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; gap: 12px; }
 .lyrics-timing-fields output { padding: 10px; color: #86efac; }
+.lyrics-timing-alignment { margin: 16px 0; padding: 14px; border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 12px; }
+.lyrics-timing-alignment p { margin: 4px 0 12px; color: #94a3b8; }
+.lyrics-timing-alignment output { color: #86efac; }
 .lyrics-check { display: flex !important; grid-template-columns: auto 1fr; align-items: center; }
 .lyrics-check input { width: 18px; height: 18px; }
 .lyrics-step aside, .lyrics-step output { color: #cbd5e1; font-size: .82rem; }

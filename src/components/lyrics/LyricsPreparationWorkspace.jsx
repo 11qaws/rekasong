@@ -20,6 +20,7 @@ import {
   groupMappingsForOriginalLines,
   parseOriginalLineSelection,
 } from '../../lib/lyrics/lyricsAlignment.js';
+import { remapCueAnchorsByReferences } from '../../lib/lyrics/lyricsTimelineAlignment.js';
 import { getLyricsMessage as t } from '../../copy/lyricsMessages.js';
 import LyricsOverlayPreview from './LyricsOverlayPreview.jsx';
 import LyricsTimelineEditor from './LyricsTimelineEditor.jsx';
@@ -60,6 +61,7 @@ const discoveryLabel = (value) => t({
   general_web: 'automatic.path.generalWeb',
   official_web: 'automatic.path.officialWeb',
   structured_lyrics: 'automatic.path.structuredLyrics',
+  youtube_official_caption_search: 'automatic.path.youtubeCaptionSearch',
 }[value] || 'automatic.path.generalWeb');
 
 function initialCues(original, mappings) {
@@ -129,6 +131,10 @@ export default function LyricsPreparationWorkspace({
   const [numerator, setNumerator] = useState('4');
   const [denominator, setDenominator] = useState('4');
   const [cueHistory, setCueHistory] = useState({ past: [], present: [], future: [] });
+  const [timingReferences, setTimingReferences] = useState({
+    sourceStart: '', targetStart: '', sourceEnd: '', targetEnd: '',
+  });
+  const [timingAlignmentMessage, setTimingAlignmentMessage] = useState('');
   const [previewTimeMs, setPreviewTimeMs] = useState(0);
   const [requireLyrics, setRequireLyrics] = useState(false);
   const [displaySettings, setDisplaySettings] = useState({
@@ -238,6 +244,23 @@ export default function LyricsPreparationWorkspace({
     present: current.future[0],
     future: current.future.slice(1),
   }));
+  const updateTimingReference = (field, value) => setTimingReferences((current) => ({
+    ...current,
+    [field]: value,
+  }));
+  const alignCueTimeline = () => {
+    try {
+      setCues(remapCueAnchorsByReferences(cueHistory.present, {
+        sourceStartMs: Number(timingReferences.sourceStart) * 1_000,
+        targetStartMs: Number(timingReferences.targetStart) * 1_000,
+        sourceEndMs: Number(timingReferences.sourceEnd) * 1_000,
+        targetEndMs: Number(timingReferences.targetEnd) * 1_000,
+      }));
+      setTimingAlignmentMessage(t('timing.alignApplied'));
+    } catch {
+      setTimingAlignmentMessage(t('timing.alignInvalid'));
+    }
+  };
 
   const readFile = async (file, setter, nameSetter = null) => {
     if (!file) return;
@@ -297,7 +320,15 @@ export default function LyricsPreparationWorkspace({
 
   const nextStep = () => {
     if (step === 2 && cueHistory.present.length === 0) {
-      setCueHistory({ past: [], present: initialCues(original, mappings), future: [] });
+      const cues = initialCues(original, mappings);
+      setCueHistory({ past: [], present: cues, future: [] });
+      if (cues.length > 1) {
+        setTimingReferences((current) => ({
+          ...current,
+          sourceStart: String(cues[0].anchorMs / 1_000),
+          sourceEnd: String(cues.at(-1).anchorMs / 1_000),
+        }));
+      }
     }
     if (step === 3 && reviewGateRequired) setReviewChecks(EMPTY_REVIEW_CHECKS);
     setStep((current) => Math.min(STEPS.length - 1, current + 1));
@@ -516,6 +547,20 @@ export default function LyricsPreparationWorkspace({
                 <label><span>{t('timing.denominator')}</span><select value={denominator} onChange={(event) => setDenominator(event.target.value)}>{[1, 2, 4, 8, 16].map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
                 <output>{t(tempoMap.segments.length > 0 ? 'timing.mode.tempo' : 'timing.mode.fallback')}</output>
               </div>
+              <fieldset className="lyrics-timing-alignment">
+                <legend>{t('timing.alignTitle')}</legend>
+                <p>{t('timing.alignHelp')}</p>
+                <div className="lyrics-timing-fields">
+                  <label><span>{t('timing.sourceStart')}</span><input type="number" min="0" step="0.01" value={timingReferences.sourceStart} onChange={(event) => updateTimingReference('sourceStart', event.target.value)} /></label>
+                  <label><span>{t('timing.targetStart')}</span><input type="number" min="0" step="0.01" value={timingReferences.targetStart} onChange={(event) => updateTimingReference('targetStart', event.target.value)} /></label>
+                  <label><span>{t('timing.sourceEnd')}</span><input type="number" min="0" step="0.01" value={timingReferences.sourceEnd} onChange={(event) => updateTimingReference('sourceEnd', event.target.value)} /></label>
+                  <label><span>{t('timing.targetEnd')}</span><input type="number" min="0" step="0.01" value={timingReferences.targetEnd} onChange={(event) => updateTimingReference('targetEnd', event.target.value)} /></label>
+                </div>
+                <div className="lyrics-inline-actions">
+                  <button type="button" onClick={alignCueTimeline}>{t('timing.alignAction')}</button>
+                  {timingAlignmentMessage && <output role="status">{timingAlignmentMessage}</output>}
+                </div>
+              </fieldset>
               <LyricsTimelineEditor history={cueHistory} onChange={setCues} onUndo={undoCues} onRedo={redoCues} />
               {timingConflictCount > 0 && <aside role="status">{t('timing.conflictCount', { count: timingConflictCount })}</aside>}
             </div>

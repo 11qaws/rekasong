@@ -76,6 +76,22 @@ queries LRCLIB, accepts synchronized LRC results, records the provider URL, and 
 matching result to the same timed-candidate schema. It remains `review_required`; it is never
 silently approved. This network fallback runs during preparation only, never during playback.
 
+### Songbook-first captions and cross-track timing
+
+Setlink, YouTube playlist, and Eureka songbook preparation requests may carry bounded
+`lyricsSearch.title`, `artist`, and `source` metadata. If the selected MR video has no usable
+caption, the Oracle worker obtains a flat YouTube search result, filters it by title and artist,
+and then inspects matching candidates one by one. Only a separate public video with a manual
+caption track becomes `youtube_discovered_manual_caption`; automatic captions from a different
+video are rejected. One bot-wall candidate does not invalidate the remaining list.
+
+A separate video's cue times are source-timeline evidence, not MR timing proof. The candidate is
+always `review_required`, `originalTextPolicy=verbatim`, and `timingEstimated=true`. The timing
+workspace maps all cues from two user-confirmed phrase pairs
+(`sourceStart -> targetStart`, `sourceEnd -> targetEnd`), then requires preview review and permits
+per-cue correction. This handles a uniform intro offset and tempo stretch without pretending that
+a differently arranged track is automatically synchronized.
+
 ## 3. HTTP 계약
 
 ### 대시보드 → Worker

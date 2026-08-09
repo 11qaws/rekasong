@@ -119,6 +119,26 @@ const assetKey = (room, assetId) => `sessions/${room}/${assetId}`;
 const audioKey = (videoId) => `audio/${videoId}`;
 const preparedLyricsKey = (videoId) => `lyrics-candidates/youtube/${videoId}.json`;
 
+const prepareLyricsSearch = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const text = (input, max) => [...String(input || '')]
+    .map((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint <= 31 || codePoint === 127 ? ' ' : character;
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+  const title = text(value.title, 180);
+  if (!title) return null;
+  return {
+    title,
+    artist: text(value.artist, 160),
+    source: text(value.source, 40),
+  };
+};
+
 const preparedLyricsSummary = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const statuses = ['review_required', 'ready', 'unavailable', 'failed'];
@@ -133,11 +153,14 @@ const preparedLyricsSummary = (value) => {
     reason: typeof value.reason === 'string' ? value.reason.slice(0, 160) : '',
   };
   if (['unavailable', 'failed'].includes(value.status)) return summary;
-  if (!Array.isArray(value.cues)
-    || value.cues.length === 0
-    || value.cues.length > MAX_PREPARED_LYRICS_CUES) return null;
+  const hasCues = Array.isArray(value.cues) && value.cues.length > 0;
+  const hasLines = Array.isArray(value.lines) && value.lines.length > 0;
+  if (!hasCues && !hasLines) return null;
+  if ((hasCues && value.cues.length > MAX_PREPARED_LYRICS_CUES)
+    || (hasLines && (value.lines.length > MAX_PREPARED_LYRICS_CUES
+      || value.lines.some((line) => typeof line !== 'string' || !line.trim() || line.length > 500)))) return null;
   let previousAnchor = -1;
-  for (const cue of value.cues) {
+  for (const cue of value.cues || []) {
     if (!cue || typeof cue !== 'object' || Array.isArray(cue)
       || !Number.isFinite(cue.anchorMs) || cue.anchorMs < previousAnchor || cue.anchorMs < 0
       || typeof cue.text !== 'string' || !cue.text.trim() || cue.text.length > 500) return null;
@@ -4734,7 +4757,7 @@ export class PrepareQueue {
     return view;
   }
 
-  async enqueue(videoId, previous) {
+  async enqueue(videoId, previous, lyricsSearch = null) {
     const now = Date.now();
     const job = {
       videoId,
@@ -4742,6 +4765,7 @@ export class PrepareQueue {
       createdAt: previous?.createdAt || now,
       queuedAt: now,
       attempts: previous?.attempts || 0,
+      lyricsSearch: lyricsSearch || previous?.lyricsSearch || null,
       lyrics: {
         status: 'collecting',
         language: '',
@@ -4760,9 +4784,14 @@ export class PrepareQueue {
     const body = await request.json().catch(() => ({}));
     const videoId = String(body?.videoId || '');
     if (!VIDEO_ID_PATTERN.test(videoId)) return json({ error: 'Invalid videoId' }, 400);
+    const lyricsSearch = prepareLyricsSearch(body?.lyricsSearch);
 
-    const job = await this.getJob(videoId);
+    let job = await this.getJob(videoId);
     if (job?.status === 'queued') {
+      if (lyricsSearch) {
+        job = { ...job, lyricsSearch };
+        await this.putJob(job);
+      }
       // 이전 기상 신호가 연결 전/단절 중 유실됐더라도 앱의 멱등 재요청이 다시 깨운다.
       this.signalWorkers('job_enqueued');
       return json(this.publicJob(job));
@@ -4775,11 +4804,11 @@ export class PrepareQueue {
       // 오디오가 준비됐어도 가사 수집 실패는 force로 다시 대기열에 넣는다.
       if (await this.env.MEDIA_BUCKET.head(audioKey(videoId)) && job.lyrics) {
         if (body?.force === true && ['failed', 'unavailable'].includes(job.lyrics.status)) {
-          return json(this.publicJob(await this.enqueue(videoId, job)), 202);
+          return json(this.publicJob(await this.enqueue(videoId, job, lyricsSearch)), 202);
         }
         return json(this.publicJob(job));
       }
-      return json(this.publicJob(await this.enqueue(videoId, job)), 202);
+      return json(this.publicJob(await this.enqueue(videoId, job, lyricsSearch)), 202);
     }
 
     if (job?.status === 'failed') {
@@ -4788,16 +4817,19 @@ export class PrepareQueue {
       // 기계가 계속 긁으면 죽은 영상 요청이 봇월을 부른다. 시도 이력도 초기화해
       // 백오프가 새로 시작된다.
       if (body?.force === true) {
-        return json(this.publicJob(await this.enqueue(videoId, { createdAt: job.createdAt })), 202);
+        return json(this.publicJob(await this.enqueue(videoId, {
+          createdAt: job.createdAt,
+          lyricsSearch: job.lyricsSearch,
+        }, lyricsSearch)), 202);
       }
       // unavailable은 영구 실패 — 재큐 금지. 그 외에는 백오프가 지난 뒤에만
       // 재큐한다(스테이징 재시도가 botwall 백오프를 우회하면 안 된다).
       if (job.failureKind === 'unavailable') return json(this.publicJob(job));
       if ((job.nextRetryAt || 0) > Date.now()) return json(this.publicJob(job));
-      return json(this.publicJob(await this.enqueue(videoId, job)), 202);
+      return json(this.publicJob(await this.enqueue(videoId, job, lyricsSearch)), 202);
     }
 
-    return json(this.publicJob(await this.enqueue(videoId, null)), 202);
+    return json(this.publicJob(await this.enqueue(videoId, null, lyricsSearch)), 202);
   }
 
   async status(videoId) {
@@ -4830,6 +4862,7 @@ export class PrepareQueue {
       attempts: (candidate.attempts || 0) + 1,
       claimedAt: now,
       leaseUntil: now + PREPARE_LEASE_MS,
+      lyricsSearch: candidate.lyricsSearch || null,
       lyrics: candidate.lyrics || {
         status: 'collecting',
         language: '',
@@ -4841,7 +4874,12 @@ export class PrepareQueue {
     await this.putJob(claimed);
     await this.bumpCounters((counters) => { counters.claims += 1; });
     await this.scheduleLeaseAlarm();
-    return json({ videoId: claimed.videoId, leaseUntil: claimed.leaseUntil, attempts: claimed.attempts });
+    return json({
+      videoId: claimed.videoId,
+      leaseUntil: claimed.leaseUntil,
+      attempts: claimed.attempts,
+      ...(claimed.lyricsSearch ? { lyricsSearch: claimed.lyricsSearch } : {}),
+    });
   }
 
   async uploadBytes(request, videoId) {
@@ -4869,6 +4907,7 @@ export class PrepareQueue {
       status: 'ready',
       createdAt: job.createdAt,
       attempts: job.attempts || 0,
+      lyricsSearch: job.lyricsSearch || null,
       size: object.size,
       contentType,
       preparedAt: Date.now(),
@@ -4935,6 +4974,7 @@ export class PrepareQueue {
       status: 'failed',
       createdAt: job.createdAt,
       attempts: job.attempts || 0,
+      lyricsSearch: job.lyricsSearch || null,
       failureKind,
       reason: String(body?.reason || '').slice(0, 500),
       failedAt: now,
@@ -4985,7 +5025,8 @@ export class PrepareQueue {
         status: 'queued',
         createdAt: job.createdAt,
         queuedAt: now,
-        attempts: job.attempts || 0
+        attempts: job.attempts || 0,
+        lyricsSearch: job.lyricsSearch || null,
       });
       await this.bumpCounters((counters) => { counters.leaseExpired += 1; });
     }
