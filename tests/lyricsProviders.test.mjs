@@ -35,7 +35,16 @@ test('contextual translation validates bounded whole-song input and stable cache
     originalLines: ['alpha', 'beta'],
   });
   assert.ok(request);
-  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v1/);
-  assert.deepEqual(validateLyricsTranslationResult({ translations: ['가', '나'] }, 2), ['가', '나']);
-  assert.equal(validateLyricsTranslationResult({ translations: ['one'] }, 2), null);
+  assert.match(lyricsTranslationCacheKey(request), /lyrics-ko-context-v2/);
+  assert.deepEqual(validateLyricsTranslationResult({
+    correctedOriginalLines: ['alpha', 'beta'],
+    translations: ['가', '나'],
+  }, 2), {
+    correctedOriginalLines: ['alpha', 'beta'],
+    translations: ['가', '나'],
+  });
+  assert.equal(validateLyricsTranslationResult({
+    correctedOriginalLines: ['alpha'],
+    translations: ['one'],
+  }, 2), null);
 });

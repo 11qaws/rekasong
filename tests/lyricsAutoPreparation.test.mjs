@@ -43,6 +43,7 @@ test('automatic preparation translates the whole timed source and stops at revie
     song: { src: candidate.videoId, title: 'Synthetic', artist: 'Fixture' },
     candidate,
     translate: async (input) => ({
+      correctedOriginalLines: input.originalLines.map((line, index) => index === 0 ? 'first line!' : line),
       translations: input.originalLines.map((line) => `ko:${line}`),
       sourceTier: 'machine_contextual',
       providerId: 'fixture-translator',
@@ -59,6 +60,61 @@ test('automatic preparation translates the whole timed source and stops at revie
   assert.equal(draft.mappingDrafts.length, 2);
   assert.equal(draft.translationSourceTier, 'machine_contextual');
   assert.match(draft.originalText, /^WEBVTT/);
+  assert.match(draft.originalText, /first line!/);
+  assert.equal(draft.correctionCount, 1);
+  assert.equal(draft.timingEstimated, false);
+});
+
+test('automatic preparation contextually corrects Korean captions without skipping the provider', async () => {
+  let request = null;
+  const draft = await createAutomaticLyricsDraft({
+    song: { src: candidate.videoId, title: '한국어 곡' },
+    candidate: {
+      ...candidate,
+      language: 'ko',
+      cues: [{ anchorMs: 1_000, text: '맞춤뻡 오류' }],
+    },
+    translate: async (input) => {
+      request = input;
+      return {
+        correctedOriginalLines: ['맞춤법 오류'],
+        translations: ['맞춤법 오류'],
+        sourceTier: 'machine_contextual',
+        providerId: 'fixture-polisher',
+      };
+    },
+  });
+
+  assert.equal(request.originalLanguage, 'ko');
+  assert.match(draft.originalText, /맞춤법 오류/);
+  assert.equal(draft.translationText, '맞춤법 오류');
+  assert.equal(draft.correctionCount, 1);
+  assert.equal(draft.translationProviderId, 'fixture-polisher');
+});
+
+test('grounded plain lyrics enter review with explicit estimated timing', async () => {
+  const draft = await createAutomaticLyricsDraft({
+    song: { src: candidate.videoId },
+    candidate: {
+      ...candidate,
+      sourceKind: 'gemini_grounded_web_lyrics',
+      cues: undefined,
+      lines: ['alpha', 'beta'],
+      timingEstimated: true,
+      discoveryPath: ['lrclib', 'google_search', 'namuwiki'],
+    },
+    translate: async ({ originalLines }) => ({
+      correctedOriginalLines: originalLines,
+      translations: ['알파', '베타'],
+      sourceTier: 'machine_contextual',
+      providerId: 'fixture-translator',
+    }),
+  });
+
+  assert.equal(draft.originalFileName, `automatic-${candidate.videoId}.txt`);
+  assert.equal(draft.originalText, 'alpha\nbeta');
+  assert.equal(draft.timingEstimated, true);
+  assert.deepEqual(draft.discoveryPath, ['lrclib', 'google_search', 'namuwiki']);
 });
 
 test('automatic preparation never fabricates a translation when the provider fails', async () => {

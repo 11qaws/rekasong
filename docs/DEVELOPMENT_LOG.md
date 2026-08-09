@@ -1,5 +1,13 @@
 # Development log
 
+## 2026-08-09 — grounded lyrics discovery and whole-song polish
+
+- Extended the preparation fallback from LRCLIB exact/broad search to one bounded Gemini Google Search + URL Context pass, ordered from dedicated or official lyric sources through NamuWiki/Touhou Wiki/VocaDB discovery and finally the general web.
+- Grounded web candidates are accepted only when the returned direct source URL is present in Gemini citation annotations and the response confirms one complete source. Untimed results enter review with explicit estimated timing instead of fabricated synchronization.
+- Replaced line-only translation with one whole-song correction-and-translation request. The response must preserve the exact line count for both corrected originals and Korean lines; Korean captions now pass through the same contextual typo correction path.
+- Added a preparation evidence panel for source, discovery path, correction count, timing quality, and the original source link. Every automatic result still stops at `review_required`.
+- Bumped the deployment version to `0.2.48`.
+
 ## 2026-08-09 — Google caption integration boundary
 
 - Public deployment probes confirmed that Gemini accepts direct public YouTube video input, but it did not produce a usable timed lyric candidate for a music video and added about 26 seconds to a miss.

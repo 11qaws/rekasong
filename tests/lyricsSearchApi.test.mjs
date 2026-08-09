@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 import {
   parseSyncedLyrics,
+  searchLyrics,
   searchLrclibLyrics,
   selectLrclibCandidate,
+  validateGroundedLyricsResult,
   validateLyricsSearchRequest,
 } from '../functions/api/lyrics-search.js';
 
@@ -53,4 +55,60 @@ test('web search calls only the fixed provider endpoint and returns the prepared
 test('web search request rejects missing identity or unbounded metadata', () => {
   assert.equal(validateLyricsSearchRequest({ title: 'Synthetic Song' }), null);
   assert.equal(validateLyricsSearchRequest({ videoId: 'bad', title: 'Synthetic Song' }), null);
+});
+
+test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {
+  const value = {
+    completeLyricsConfirmed: true,
+    language: 'ja',
+    sourceTitle: 'Synthetic source',
+    sourceUrl: 'https://namu.wiki/w/Synthetic',
+    lines: ['alpha', 'beta'],
+  };
+  assert.equal(validateGroundedLyricsResult(value, ['https://example.com/not-the-source'], input), null);
+  const candidate = validateGroundedLyricsResult(value, ['https://namu.wiki/w/Synthetic#lyrics'], input);
+  assert.equal(candidate.timingEstimated, true);
+  assert.equal(candidate.sourceKind, 'gemini_grounded_web_lyrics');
+  assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'namuwiki']);
+  assert.deepEqual(candidate.lines, ['alpha', 'beta']);
+});
+
+test('lyrics search falls through LRCLIB to one grounded Google and URL-context search', async () => {
+  const requests = [];
+  const candidate = await searchLyrics(input, {
+    apiKey: 'fixture-key',
+    fetchImpl: async (url, options = {}) => {
+      requests.push({ url: String(url), options });
+      if (String(url).startsWith('https://lrclib.net/')) {
+        return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        steps: [{
+          type: 'model_output',
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              completeLyricsConfirmed: true,
+              language: 'en',
+              sourceTitle: 'Attributed lyric page',
+              sourceUrl: 'https://example.com/lyrics/synthetic',
+              lines: ['alpha', 'beta'],
+            }),
+            annotations: [{
+              type: 'url_citation',
+              url: 'https://example.com/lyrics/synthetic',
+              title: 'example.com',
+            }],
+          }],
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  assert.equal(requests.length, 3);
+  const interactionBody = JSON.parse(requests[2].options.body);
+  assert.deepEqual(interactionBody.tools, [{ type: 'google_search' }, { type: 'url_context' }]);
+  assert.match(interactionBody.input, /NamuWiki, Touhou Wiki, and VocaDB/);
+  assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
+  assert.deepEqual(candidate.discoveryPath, ['lrclib', 'google_search', 'general_web']);
 });

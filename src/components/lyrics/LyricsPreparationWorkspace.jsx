@@ -50,6 +50,15 @@ const VERSION_KINDS = [
 const nonEmptyLines = (value) => String(value ?? '').replace(/\r\n?/gu, '\n')
   .split('\n').map((line) => line.trim()).filter(Boolean);
 
+const discoveryLabel = (value) => t({
+  lrclib: 'automatic.path.lrclib',
+  google_search: 'automatic.path.googleSearch',
+  namuwiki: 'automatic.path.namuwiki',
+  touhou_wiki: 'automatic.path.touhouWiki',
+  vocadb: 'automatic.path.vocadb',
+  general_web: 'automatic.path.generalWeb',
+}[value] || 'automatic.path.generalWeb');
+
 function initialCues(original, mappings) {
   const lineById = new Map(original.lines.map((line) => [line.lineId, line]));
   const timed = original.timedCues.length > 0
@@ -251,6 +260,7 @@ export default function LyricsPreparationWorkspace({
           contentHash,
           title,
           artist,
+          originalLanguage,
           originalLines: original.lines.map((line) => line.text),
         }),
       });
@@ -266,6 +276,7 @@ export default function LyricsPreparationWorkspace({
           model: result.model,
           policyVersion: result.policyVersion,
           contentHash,
+          correctedOriginalLines: result.correctedOriginalLines,
           translations: result.translations,
           storedAt: Date.now(),
         });
@@ -441,6 +452,18 @@ export default function LyricsPreparationWorkspace({
           {step === 2 && (
             <div className="lyrics-step">
               <h3>{t('step.translation.title')}</h3><p>{t('step.translation.help')}</p>
+              {initialDraft && (
+                <aside className="lyrics-automatic-audit">
+                  <strong>{t('automatic.auditTitle')}</strong>
+                  <span>{t('automatic.source', { source: originalSourceTitle || initialDraft.originalProviderId })}</span>
+                  {initialDraft.discoveryPath?.length > 0 && (
+                    <span>{t('automatic.discoveryPath', { path: initialDraft.discoveryPath.map(discoveryLabel).join(' → ') })}</span>
+                  )}
+                  <span>{t('automatic.corrections', { count: initialDraft.correctionCount || 0 })}</span>
+                  <span>{t(initialDraft.timingEstimated ? 'automatic.timingEstimated' : 'automatic.timingSynced')}</span>
+                  {originalSourceUrl && <a href={originalSourceUrl} target="_blank" rel="noreferrer">{t('automatic.openSource')}</a>}
+                </aside>
+              )}
               <label className="lyrics-file-action"><FileUp size={15} /> {t('translation.text')}<input type="file" accept=".txt,.srt,.vtt,.json,text/*" onChange={async (event) => syncMappingsFromText(await event.target.files?.[0]?.text() || '')} /></label>
               <label><span>{t('translation.text')}</span><textarea rows="7" value={translationText} placeholder={t('translation.placeholder')} onChange={(event) => syncMappingsFromText(event.target.value)} /></label>
               <div className="lyrics-inline-actions">
