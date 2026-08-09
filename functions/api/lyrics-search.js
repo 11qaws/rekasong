@@ -324,7 +324,21 @@ Artist: ${JSON.stringify(input.artist)}`;
   let parsed;
   try { parsed = JSON.parse(output.text); } catch { parsed = null; }
   const candidate = validateGroundedLyricsResult(parsed, output.citations, input);
-  if (!candidate) throw Object.assign(new Error('lyrics_web_candidate_not_found'), { status: 404 });
+  if (!candidate) {
+    const sourceUrl = safePublicUrl(parsed?.sourceUrl);
+    throw Object.assign(new Error('lyrics_web_candidate_not_found'), {
+      status: 404,
+      diagnostics: Object.freeze({
+        interactionStatus: bounded(interaction?.status, 32) || 'unknown',
+        stepTypes: Object.freeze([...new Set((interaction?.steps || []).map((step) => bounded(step?.type, 40)).filter(Boolean))].slice(0, 12)),
+        textLength: output.text.length,
+        citationCount: output.citations.length,
+        completeLyricsConfirmed: parsed?.completeLyricsConfirmed === true,
+        lineCount: Array.isArray(parsed?.lines) ? parsed.lines.length : 0,
+        sourceHost: sourceUrl?.hostname || '',
+      }),
+    });
+  }
   return candidate;
 }
 
@@ -345,6 +359,9 @@ export async function onRequest({ request, env }) {
   try {
     return json(await searchLyrics(input, { apiKey: selectGeminiApiKey(env || {}) }));
   } catch (error) {
-    return json({ error: error?.message || 'lyrics_web_search_failed' }, error?.status || 502);
+    return json({
+      error: error?.message || 'lyrics_web_search_failed',
+      ...(error?.diagnostics ? { diagnostics: error.diagnostics } : {}),
+    }, error?.status || 502);
   }
 }

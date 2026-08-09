@@ -80,3 +80,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 
 - Removed the provider-side `maxItems: 2000` state-space constraint from the grounded-search response schema.
 - The application still rejects more than 2,000 lines, 50,000 total characters, overlong lines, invalid URLs, and responses without an exact citation match.
+
+## 2026-08-09 - Safe grounded-search diagnostics (v0.2.53)
+
+- Candidate misses now expose only bounded structural metadata: interaction status, step types, output length, citation/line counts, completion flag, and source host.
+- Diagnostics never include prompts, lyric text, provider credentials, or raw provider errors.
