@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   OBS_KARAOKE_SYNC_FIXTURE,
+  createObsLyricsSyncManifest,
   renderObsKaraokeSyncFixture,
 } from '../scripts/obs-karaoke-sync-fixture.mjs';
 
@@ -29,6 +30,21 @@ test('karaoke fixture directly covers both marker endpoints and keeps 30-second 
     OBS_KARAOKE_SYNC_FIXTURE.songBoundaryPolicy,
     'reanchor_next_song_at_zero_keep_route',
   );
+});
+
+test('5-minute and 10-minute lyrics markers stay on absolute media time without accumulated drift', () => {
+  for (const cycles of [31, 61]) {
+    const manifest = createObsLyricsSyncManifest(cycles);
+    assert.equal(manifest.cues.length, cycles);
+    assert.equal(manifest.timingAuthority, 'absolute_media_current_time');
+    manifest.cues.forEach((cue, index) => {
+      const expectedAnchor = 1_500 + index * 10_000;
+      assert.equal(cue.anchorMs, expectedAnchor);
+      assert.equal(cue.fadeStartMs, expectedAnchor - 500);
+      assert.equal(cue.fadeEndMs, expectedAnchor - 250);
+      assert.equal(cue.kind, index % 3 === 1 ? 'blank' : 'lyric');
+    });
+  }
 });
 
 test('karaoke fixture is deterministic 48 kHz mono PCM with exact silence outside markers', () => {

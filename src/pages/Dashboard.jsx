@@ -16,6 +16,7 @@ import {
   createQueueEntry,
   isExpiredLocalSongDef,
   newId,
+  sanitizeSongDef,
   toLegacySong,
   toQueueEntry,
 } from '../lib/queueEntry';
@@ -137,6 +138,7 @@ const LOCAL_FILE_MAX_BYTES = 200 * 1024 * 1024;
 const playbackProgressNow = () => globalThis.performance?.now?.() ?? Date.now();
 
 const DashboardLocalSpeaker = lazy(() => import('../components/DashboardLocalSpeaker'));
+const LyricsPreparationWorkspace = lazy(() => import('../components/lyrics/LyricsPreparationWorkspace.jsx'));
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
 const EMPTY_PREPARE_STATES = Object.freeze({});
@@ -313,6 +315,12 @@ export default function Dashboard() {
   const connectedObsPlayers = outputControl.snapshot?.playerSnapshot?.players?.filter((player) => (
     player?.clientKind === 'obs-browser-source'
   )) ?? [];
+  const leasedObsPlayer = connectedObsPlayers.find((player) => (
+    player.playerInstanceId === outputControl.snapshot?.playerSnapshot?.lease?.leaseTarget
+  )) || null;
+  const obsLyricsSupported = leasedObsPlayer?.capabilities?.lyricsOverlay === true
+    && Array.isArray(leasedObsPlayer.capabilities.lyricsPackageSchemaVersions)
+    && leasedObsPlayer.capabilities.lyricsPackageSchemaVersions.includes(1);
   // A source that is still connected but hidden is a setup instruction, not a
   // broken route. Keep the user's OBS intent alive until the source becomes an
   // eligible candidate again.
@@ -980,11 +988,32 @@ export default function Dashboard() {
   }, [dismissToast]);
 
   const [stagedItem, setStagedItem] = useState(null);
+  const [lyricsWorkspaceTarget, setLyricsWorkspaceTarget] = useState(null);
   const [songDragCandidate, setSongDragCandidate] = useState(null);
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
   stagedItemRef.current = stagedItem;
   const obsAssetReadyNoticeRef = useRef(new Set());
+
+  const completeLyricsPreparation = useCallback(({ lyricsRef }) => {
+    const target = lyricsWorkspaceTarget;
+    if (!target || !lyricsRef) return;
+    if (target.location === 'staged') {
+      setStagedItem((previous) => previous
+        ? { ...previous, lyricsRef }
+        : previous);
+      return;
+    }
+    const updateEntry = (entry) => entry?.entryId === target.entryId
+      ? { ...entry, song: sanitizeSongDef({ ...entry.song, lyricsRef }) }
+      : entry;
+    setSharedState((previous) => ({
+      ...previous,
+      currentEntry: updateEntry(previous.currentEntry),
+      queue: (previous.queue || []).map(updateEntry),
+      history: (previous.history || []).map(updateEntry),
+    }));
+  }, [lyricsWorkspaceTarget, setSharedState]);
 
   const uploadLocalBlobForObs = useCallback((src, onProgress = null) => {
     if (typeof src !== 'string' || !src.startsWith('blob:')) {
@@ -2102,6 +2131,15 @@ export default function Dashboard() {
     const runOutputMode = outputMode === 'obs' || outputMode === 'speaker'
       ? outputMode
       : outputModePreference === 'obs' ? 'obs' : 'speaker';
+    const lyricsRef = entry.song?.lyricsRef;
+    const sessionLyricsReady = runOutputMode === 'obs'
+      && obsLyricsSupported
+      && lyricsRef?.status === 'ready'
+      && Boolean(lyricsRef.assetId)
+      && lyricsRef.sessionRoom === onAirSession?.room;
+    if (runOutputMode === 'obs' && lyricsRef?.requireLyrics === true && !sessionLyricsReady) {
+      throw new UserActionError('lyrics.playback.requiredUnavailable');
+    }
     if (useOnAirPlayer && runOutputMode === 'obs' && localSongNeedsObsAsset(entry.song)) {
       requestLocalSongObsAsset(entry.song);
       throw new UserActionError('dashboard.localFile.obsPreparingAction');
@@ -2128,14 +2166,25 @@ export default function Dashboard() {
     if (useOnAirPlayer) {
       // OnAirPlayer가 song.src(videoId)로 준비된 오디오 URL을 스스로 구성하므로
       // (자기 player 토큰 사용) load 명령의 프로토콜은 변경 없다.
+      const legacySong = toLegacySong(entry);
+      const { lyricsRef: _lyricsRef, ...songForLoad } = legacySong;
       const command = {
         type: 'load',
         sessionId: entry.entryId, // On-Air 프로토콜의 sessionId = entryId 매핑
         entryId: entry.entryId,
         runId,
-        song: toLegacySong(entry),
+        song: songForLoad,
         position: initialPosition,
-        volume: outputVolumeForMode(volumeProfilesRef.current, runOutputMode)
+        volume: outputVolumeForMode(volumeProfilesRef.current, runOutputMode),
+        ...(sessionLyricsReady ? {
+          lyrics: {
+            assetId: lyricsRef.assetId,
+            packageId: lyricsRef.packageId,
+            packageHash: lyricsRef.packageHash,
+            schemaVersion: lyricsRef.schemaVersion,
+            requireLyrics: lyricsRef.requireLyrics === true,
+          }
+        } : {})
       };
       const preparedLoad = {
         entryId: entry.entryId,
@@ -3822,6 +3871,10 @@ export default function Dashboard() {
             onRetryOutputControl={retryOutputControlNow}
             locale={locale}
             onLocaleChange={setLocale}
+            onPrepareLyrics={() => setLyricsWorkspaceTarget({
+              location: 'shared',
+              ...currentEntry,
+            })}
           />
         </ErrorBoundary>
         </div>
@@ -3839,6 +3892,7 @@ export default function Dashboard() {
               setSharedState={setSharedState}
               prepareStates={prepareStates}
               onRetryPrepare={handleRetryPrepare}
+              onPrepareLyrics={(entry) => setLyricsWorkspaceTarget({ location: 'shared', ...entry })}
             />
           </ErrorBoundary>
         </div>
@@ -3868,7 +3922,12 @@ export default function Dashboard() {
                 onRetryPrepare: handleRetryPrepare,
                 outputMode: selectedOutputMode,
                 onRetryLocalObsAsset: retryStagedLocalObsAsset,
-                showToast
+                showToast,
+                onPrepareLyrics: () => setLyricsWorkspaceTarget({
+                  location: 'staged',
+                  entryId: 'staged',
+                  song: stagedItem,
+                })
               }}
             />
           </ErrorBoundary>
@@ -3882,6 +3941,18 @@ export default function Dashboard() {
         playAction={songDropPlayAction}
         onDrop={handleSongDrop}
       />
+
+      {lyricsWorkspaceTarget && (
+        <Suspense fallback={null}>
+          <LyricsPreparationWorkspace
+            entry={lyricsWorkspaceTarget}
+            sessionRoom={onAirSession?.room || ''}
+            publishPackage={onAir.configured ? onAir.uploadLyricsAsset : null}
+            onComplete={completeLyricsPreparation}
+            onClose={() => setLyricsWorkspaceTarget(null)}
+          />
+        </Suspense>
+      )}
 
       {/* Toast Notifications Container */}
       <div className="toast-container" aria-live="polite" aria-atomic="false">

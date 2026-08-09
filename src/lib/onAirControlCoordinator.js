@@ -848,7 +848,7 @@ export class OnAirControlCoordinator {
     }
   }
 
-  load({ entryId: suppliedEntryId, runId: suppliedRunId, song, position = 0, volume } = {}) {
+  load({ entryId: suppliedEntryId, runId: suppliedRunId, song, position = 0, volume, lyrics } = {}) {
     this.#assertRunLeaseReady();
     if (this.#hasActiveTestWork()) {
       throw new OnAirControlCoordinatorError(
@@ -904,6 +904,7 @@ export class OnAirControlCoordinator {
         song: immutable(song),
         position,
         ...(volume === undefined ? {} : { volume }),
+        ...(lyrics === undefined ? {} : { lyrics: immutable(lyrics) }),
       },
     };
     this.#activeRun = immutable({

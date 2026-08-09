@@ -37,6 +37,8 @@ jobs:
         run: npm run build
       - name: Production Dashboard UX and performance budget
         run: node scripts/dashboard-production-smoke.mjs --local
+      - name: Lyrics preparation workspace
+        run: npm run test:lyrics:smoke
       - name: Production song drag playback contract
         run: npm run test:dashboard:drag-playback
       - name: Pseudo-locale layout

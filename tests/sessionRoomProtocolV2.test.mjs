@@ -331,6 +331,7 @@ async function loadRun(harness, control, leaseEpoch, {
   entryId = 'entry-a',
   runId = 'run-a',
   commandId = 'load-run-a',
+  lyrics = undefined,
 } = {}) {
   await harness.send(control, {
     type: 'load',
@@ -340,7 +341,12 @@ async function loadRun(harness, control, leaseEpoch, {
     leaseEpoch,
     targetPlayerInstanceId: 'player-a',
     controlEpoch: harness.session.protocolV2.controlEpoch,
-    payload: { song: { id: 'song-a', type: 'local' }, position: 0, volume: 80 },
+    payload: {
+      song: { id: 'song-a', type: 'local' },
+      position: 0,
+      volume: 80,
+      ...(lyrics ? { lyrics } : {}),
+    },
   });
   return { entryId, runId, commandId };
 }
@@ -361,6 +367,56 @@ async function stopRun(harness, control, leaseEpoch, {
     payload: {},
   });
 }
+
+test('lyrics LOAD refs persist only for capable players and preserve optional audio fallback', async () => {
+  const lyrics = {
+    assetId: 'lyrics-asset-1',
+    packageId: 'lyrics-package-1',
+    packageHash: `sha256:${'a'.repeat(64)}`,
+    schemaVersion: 1,
+    requireLyrics: false,
+  };
+  const capable = createHarness();
+  const capableControl = capable.socket('control');
+  const capablePlayer = capable.socket('player');
+  await registerControl(capable, capableControl);
+  await registerPlayer(capable, capablePlayer, {
+    capabilities: {
+      obsRuntime: true,
+      lyricsOverlay: true,
+      lyricsPackageSchemaVersions: [1],
+    },
+  });
+  const capableEpoch = await activateOutput(capable, capableControl);
+  await confirmOutputReady(capable, capablePlayer, 'player-a', capableEpoch);
+  await loadRun(capable, capableControl, capableEpoch, { lyrics });
+  assert.deepEqual(capable.session.protocolV2.desiredTransport.lyrics, lyrics);
+  assert.deepEqual(findMessage(capablePlayer, (message) => message.type === 'load').payload.lyrics, lyrics);
+
+  const legacy = createHarness();
+  const legacyControl = legacy.socket('control');
+  const legacyPlayer = legacy.socket('player');
+  await registerControl(legacy, legacyControl);
+  await registerPlayer(legacy, legacyPlayer);
+  const legacyEpoch = await activateOutput(legacy, legacyControl);
+  await confirmOutputReady(legacy, legacyPlayer, 'player-a', legacyEpoch);
+  await loadRun(legacy, legacyControl, legacyEpoch, { lyrics });
+  assert.equal(legacy.session.protocolV2.desiredTransport.lyrics, null);
+  assert.equal(Object.hasOwn(findMessage(legacyPlayer, (message) => message.type === 'load').payload, 'lyrics'), false);
+
+  const required = createHarness();
+  const requiredControl = required.socket('control');
+  const requiredPlayer = required.socket('player');
+  await registerControl(required, requiredControl);
+  await registerPlayer(required, requiredPlayer);
+  const requiredEpoch = await activateOutput(required, requiredControl);
+  await confirmOutputReady(required, requiredPlayer, 'player-a', requiredEpoch);
+  await loadRun(required, requiredControl, requiredEpoch, {
+    lyrics: { ...lyrics, requireLyrics: true },
+  });
+  assert.equal(terminalResults(requiredControl, 'load-run-a')[0].code, 'lyrics_capability_unavailable');
+  assert.equal(findMessage(requiredPlayer, (message) => message.type === 'load'), undefined);
+});
 
 test('legacy command/event contract remains compatible before any v2 control lease exists', async () => {
   const harness = createHarness();

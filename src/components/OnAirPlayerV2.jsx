@@ -18,8 +18,11 @@ import {
   ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS,
 } from '../lib/onAirV2Connection';
 import { createObsRuntimeAttestation } from '../lib/obsRuntimeAttestation';
+import { createLyricsPlaybackController } from '../lib/lyrics/lyricsSessionAsset.js';
+import LyricsOverlayRenderer from './lyrics/LyricsOverlayRenderer.jsx';
 
 const BUILD_ID = String(import.meta.env.VITE_APP_BUILD_ID || 'rekasong-web-v2');
+const LYRICS_OVERLAY_ENABLED = String(import.meta.env.VITE_LYRICS_OVERLAY_ENABLED ?? 'true') !== 'false';
 const PLAYER_CLIENT_KIND_SET = new Set(Object.values(PLAYER_CLIENT_KINDS));
 
 function safeNotify(callback, payload) {
@@ -72,6 +75,10 @@ export default function OnAirPlayerV2({
   // StrictMode's synthetic effect cleanup/setup for this page instance.
   callbacksRef.current = { onSnapshot, onStateChange };
   const [localState, setLocalState] = useState('initializing');
+  const [lyricsRuntime, setLyricsRuntime] = useState({ status: 'disabled', playbackPackage: null });
+  const lyricsRuntimeRef = useRef(lyricsRuntime);
+  lyricsRuntimeRef.current = lyricsRuntime;
+  const [lyricsRendererEnabled, setLyricsRendererEnabled] = useState(false);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -85,6 +92,7 @@ export default function OnAirPlayerV2({
     let reconnectAttempts = 0;
     let adapter = null;
     let prefetchCache = null;
+    let lyricsController = null;
     const hasExplicitClientKind = requestedClientKind !== null
       && requestedClientKind !== undefined;
     if (hasExplicitClientKind && !PLAYER_CLIENT_KIND_SET.has(requestedClientKind)) {
@@ -109,6 +117,9 @@ export default function OnAirPlayerV2({
     const clientKind = requestedClientKind || (runtime.capabilities.obsRuntime
       ? PLAYER_CLIENT_KINDS.OBS_BROWSER_SOURCE
       : PLAYER_CLIENT_KINDS.GENERIC_BROWSER);
+    const supportsLyrics = LYRICS_OVERLAY_ENABLED
+      && clientKind === PLAYER_CLIENT_KINDS.OBS_BROWSER_SOURCE;
+    setLyricsRendererEnabled(supportsLyrics);
 
     const scheduleReconnect = () => {
       if (disposed || reconnectTimer !== null) return;
@@ -148,6 +159,22 @@ export default function OnAirPlayerV2({
         prefetchResolver,
         loadResolverMaxBytes: ON_AIR_PREFETCH_MAX_CACHED_BYTES,
       });
+      if (supportsLyrics) {
+        lyricsController = createLyricsPlaybackController({
+          baseUrl: apiBaseUrl,
+          room,
+          token,
+          playerInstanceId: typeof identityLifecycleKey === 'string'
+            ? identityLifecycleKey
+            : identityLifecycleKey?.playerInstanceId || 'player-v2',
+          onChange(snapshot) {
+            if (!disposed) {
+              lyricsRuntimeRef.current = snapshot;
+              setLyricsRuntime(snapshot);
+            }
+          },
+        });
+      }
       adapter = new OnAirPlaybackAdapter({
         connectionOptions: {
           url: playerSocketUrl(apiBaseUrl, room, token),
@@ -165,6 +192,10 @@ export default function OnAirPlayerV2({
               obsRuntime: false,
               obsStudioBinding: false,
             }),
+            ...(supportsLyrics ? {
+              lyricsOverlay: true,
+              lyricsPackageSchemaVersions: [1],
+            } : {}),
           },
           heartbeatIntervalMs: isDashboardSpeaker
             ? ON_AIR_V2_SPEAKER_HEARTBEAT_INTERVAL_MS
@@ -184,11 +215,38 @@ export default function OnAirPlayerV2({
               prefetchCache?.dispose();
             }
           },
+          onPlayerCommand(command) {
+            lyricsController?.handlePlayerCommand(command);
+          },
         },
         engineOptions: { audio },
-        sourceResolver: prefetchCache.resolveSource,
+        sourceResolver: async (context) => {
+          if (lyricsController) {
+            const preparation = lyricsController.prepare({
+              entryId: context.entryId,
+              runId: context.runId,
+              lyrics: context.payload?.lyrics || null,
+            });
+            if (context.payload?.lyrics?.requireLyrics === true) await preparation;
+            else void preparation.catch(() => {});
+          }
+          return prefetchCache.resolveSource(context);
+        },
         prefetchSources: prefetchCache.prefetch,
-        runtimeProbe: () => runtime?.runtime() || {},
+        runtimeProbe: () => {
+          const lyricsSnapshot = lyricsRuntimeRef.current;
+          return {
+            ...(runtime?.runtime() || {}),
+            ...(supportsLyrics ? {
+              lyricsRuntimeStatus: lyricsSnapshot.status,
+              ...(lyricsSnapshot.playbackPackage ? {
+                lyricsPackageHash: lyricsSnapshot.playbackPackage.packageHash,
+                lyricsTimingMode: lyricsSnapshot.playbackPackage.timingMode,
+                lyricsCueCount: lyricsSnapshot.playbackPackage.cues.length,
+              } : {}),
+            } : {}),
+          };
+        },
         safetyProfile: isDashboardSpeaker
           ? ON_AIR_PLAYBACK_SAFETY_PROFILES.SPEAKER
           : ON_AIR_PLAYBACK_SAFETY_PROFILES.STRICT,
@@ -216,13 +274,24 @@ export default function OnAirPlayerV2({
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       adapter?.dispose();
       prefetchCache?.dispose();
+      lyricsController?.clear();
       runtime?.dispose();
     };
   }, [apiBaseUrl, identityLifecycleKey, requestedClientKind, room, token]);
 
   return (
-    <div data-on-air-player-v2-state={localState} aria-hidden="true">
+    <div
+      data-on-air-player-v2-state={localState}
+      {...(LYRICS_OVERLAY_ENABLED ? { 'data-lyrics-runtime-state': lyricsRuntime.status } : {})}
+      aria-hidden="true"
+    >
       <audio ref={audioRef} preload="auto" crossOrigin="anonymous" />
+      {lyricsRendererEnabled && (
+        <LyricsOverlayRenderer
+          audioRef={audioRef}
+          playbackPackage={lyricsRuntime.playbackPackage}
+        />
+      )}
     </div>
   );
 }

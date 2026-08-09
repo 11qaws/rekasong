@@ -128,7 +128,9 @@ test('protocol=2 player caps active and prefetched sources and releases cache li
     2,
   );
   assert.match(player, /loadResolverMaxBytes: ON_AIR_PREFETCH_MAX_CACHED_BYTES/);
-  assert.match(player, /sourceResolver: prefetchCache\.resolveSource/);
+  assert.match(player, /sourceResolver: async \(context\)/);
+  assert.match(player, /return prefetchCache\.resolveSource\(context\)/);
+  assert.match(player, /createLyricsPlaybackController/);
   assert.match(player, /prefetchSources: prefetchCache\.prefetch/);
   assert.match(player, /prefetchCache\?\.prefetch\(\[\]\)/);
   assert.match(player, /prefetchCache\?\.dispose\(\)/);

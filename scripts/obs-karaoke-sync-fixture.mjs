@@ -109,6 +109,34 @@ function markerSchedule(markerCycles) {
   return Object.freeze(markers);
 }
 
+export function createObsLyricsSyncManifest(markerCycles = FIVE_MINUTE_CYCLES) {
+  requireMarkerCycles(markerCycles);
+  const bpm = 120;
+  const quarterNoteMs = 60_000 / bpm;
+  const cues = Array.from({ length: markerCycles }, (_, cycleIndex) => {
+    const anchorMs = LEAD_IN_MS + cycleIndex * CYCLE_INTERVAL_MS + 500;
+    const kind = cycleIndex % 3 === 1 ? 'blank' : 'lyric';
+    return Object.freeze({
+      cueId: `${kind === 'blank' ? 'B' : 'C'}${String(cycleIndex + 1).padStart(3, '0')}`,
+      kind,
+      anchorMs,
+      fadeStartMs: anchorMs - quarterNoteMs,
+      fadeEndMs: anchorMs - (quarterNoteMs / 2),
+      originalLines: kind === 'lyric' ? [`<synthetic original ${cycleIndex + 1}>`] : [],
+      translationLinesKo: kind === 'lyric' ? [`<synthetic ko ${cycleIndex + 1}>`] : [],
+    });
+  });
+  return Object.freeze({
+    schemaVersion: 1,
+    bpm,
+    numerator: 4,
+    denominator: 4,
+    timingAuthority: 'absolute_media_current_time',
+    driftCorrectionPolicy: 'none_observe_only',
+    cues: Object.freeze(cues),
+  });
+}
+
 /**
  * Render an offline-only split-track analysis fixture. The first and last
  * cycles are both real markers, so 31 cycles directly cover 0..300 seconds.
@@ -154,6 +182,7 @@ export function renderObsKaraokeSyncFixture({ markerCycles = FIVE_MINUTE_CYCLES 
     ),
     mimeType: OBS_KARAOKE_SYNC_FIXTURE.mimeType,
     markers,
+    lyricsManifest: createObsLyricsSyncManifest(markerCycles),
   });
 }
 

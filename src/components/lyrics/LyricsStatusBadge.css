@@ -1,0 +1,15 @@
+.lyrics-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  color: var(--text-muted, #64748b);
+  border: 1px solid rgb(148 163 184 / 30%);
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.lyrics-status-badge.is-ready { color: #15803d; border-color: rgb(22 163 74 / 42%); }
+.lyrics-status-badge.is-failed { color: #b91c1c; border-color: rgb(220 38 38 / 42%); }

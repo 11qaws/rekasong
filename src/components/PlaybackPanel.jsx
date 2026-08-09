@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy, Headphones, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
+import { Check, Copy, Headphones, Languages, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 import { getAppMessage as t } from '../copy/appMessages';
 import {
   derivePlaybackOutputNextAction,
   derivePlaybackOutputStatus,
 } from '../lib/playbackOutputStatus';
 import { deriveEstablishedObsRouteNotice } from '../lib/establishedObsRouteNotice';
+import { getLyricsMessage } from '../copy/lyricsMessages.js';
+import LyricsStatusBadge from './lyrics/LyricsStatusBadge.jsx';
 import {
   createOutputUnmuteMemory,
   outputVolumeForMode,
@@ -114,6 +116,7 @@ export default function PlaybackPanel({
   onRetryOutputControl,
   locale = 'ko',
   onLocaleChange,
+  onPrepareLyrics,
 }) {
   const previousVolumeByOutputRef = useRef(createOutputUnmuteMemory(outputVolumes));
   // 드래그 커밋: range 슬라이더의 onChange 는 드래그 중 연발한다. 이동 중엔
@@ -827,6 +830,14 @@ export default function PlaybackPanel({
         <div className="playback-now">
           <div className="playback-title-row">
             <strong>{currentSong.title}</strong>
+            <LyricsStatusBadge lyricsRef={currentSong.lyricsRef} />
+            <button
+              type="button"
+              className="btn-icon lyrics-prepare-button"
+              title={getLyricsMessage('action.prepare')}
+              aria-label={getLyricsMessage('action.prepare')}
+              onClick={onPrepareLyrics}
+            ><Languages size={15} /></button>
           </div>
           <div className="playback-controls">
             {/* 정지 전이/실패 중 일반 재생 조작 잠금(§4-3, §4-5). */}

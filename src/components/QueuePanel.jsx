@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, Check, FileUp, GripVertical, ListMusic, Loader2, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, Check, FileUp, GripVertical, Languages, ListMusic, Loader2, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createManualEntry, createQueueEntry, isExpiredLocalSongDef, isPlayableSongDef } from '../lib/queueEntry';
 import { getAppMessage as t } from '../copy/appMessages';
@@ -9,6 +9,8 @@ import {
   createHistoryWindow,
   shiftHistoryWindowOffset,
 } from '../lib/historyWindow';
+import { getLyricsMessage } from '../copy/lyricsMessages.js';
+import LyricsStatusBadge from './lyrics/LyricsStatusBadge.jsx';
 
 // Stage 6c(계약 §5): 대기열 행의 준비 상태 표시 정의. 실패가 방송 전에 눈에
 // 띄는 것이 이 표시의 존재 이유다 — ready는 조용히, 실패만 강조한다.
@@ -76,6 +78,7 @@ export default function QueuePanel({
   setSharedState,
   prepareStates,
   onRetryPrepare,
+  onPrepareLyrics,
 }) {
   const [dragOverEntryId, setDragOverEntryId] = useState(null);
   const [dragOverHistoryEntryId, setDragOverHistoryEntryId] = useState(null);
@@ -227,6 +230,14 @@ export default function QueuePanel({
                 >
                   <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                   <strong>{entry.song.title}</strong>
+                  <LyricsStatusBadge lyricsRef={entry.song.lyricsRef} />
+                  <button
+                    type="button"
+                    className="btn-icon lyrics-prepare-button"
+                    title={getLyricsMessage('action.prepare')}
+                    aria-label={getLyricsMessage('action.prepare')}
+                    onClick={() => onPrepareLyrics?.(entry)}
+                  ><Languages size={14} /></button>
                   {expiredLocal ? (
                     <span className="queue-prepare-badge is-unavailable">
                       <AlertTriangle size={11} /> {t('queue.localFile.requiredLabel')}

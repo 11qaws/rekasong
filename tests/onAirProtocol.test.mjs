@@ -311,6 +311,8 @@ test('player and control hello have separate, validated identities', () => {
         sinkSelection: false,
         obsRuntime: true,
         obsStudioBinding: true,
+        lyricsOverlay: true,
+        lyricsPackageSchemaVersions: [1],
         futureCapability: 'allowed',
       },
     },
@@ -349,6 +351,25 @@ test('protocol identifiers are canonical and cannot change during Worker normali
   assert.deepEqual(errorCodes(playerHello({ playerInstanceId: 'player\u0000one' })), [
     'playerInstanceId:invalid_identifier',
   ]);
+});
+
+test('LOAD carries only a compact validated lyrics asset reference', () => {
+  const valid = runCommand(RUN_COMMAND_TYPES.LOAD);
+  valid.payload.lyrics = {
+    assetId: 'lyrics-asset-1',
+    packageId: 'lyrics-package-1',
+    packageHash: `sha256:${'a'.repeat(64)}`,
+    schemaVersion: 1,
+    requireLyrics: false,
+  };
+  assertValid(valid, ON_AIR_MESSAGE_FAMILIES.RUN_COMMAND);
+
+  const bodyLeak = structuredClone(valid);
+  bodyLeak.payload.lyrics.cues = [];
+  assert.equal(validateOnAirMessage(bodyLeak).ok, false);
+  const wrongHash = structuredClone(valid);
+  wrongHash.payload.lyrics.packageHash = 'sha256:wrong';
+  assert.equal(validateOnAirMessage(wrongHash).ok, false);
 });
 
 test('all run commands require the full run, output lease, target, and control identity', () => {

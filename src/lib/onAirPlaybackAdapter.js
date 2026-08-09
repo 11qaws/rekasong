@@ -72,7 +72,14 @@ const RUNTIME_BOOLEAN_FIELDS = new Set([
   'streamingStatusObserved',
   'recording',
 ]);
-const RUNTIME_STRING_FIELDS = new Set(['obsPluginVersion', 'obsControlLevel']);
+const RUNTIME_STRING_FIELDS = new Set([
+  'obsPluginVersion',
+  'obsControlLevel',
+  'lyricsRuntimeStatus',
+  'lyricsPackageHash',
+  'lyricsTimingMode',
+]);
+const RUNTIME_NUMBER_FIELDS = new Set(['lyricsCueCount']);
 const TELEMETRY_EVIDENCE = new Set([
   PLAYBACK_EVIDENCE_TYPES.POSITION,
 ]);
@@ -172,6 +179,7 @@ function sanitizedRuntime(value) {
   for (const [field, entry] of Object.entries(value)) {
     if (RUNTIME_BOOLEAN_FIELDS.has(field) && typeof entry === 'boolean') runtime[field] = entry;
     if (RUNTIME_STRING_FIELDS.has(field) && typeof entry === 'string' && entry) runtime[field] = entry;
+    if (RUNTIME_NUMBER_FIELDS.has(field) && Number.isSafeInteger(entry) && entry >= 0) runtime[field] = entry;
   }
   return runtime;
 }

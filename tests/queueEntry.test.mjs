@@ -63,3 +63,17 @@ test('malformed local byte metadata is discarded instead of inflating persisted 
     localBlobBytes: '1024',
   }).localBlobBytes, undefined);
 });
+
+test('a song keeps only a validated compact lyrics reference', () => {
+  const lyricsRef = {
+    packageId: 'package-1',
+    packageHash: `sha256:${'a'.repeat(64)}`,
+    schemaVersion: 1,
+    status: 'ready',
+    assetId: 'asset-1',
+    sessionRoom: 'room-1',
+  };
+  assert.equal(sanitizeSongDef({ type: 'local', title: 'Song', src: 'blob:x', lyricsRef }).lyricsRef.assetId, 'asset-1');
+  assert.equal(sanitizeSongDef({ type: 'local', title: 'Song', src: 'blob:x', lyricsRef: { packageId: 'bad' } }).lyricsRef, undefined);
+  assert.equal(sanitizeSongDef({ type: 'local', title: 'Song', src: 'blob:x', lyricsRef: { ...lyricsRef, schemaVersion: 2 } }).lyricsRef, undefined);
+});

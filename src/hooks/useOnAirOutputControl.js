@@ -983,6 +983,7 @@ export class OnAirOutputController {
       song: command.song,
       position: command.position ?? 0,
       ...(command.volume === undefined ? {} : { volume: command.volume }),
+      ...(command.lyrics === undefined ? {} : { lyrics: command.lyrics }),
     });
   }
 

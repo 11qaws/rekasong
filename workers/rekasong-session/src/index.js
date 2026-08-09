@@ -1,3 +1,8 @@
+import {
+  lyricsAssetKey,
+  readLyricsAssetRequest,
+} from './lyricsAssetContract.js';
+
 // A broadcast/browser-source restart can easily take longer than two minutes
 // (OBS update, PC sleep, network handover). Keep the same URL recoverable for
 // thirty minutes after the last dashboard/player leaves; explicit End Session
@@ -76,7 +81,7 @@ const FAILURE_KINDS = ['botwall', 'unavailable', 'network', 'upload', 'unknown']
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Rekasong-Name, X-Rekasong-Type, X-Rekasong-Size'
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Rekasong-Name, X-Rekasong-Type, X-Rekasong-Size, X-Rekasong-Hash, X-Rekasong-Package'
 };
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -349,7 +354,7 @@ export default {
       return json({ room, controlToken, playerToken, displayToken });
     }
 
-    const routeMatch = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]+)\/(ws|assets|media|display-token|status)(?:\/([^/]+))?$/i);
+    const routeMatch = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]+)\/(ws|assets|media|lyrics-assets|lyrics|display-token|status)(?:\/([^/]+))?$/i);
     if (!routeMatch) return json({ error: 'Not found' }, 404);
 
     const [, room, route] = routeMatch;
@@ -402,6 +407,8 @@ export class SessionRoom {
     if ((url.pathname === '/display-token' || url.pathname.endsWith('/display-token')) && request.method === 'POST') return this.issueDisplayToken(request);
     if (url.pathname.endsWith('/assets') && request.method === 'POST') return this.uploadAsset(request);
     if (/\/media\/[^/]+$/.test(url.pathname) && request.method === 'GET') return this.streamAsset(request);
+    if (url.pathname.endsWith('/lyrics-assets') && request.method === 'POST') return this.uploadLyricsAsset(request);
+    if (/\/lyrics\/[^/]+$/.test(url.pathname) && request.method === 'GET') return this.streamLyricsAsset(request);
     return json({ error: 'Not found' }, 404);
   }
 
@@ -418,6 +425,7 @@ export class SessionRoom {
       playerHash: await hashToken(playerToken),
       displayHash: await hashToken(displayToken),
       assets: {},
+      lyricsAssets: {},
       transport: { status: 'idle', song: null, sessionId: null, position: 0, volume: 100 },
       protocolV2: {
         controlEpoch: 0,
@@ -2040,12 +2048,16 @@ export class SessionRoom {
     if (message.protocolVersion !== PROTOCOL_V2) {
       return this.rejectProtocolNegotiation(socket, 'unsupported_protocol_version', { supported: [PROTOCOL_V2] });
     }
-    const capabilityKeys = ['audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding'];
+    const capabilityKeys = ['audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding', 'lyricsOverlay'];
     const invalidCapability = message.capabilities && typeof message.capabilities === 'object'
       && capabilityKeys.some((key) => hasOwn(message.capabilities, key) && typeof message.capabilities[key] !== 'boolean');
     if (!playerInstanceId || !buildId || !V2_PLAYER_KINDS.includes(message.clientKind)
       || !message.capabilities || typeof message.capabilities !== 'object' || Array.isArray(message.capabilities)
-      || invalidCapability) {
+      || invalidCapability
+      || (hasOwn(message.capabilities, 'lyricsPackageSchemaVersions')
+        && (!Array.isArray(message.capabilities.lyricsPackageSchemaVersions)
+          || message.capabilities.lyricsPackageSchemaVersions.length !== 1
+          || message.capabilities.lyricsPackageSchemaVersions[0] !== 1))) {
       return this.rejectProtocolNegotiation(socket, 'invalid_player_hello');
     }
 
@@ -2070,10 +2082,15 @@ export class SessionRoom {
       }
       let protocol = this.ensureProtocolV2(session);
       const capabilities = boundedRecord(message.capabilities, [
-        'audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding'
+        'audioWorklet', 'analyser', 'sinkSelection', 'obsRuntime', 'obsStudioBinding',
+        'lyricsOverlay'
       ]);
+      if (Array.isArray(message.capabilities.lyricsPackageSchemaVersions)) {
+        capabilities.lyricsPackageSchemaVersions = [1];
+      }
       const runtime = boundedRecord(message.runtime, [
-        'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'streamingStatusObserved', 'recording'
+        'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'streamingStatusObserved', 'recording',
+        'lyricsRuntimeStatus', 'lyricsPackageHash', 'lyricsTimingMode', 'lyricsCueCount'
       ]);
       const matchingSockets = this.matchingSocketsWithIdentity(socket, 'playerInstanceId', playerInstanceId);
       const finalAttachment = {
@@ -2636,11 +2653,24 @@ export class SessionRoom {
     const hasForeignIdentity = ['switchId', 'checkId', 'targetConnectionId']
       .some((field) => hasOwn(command, field));
     const payloadIsRecord = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload);
+    const lyrics = payloadIsRecord ? command.payload.lyrics : null;
+    const lyricsIsRecord = lyrics && typeof lyrics === 'object' && !Array.isArray(lyrics);
+    const invalidLyrics = payloadIsRecord && hasOwn(command.payload, 'lyrics')
+      && (!lyricsIsRecord
+        || !protocolId(lyrics.assetId)
+        || !protocolId(lyrics.packageId)
+        || !/^sha256:[a-f0-9]{64}$/u.test(lyrics.packageHash || '')
+        || lyrics.schemaVersion !== 1
+        || (hasOwn(lyrics, 'requireLyrics') && typeof lyrics.requireLyrics !== 'boolean')
+        || Object.keys(lyrics).some((key) => ![
+          'assetId', 'packageId', 'packageHash', 'schemaVersion', 'requireLyrics'
+        ].includes(key)));
     const invalidLoadPayload = command.type === 'load'
       && (!payloadIsRecord || !command.payload.song || typeof command.payload.song !== 'object' || Array.isArray(command.payload.song)
         || (hasOwn(command.payload, 'position') && (!Number.isFinite(command.payload.position) || command.payload.position < 0))
         || (hasOwn(command.payload, 'volume')
-          && (!Number.isFinite(command.payload.volume) || command.payload.volume < 0 || command.payload.volume > 100)));
+          && (!Number.isFinite(command.payload.volume) || command.payload.volume < 0 || command.payload.volume > 100))
+        || invalidLyrics);
     const invalidSeekPayload = command.type === 'seek'
       && (!payloadIsRecord || !Number.isFinite(command.payload.position) || command.payload.position < 0);
     const invalidVolumePayload = command.type === 'volume'
@@ -2689,9 +2719,19 @@ export class SessionRoom {
       });
     }
 
-    const playerConnected = this.livePlayerRecords()
-      .some(({ attachment }) => attachment.playerInstanceId === targetPlayerInstanceId);
-    if (!playerConnected) return this.rejectV2Command(socket, command, 'target_not_connected');
+    const targetPlayer = this.livePlayerRecords()
+      .find(({ attachment }) => attachment.playerInstanceId === targetPlayerInstanceId);
+    if (!targetPlayer) return this.rejectV2Command(socket, command, 'target_not_connected');
+    const lyricsSupported = targetPlayer.attachment.capabilities?.lyricsOverlay === true
+      && Array.isArray(targetPlayer.attachment.capabilities.lyricsPackageSchemaVersions)
+      && targetPlayer.attachment.capabilities.lyricsPackageSchemaVersions.includes(1);
+    const requestedPayload = payloadIsRecord ? command.payload : {};
+    if (requestedPayload.lyrics?.requireLyrics === true && !lyricsSupported) {
+      return this.rejectV2Command(socket, command, 'lyrics_capability_unavailable');
+    }
+    const payload = requestedPayload.lyrics && !lyricsSupported
+      ? Object.fromEntries(Object.entries(requestedPayload).filter(([key]) => key !== 'lyrics'))
+      : requestedPayload;
 
     const priorRunState = {
       activeFamily: structuredClone(protocol.activeFamily),
@@ -2700,7 +2740,6 @@ export class SessionRoom {
     };
     const candidate = structuredClone(session);
     const candidateProtocol = this.ensureProtocolV2(candidate);
-    const payload = payloadIsRecord ? command.payload : {};
     const desired = { ...(candidateProtocol.desiredTransport || {}) };
     if (command.type === 'load') {
       candidateProtocol.activeFamily = { entryId, runId };
@@ -2708,6 +2747,7 @@ export class SessionRoom {
       desired.song = payload.song || null;
       desired.entryId = entryId;
       desired.runId = runId;
+      desired.lyrics = payload.lyrics || null;
       desired.position = Math.max(0, Number(payload.position) || 0);
       if (Number.isFinite(payload.volume)) desired.volume = Math.max(0, Math.min(100, payload.volume));
       candidateProtocol.confirmedPlayback = {
@@ -2741,6 +2781,7 @@ export class SessionRoom {
 
     const delivered = this.sendToPlayerInstance(targetPlayerInstanceId, {
       ...command,
+      payload,
       protocolVersion: PROTOCOL_V2,
       leaseEpoch,
       targetPlayerInstanceId,
@@ -3181,7 +3222,8 @@ export class SessionRoom {
       let runtimeChanged = false;
       if (message.runtime && typeof message.runtime === 'object' && !Array.isArray(message.runtime)) {
         const runtimePatch = boundedRecord(message.runtime, [
-          'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'streamingStatusObserved', 'recording'
+          'obsPluginVersion', 'obsControlLevel', 'sourceActive', 'sourceVisible', 'streaming', 'streamingStatusObserved', 'recording',
+          'lyricsRuntimeStatus', 'lyricsPackageHash', 'lyricsTimingMode', 'lyricsCueCount'
         ]);
         runtimeChanged = Object.entries(runtimePatch).some(
           ([field, value]) => nextAttachment.runtime?.[field] !== value
@@ -4047,6 +4089,69 @@ export class SessionRoom {
     return mediaResponse(object);
   }
 
+  async uploadLyricsAsset(request) {
+    const session = await this.getSession();
+    const token = parseBearer(request);
+    if (!session || session.status !== 'active' || !(await this.authenticate(session, token, 'control'))) {
+      return json({ error: 'Unauthorized or closed session' }, 401);
+    }
+    const parsed = await readLyricsAssetRequest(request);
+    if (!parsed.ok) return json({ error: parsed.code }, 400);
+
+    const assetId = crypto.randomUUID();
+    const key = lyricsAssetKey(session.room, assetId);
+    const object = await this.env.MEDIA_BUCKET.put(key, parsed.body, {
+      httpMetadata: { contentType: 'application/json; charset=utf-8' },
+      customMetadata: {
+        session: session.room,
+        packageId: parsed.value.packageId,
+        packageHash: parsed.value.packageHash,
+      }
+    });
+    if (!object) return json({ error: 'Lyrics upload failed' }, 500);
+
+    session.lyricsAssets = session.lyricsAssets || {};
+    session.lyricsAssets[assetId] = {
+      key,
+      packageId: parsed.value.packageId,
+      packageHash: parsed.value.packageHash,
+      schemaVersion: parsed.value.schemaVersion,
+      size: object.size,
+      uploadedAt: Date.now()
+    };
+    await this.ctx.storage.put('session', session);
+    return json({
+      assetId,
+      packageId: parsed.value.packageId,
+      packageHash: parsed.value.packageHash,
+      schemaVersion: parsed.value.schemaVersion,
+      size: object.size
+    });
+  }
+
+  async streamLyricsAsset(request) {
+    const session = await this.getSession();
+    const url = new URL(request.url);
+    const assetId = url.pathname.split('/').pop();
+    const token = url.searchParams.get('token') || '';
+    if (!session || session.status !== 'active' || !(await this.authenticate(session, token, 'player'))) {
+      return json({ error: 'This lyrics session has ended' }, 410);
+    }
+    const asset = session.lyricsAssets?.[assetId];
+    if (!asset) return json({ error: 'Lyrics not found' }, 404);
+    const object = await this.env.MEDIA_BUCKET.get(asset.key);
+    if (!object) return json({ error: 'Lyrics not found' }, 404);
+    return new Response(object.body, {
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': String(object.size),
+        ETag: object.httpEtag,
+        'Cache-Control': 'private, max-age=300'
+      }
+    });
+  }
+
   async webSocketClose(socket, code, reason, wasClean) {
     const closingAttachment = socket.deserializeAttachment() || {};
     const role = closingAttachment.role;
@@ -4270,7 +4375,10 @@ export class SessionRoom {
   }
 
   async deleteAssets(session) {
-    const keys = Object.values(session.assets || {}).map((asset) => asset.key);
+    const keys = [
+      ...Object.values(session.assets || {}),
+      ...Object.values(session.lyricsAssets || {})
+    ].map((asset) => asset.key);
     if (keys.length) await this.env.MEDIA_BUCKET.delete(keys);
     await this.ctx.storage.deleteAll();
     this.sessionState = null;

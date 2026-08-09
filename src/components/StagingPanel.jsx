@@ -1,10 +1,12 @@
 import React from 'react';
-import { Play, Loader2, Sparkles, ArrowLeft, ListPlus, Music } from 'lucide-react';
+import { Play, Loader2, Sparkles, ArrowLeft, Languages, ListPlus, Music } from 'lucide-react';
 import YouTube from 'react-youtube';
 import { prepareBlockMessage } from '../lib/preparePipeline';
 import { getAppMessage as t } from '../copy/appMessages';
+import { getLyricsMessage } from '../copy/lyricsMessages.js';
+import LyricsStatusBadge from './lyrics/LyricsStatusBadge.jsx';
 
-export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, aiStatusPhase = 1, onRetryAiExtraction, prepareState, onRetryPrepare, outputMode = 'speaker', onRetryLocalObsAsset = null }) {
+export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, aiStatusPhase = 1, onRetryAiExtraction, prepareState, onRetryPrepare, outputMode = 'speaker', onRetryLocalObsAsset = null, onPrepareLyrics = null }) {
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
@@ -180,6 +182,14 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
         </div>
 
         <div className="staging-action-buttons">
+          <button
+            type="button"
+            className="btn-primary lyrics-staging-action"
+            onClick={onPrepareLyrics}
+          >
+            <Languages size={18} /> {getLyricsMessage('action.prepare')}
+            <LyricsStatusBadge lyricsRef={stagedItem.lyricsRef} />
+          </button>
           <button
             className="btn-primary go-live-btn"
             onClick={() => onGoLive(false)}

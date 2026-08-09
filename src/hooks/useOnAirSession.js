@@ -766,6 +766,31 @@ export function useOnAirSession(onEvent, options) {
     });
   }, [ensureSession]);
 
+  const uploadLyricsAsset = useCallback(async (playbackPackage) => {
+    const activeSession = await ensureSession();
+    const body = JSON.stringify(playbackPackage);
+    const size = new TextEncoder().encode(body).byteLength;
+    const response = await fetch(
+      `${SESSION_BASE_URL}/v1/sessions/${encodeURIComponent(activeSession.room)}/lyrics-assets`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${activeSession.controlToken}`,
+          'Content-Type': 'application/json',
+          'X-Rekasong-Size': String(size),
+          'X-Rekasong-Hash': playbackPackage.packageHash,
+          'X-Rekasong-Package': playbackPackage.packageId,
+        },
+        body,
+      },
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.assetId) {
+      throw new Error(getAppMessage('onair.session.error.uploadFailed'));
+    }
+    return Object.freeze({ ...result, sessionRoom: activeSession.room });
+  }, [ensureSession]);
+
   const issueDisplayToken = useCallback(async (activeSession) => (
     withOnAirSessionCreationLock(async () => {
       const canonical = readStoredOnAirSession();
@@ -843,6 +868,7 @@ export function useOnAirSession(onEvent, options) {
     createFreshSession,
     sendCommand,
     uploadAsset,
+    uploadLyricsAsset,
     clearSession
   };
 }

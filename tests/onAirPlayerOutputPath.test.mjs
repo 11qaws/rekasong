@@ -104,7 +104,11 @@ test('component wiring keeps auto-detection default and fixes dashboard speaker 
     /onChange\(snapshot\)[\s\S]*?adapter\?\.handleRuntimeAttestation\(snapshot, \{ phase: 'obs_callback' \}\)/,
     'OBS runtime source events must synchronously reach the local playback safety adapter',
   );
-  assert.match(player, /runtimeProbe: \(\) => runtime\?\.runtime\(\) \|\| \{\}/);
+  assert.match(
+    player,
+    /runtimeProbe: \(\) => \{[\s\S]*?runtime\?\.runtime\(\) \|\| \{\}[\s\S]*?lyricsRuntimeStatus/,
+    'runtime probe must preserve OBS attestation while projecting lyrics status',
+  );
   assert.match(
     player,
     /clientKind,\s+identity: typeof identityLifecycleKey === 'string'[\s\S]*?capabilities:/,

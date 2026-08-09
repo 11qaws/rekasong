@@ -2,6 +2,7 @@ import { getOutputMessage } from './outputMessages.js';
 
 export const appMessageCatalog = Object.freeze({
   ko: Object.freeze({
+    'lyrics.playback.requiredUnavailable': '이 곡은 가사 패키지가 준비되어야 OBS에서 재생할 수 있습니다. 가사 준비를 다시 완료해 주세요.',
     'dashboard.toast.skipCurrent': '현재 곡을 스킵합니다.',
     'dashboard.stage.replaced': '선택한 곡으로 바꾸었습니다. 2단계에서 정보를 확인하세요.',
     'dashboard.stage.selected': '2단계에서 곡 정보와 재생 대상을 확인하세요.',
@@ -189,6 +190,7 @@ export const appMessageCatalog = Object.freeze({
     'settings.language.en': 'English',
   }),
   en: Object.freeze({
+    'lyrics.playback.requiredUnavailable': 'This song requires a prepared lyrics package before OBS playback. Finish lyrics setup again.',
     'dashboard.toast.skipCurrent': 'Skipping the current track.',
     'dashboard.stage.replaced': 'Replaced the selected track. Review it in step 2.',
     'dashboard.stage.selected': 'Review the track and playback destination in step 2.',
@@ -382,11 +384,11 @@ export const appMessageCatalog = Object.freeze({
     'onair.output.gate.notNeeded': 'No action is needed',
     'obs.setup.eyebrow': 'Current broadcast session · preflight check',
     'obs.setup.closeLabel': 'Close',
-    'obs.setup.intro': 'One On-Air player is required for broadcast audio. The display widget is optional and does not carry audio.',
+    'obs.setup.intro': 'One On-Air player carries broadcast audio and prepared lyrics visuals together. The display widget remains optional and silent.',
     'obs.setup.sessionUrl': 'The addresses below belong to this broadcast session. After ending the session, update the OBS sources with the new addresses from the next session.',
     'obs.setup.player.stepTitle': '1. On-Air player',
-    'obs.setup.player.requirement': 'Required · audio',
-    'obs.setup.player.instruction': 'Add one OBS browser source, turn off Local file, and paste this URL. Enable Control audio via OBS, and keep only one source using this player address.',
+    'obs.setup.player.requirement': 'Required · audio + lyrics visual',
+    'obs.setup.player.instruction': 'Add one 1920×1080 OBS browser source, turn off Local file, paste this URL, and enable Control audio via OBS. Keep it visible in the scene; hiding the source also hides prepared lyrics.',
     'obs.setup.player.preparing': 'Preparing…',
     'obs.setup.player.copyUrl': 'Copy address',
     'obs.setup.player.prepareAndCopy': 'Prepare player and copy address',

@@ -7,6 +7,8 @@
 // 모든 곡 생성/복제 경로(송출, 다시 예약, 히스토리 재호출)는 createQueueEntry
 // 하나만 사용한다. 같은 곡 다시 부르기 = 새 entryId의 새 QueueEntry(§1).
 
+import { sanitizeLyricsRef } from './lyrics/lyricsSchema.js';
+
 export const newId = () =>
   (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -38,7 +40,8 @@ export const sanitizeSongDef = (song) => {
     ...(Number.isSafeInteger(localBlobBytes) && localBlobBytes >= 0
       ? { localBlobBytes }
       : {}),
-    ...(localSourceExpired ? { localSourceExpired: true } : {})
+    ...(localSourceExpired ? { localSourceExpired: true } : {}),
+    ...(sanitizeLyricsRef(source.lyricsRef) ? { lyricsRef: sanitizeLyricsRef(source.lyricsRef) } : {})
   };
 };
 

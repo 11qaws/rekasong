@@ -1,7 +1,7 @@
 # Rekasong 현재 상태와 다음 작업
 
-> 기준일: 2026-07-16
-> 작성 방식: 현재 소스 기준 정적 검토 + 로컬 프로덕션 빌드 확인
+> 기준일: 2026-08-09
+> 작성 방식: 현재 소스 기준 정적 검토 + 로컬 테스트/프로덕션 빌드 확인
 
 이 문서는 현재 저장소의 구현 상태, 이번 기록에 포함된 변경, 그리고 [곡 생애주기와 상태 모델](SONG_LIFECYCLE.md)을 충족하기 위해 남은 작업을 기록한다.
 
@@ -33,6 +33,16 @@ Rekasong은 스트리머가 미리 검증한 “부를 수 있는 곡 + 바로 �
 - On-Air 모드에서는 Cloudflare Durable Object Worker, R2 임시 자산, OBS Player 위젯, 화면정보 위젯을 사용한다.
 - OBS 설정은 화면정보 위젯과 On-Air Player URL을 분리해 제공한다.
 - 방송 세션 종료 시 Worker가 임시 자산 삭제를 예약하는 구조가 있다.
+
+### 이중 언어 가사 오버레이
+
+- 작품과 실제 음원 버전, 원문 revision, 한국어 번역 revision, tempo map, cue sheet, OBS playback package를 분리한다.
+- 현재 곡·스테이징·대기열에서 5단계 가사 준비 화면으로 진입한다.
+- 사용자 파일/붙여넣기와 마지막 fallback인 문맥 AI 번역 초안을 지원한다.
+- 목적 cue 1/4음표 전부터 1/8음표 전까지 원문+한국어 그룹을 전환하고, 간주를 명시적 blank cue로 처리한다.
+- 가사 package는 IndexedDB와 별도 세션 JSON asset에 저장하며 WebSocket과 display state에는 본문을 넣지 않는다.
+- Protocol v2 Player는 실제 audio currentTime으로 투명 1920×1080 overlay를 렌더한다.
+- 상세 계약은 [LYRICS_OVERLAY_CONTRACT](LYRICS_OVERLAY_CONTRACT.md), [LYRICS_TRANSLATION_POLICY](LYRICS_TRANSLATION_POLICY.md), [LYRICS_OBS_ACCEPTANCE](LYRICS_OBS_ACCEPTANCE.md)를 따른다.
 
 ### 이번 기록에 포함한 변경
 
@@ -95,6 +105,8 @@ Rekasong은 스트리머가 미리 검증한 “부를 수 있는 곡 + 바로 �
 5. **카탈로그·AI 대량 처리와 캐시 검증을 정리합니다.** 방송 제어의 상태 진실성이 먼저 확보된 뒤 처리합니다.
 
 ## 5. 검증 기록
+
+2026-08-09 가사 오버레이 변경의 최종 명령 결과는 [DEVELOPMENT_LOG](DEVELOPMENT_LOG.md)에 이어 기록한다. 실제 OBS Studio mixer/녹화 검증과 배포는 미실시다.
 
 | 항목 | 결과 | 비고 |
 |---|---|---|

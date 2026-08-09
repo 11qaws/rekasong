@@ -176,6 +176,7 @@ const KNOWN_PLAYER_CAPABILITIES = Object.freeze([
   'sinkSelection',
   'obsRuntime',
   'obsStudioBinding',
+  'lyricsOverlay',
 ]);
 
 function isRecord(value) {
@@ -406,6 +407,34 @@ function validatePlayerHello(message, errors) {
       );
     }
   }
+  if (hasOwn(message.capabilities, 'lyricsPackageSchemaVersions')
+    && (!Array.isArray(message.capabilities.lyricsPackageSchemaVersions)
+      || message.capabilities.lyricsPackageSchemaVersions.length !== 1
+      || message.capabilities.lyricsPackageSchemaVersions[0] !== 1)) {
+    addError(errors, 'capabilities.lyricsPackageSchemaVersions', 'unsupported_schema_versions');
+  }
+}
+
+function validateLyricsLoadRef(value, errors) {
+  if (!isRecord(value)) {
+    addError(errors, 'payload.lyrics', 'invalid_record');
+    return;
+  }
+  const allowedFields = new Set([
+    'assetId', 'packageId', 'packageHash', 'schemaVersion', 'requireLyrics',
+  ]);
+  for (const field of Object.keys(value)) {
+    if (!allowedFields.has(field)) addError(errors, `payload.lyrics.${field}`, 'unexpected_field');
+  }
+  requireIdentifierAt(value, 'assetId', 'payload.lyrics.assetId', errors);
+  requireIdentifierAt(value, 'packageId', 'payload.lyrics.packageId', errors);
+  if (!/^sha256:[a-f0-9]{64}$/u.test(value.packageHash || '')) {
+    addError(errors, 'payload.lyrics.packageHash', 'invalid_sha256_hash');
+  }
+  if (value.schemaVersion !== 1) addError(errors, 'payload.lyrics.schemaVersion', 'unsupported_schema_version');
+  if (hasOwn(value, 'requireLyrics') && typeof value.requireLyrics !== 'boolean') {
+    addError(errors, 'payload.lyrics.requireLyrics', 'invalid_boolean');
+  }
 }
 
 function validateControlHello(message, errors) {
@@ -429,6 +458,7 @@ function validateRunCommandPayload(message, errors) {
     if (!isRecord(payload.song)) addError(errors, 'payload.song', 'required_record');
     optionalFiniteNumberAt(payload, 'position', 'payload.position', errors, { min: 0 });
     optionalFiniteNumberAt(payload, 'volume', 'payload.volume', errors, { min: 0, max: 100 });
+    if (hasOwn(payload, 'lyrics')) validateLyricsLoadRef(payload.lyrics, errors);
     return;
   }
 
