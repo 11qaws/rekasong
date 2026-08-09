@@ -1,3 +1,5 @@
+import { sanitizeLyricsRef } from './lyrics/lyricsSchema.js';
+
 const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
 export const SONG_DRAG_DATA_TYPE = 'application/x-rekasong-song';
@@ -44,6 +46,7 @@ export const normalizeSongDragCandidate = (value) => {
     songbookId: source.songbookId || null,
     skipAiTitleExtraction: source.skipAiTitleExtraction === true,
     mrVerified: source.mrVerified === true,
+    ...(sanitizeLyricsRef(source.lyricsRef) ? { lyricsRef: sanitizeLyricsRef(source.lyricsRef) } : {}),
   };
 };
 
@@ -61,6 +64,7 @@ export const stagedItemFromSongDragCandidate = (candidate, stagingId) => {
     songbookId: normalized.songbookId,
     skipAiTitleExtraction: normalized.skipAiTitleExtraction,
     mrVerified: normalized.mrVerified,
+    ...(normalized.lyricsRef ? { lyricsRef: normalized.lyricsRef } : {}),
   };
 };
 

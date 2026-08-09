@@ -104,6 +104,8 @@ import {
 } from '../lib/remotePlaybackProgress';
 import { getAppMessage as t } from '../copy/appMessages';
 import { useAppLocale } from '../hooks/useAppLocale';
+import useLyricsRepository from '../hooks/useLyricsRepository';
+import { sanitizeLyricsRef } from '../lib/lyrics/lyricsSchema';
 import {
   AUTOMATIC_LYRICS_PHASES,
   automaticLyricsCandidateSource,
@@ -210,6 +212,8 @@ export default function Dashboard() {
   }, []);
 
   const [state, setSharedState, syncLoadNotice] = useSyncState();
+  const lyricsRepository = useLyricsRepository();
+  const getLyricsPlaybackPackage = lyricsRepository.getPlaybackPackage;
   const setSharedStateRef = useRef(setSharedState);
   setSharedStateRef.current = setSharedState;
   const [queuedOutputIntent, setQueuedOutputIntent] = useState(null);
@@ -267,6 +271,7 @@ export default function Dashboard() {
     (payload) => onAirEventHandlerRef.current?.(payload),
     { enabled: obsControlRequested, observeOnly: true }
   );
+  const uploadLyricsAsset = onAir.uploadLyricsAsset;
   const useOnAirPlayer = onAir.configured;
   const onAirSession = onAir.session;
   const onAirSessionState = onAir.connectionState;
@@ -1005,6 +1010,12 @@ export default function Dashboard() {
   // 나무위키→공식 웹 우선 수집이 실패한 곡은 오디오 준비가 끝날 때까지 다시
   // 호출하지 않는다. 준비 폴링마다 Gemini 요청을 반복하지 않는 탭 수명 캐시다.
   const automaticLyricsPriorityMissesRef = useRef(new Set());
+  // 노래책에서 곡을 열지 않고 요청한 준비 대상. 재생 목록과 분리된 메모리
+  // 상태지만, 동일 prepare 파이프라인을 사용해 오디오/자막도 미리 캐시한다.
+  const [songbookLyricsTargets, setSongbookLyricsTargets] = useState({});
+  const songbookLyricsTargetsRef = useRef(songbookLyricsTargets);
+  songbookLyricsTargetsRef.current = songbookLyricsTargets;
+  const lyricsRepublishFlightsRef = useRef(new Map());
   const [songDragCandidate, setSongDragCandidate] = useState(null);
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
@@ -1036,6 +1047,26 @@ export default function Dashboard() {
   const completeLyricsPreparation = useCallback(({ lyricsRef }) => {
     const target = lyricsWorkspaceTarget;
     if (!target || !lyricsRef) return;
+    if (target.location === 'songbook' && target.cacheKey && target.song?.src) {
+      applyLyricsRefToYoutubeVideo(target.song.src, lyricsRef);
+      setSharedState((previous) => ({
+        ...previous,
+        songbookLyricsCache: {
+          ...(previous.songbookLyricsCache || {}),
+          [target.cacheKey]: {
+            videoId: target.song.src,
+            lyricsRef,
+            updatedAt: Date.now(),
+          },
+        },
+      }));
+      setSongbookLyricsTargets((previous) => {
+        const next = { ...previous };
+        delete next[target.song.src];
+        return next;
+      });
+      return;
+    }
     if (target.song?.type === 'youtube' && target.song.src) {
       applyLyricsRefToYoutubeVideo(target.song.src, lyricsRef);
       return;
@@ -1384,8 +1415,9 @@ export default function Dashboard() {
     if (stagedItem?.type === 'youtube') collect(stagedItem);
     (state?.queue || []).forEach((entry) => collect(entry.song));
     collect(currentEntry?.song);
+    Object.values(songbookLyricsTargets).forEach((target) => collect(target?.song));
     return [...ids].sort().join(' ');
-  }, [stagedItem, state?.queue, currentEntry]);
+  }, [stagedItem, state?.queue, currentEntry, songbookLyricsTargets]);
 
   // prepare 게이트의 401 하나만으로는 무효/종료를 구분할 수 없으므로, 별도 세션
   // status 검증이 확정한 결과를 기존 비-ready 항목에 즉시 반영한다.
@@ -1557,6 +1589,8 @@ export default function Dashboard() {
   }, []);
 
   const songForAutomaticLyrics = useCallback((videoId) => {
+    const songbookTarget = songbookLyricsTargetsRef.current[videoId];
+    if (songbookTarget?.song) return songbookTarget.song;
     const staged = stagedItemRef.current;
     if (staged?.type === 'youtube' && staged.src === videoId) return staged;
     const snapshot = stateRef.current || {};
@@ -1615,7 +1649,12 @@ export default function Dashboard() {
         .then((candidate) => ({ candidate, sessionKey: '' }));
       const fallbackCandidateRequest = () => {
         const latestInfo = prepareStatesRef.current[videoId];
-        if (latestInfo?.status !== 'ready') return null;
+        if (latestInfo?.status !== 'ready') {
+          return ['failed', 'unavailable', 'session_invalid', 'session_ended', 'blocked']
+            .includes(latestInfo?.status)
+            ? defaultWebRequest()
+            : null;
+        }
         const latestLyrics = latestInfo.lyrics;
         const latestSource = automaticLyricsCandidateSource(latestLyrics);
         if (latestSource === 'web') return defaultWebRequest();
@@ -1703,6 +1742,108 @@ export default function Dashboard() {
       void handleRetryPrepare(videoId);
     }
   };
+
+  const prepareSongbookLyrics = ({ song, platform, videoId, cacheKey }) => {
+    if (!YOUTUBE_ID_PATTERN.test(videoId || '') || !song?.title || !cacheKey) return;
+    const target = {
+      location: 'songbook',
+      cacheKey,
+      platform,
+      songbookId: song.id,
+      song: sanitizeSongDef({
+        type: 'youtube',
+        src: videoId,
+        title: song.title,
+        artist: song.artist || '',
+        tags: song.tags || [],
+        source: platform,
+        songbookId: song.id,
+      }),
+    };
+    setSongbookLyricsTargets((previous) => ({ ...previous, [videoId]: target }));
+    const phase = automaticLyricsStatesRef.current[videoId]?.phase;
+    if (phase === AUTOMATIC_LYRICS_PHASES.FAILED) retryAutomaticLyrics(videoId);
+  };
+
+  const reviewSongbookLyrics = (request) => {
+    prepareSongbookLyrics(request);
+    const target = songbookLyricsTargetsRef.current[request.videoId] || {
+      location: 'songbook',
+      cacheKey: request.cacheKey,
+      platform: request.platform,
+      songbookId: request.song?.id,
+      song: sanitizeSongDef({
+        type: 'youtube',
+        src: request.videoId,
+        title: request.song?.title || '',
+        artist: request.song?.artist || '',
+        tags: request.song?.tags || [],
+        source: request.platform,
+        songbookId: request.song?.id,
+      }),
+    };
+    openLyricsReview(target);
+  };
+
+  // 노래책에서 저장한 IndexedDB 패키지는 방송 세션보다 오래 산다. 나중에 곡을
+  // 선택했을 때 현재 세션 asset이 없으면 동일 hash의 로컬 패키지를 한 번만 다시
+  // 게시해, 미리 정리한 가사가 새 방송에서도 실제 OBS 재생에 붙게 한다.
+  useEffect(() => {
+    const lyricsRef = sanitizeLyricsRef(stagedItem?.lyricsRef);
+    if (!useOnAirPlayer || stagedItem?.type !== 'youtube' || !lyricsRef
+      || (lyricsRef.assetId && lyricsRef.sessionRoom === onAirSession?.room)) return;
+    const flightKey = `${stagedItem.src}:${lyricsRef.packageId}`;
+    if (lyricsRepublishFlightsRef.current.has(flightKey)) return;
+    const flight = getLyricsPlaybackPackage(lyricsRef.packageId)
+      .then((playbackPackage) => {
+        if (!playbackPackage || playbackPackage.packageHash !== lyricsRef.packageHash) {
+          throw new Error('lyrics_cached_package_invalid');
+        }
+        return uploadLyricsAsset(playbackPackage);
+      })
+      .then((published) => {
+        const refreshedRef = sanitizeLyricsRef({
+          ...lyricsRef,
+          assetId: published.assetId,
+          sessionRoom: published.sessionRoom,
+        });
+        setStagedItem((previous) => previous?.type === 'youtube'
+          && previous.src === stagedItem.src
+          && previous.lyricsRef?.packageId === lyricsRef.packageId
+          ? { ...previous, lyricsRef: refreshedRef }
+          : previous);
+        if (stagedItem.source !== 'youtube' && stagedItem.songbookId) {
+          const cacheKey = songbookCacheKey(stagedItem.source, stagedItem.songbookId);
+          setSharedState((previous) => ({
+            ...previous,
+            songbookLyricsCache: {
+              ...(previous.songbookLyricsCache || {}),
+              [cacheKey]: { videoId: stagedItem.src, lyricsRef: refreshedRef, updatedAt: Date.now() },
+            },
+          }));
+        }
+      })
+      .catch(() => {
+        const current = stagedItemRef.current;
+        if (current?.src === stagedItem.src && current?.lyricsRef?.packageId === lyricsRef.packageId) {
+          showToast(t('search.songbook.lyrics.publishFailed'), 'error');
+        }
+      })
+      .finally(() => lyricsRepublishFlightsRef.current.delete(flightKey));
+    lyricsRepublishFlightsRef.current.set(flightKey, flight);
+  }, [
+    getLyricsPlaybackPackage,
+    onAirSession?.room,
+    setSharedState,
+    showToast,
+    stagedItem?.lyricsRef,
+    stagedItem?.songbookId,
+    stagedItem?.source,
+    stagedItem?.src,
+    stagedItem?.type,
+    uploadLyricsAsset,
+    useOnAirPlayer,
+  ]);
 
   // ── 프리버퍼(pre-buffer) 힌트 ──────────────────────────────────────────
   // 대기열의 다가오는 곡 중 준비 완료(ready)된 YouTube 곡을 순서대로 최대 2개
@@ -4188,6 +4329,9 @@ export default function Dashboard() {
                 onLocalFileDrop: handleLocalFileDrop,
                 onSongDragStart: setSongDragCandidate,
                 onSongDragEnd: () => setSongDragCandidate(null),
+                onPrepareSongbookLyrics: prepareSongbookLyrics,
+                onReviewSongbookLyrics: reviewSongbookLyrics,
+                lyricsPreparationStates: automaticLyricsStates,
                 sharedState: state || {},
                 setSharedState,
                 showToast

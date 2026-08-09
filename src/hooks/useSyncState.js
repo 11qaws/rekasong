@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { isPlayableSongDef, toQueueEntry } from '../lib/queueEntry.js';
 import { expireLocalBlobEntry, isLocalBlobSong } from '../lib/blobLifecycle.js';
+import { sanitizeLyricsRef } from '../lib/lyrics/lyricsSchema.js';
 import {
   LEGACY_SYNC_STORAGE_KEY,
   SHARED_SYNC_STORAGE_KEY,
@@ -38,6 +39,9 @@ const defaultState = {
   // Streamer-confirmed songbook → MR mappings.  This mirrors the durable
   // cache so the songbook can immediately show which songs are ready to use.
   songbookMrCache: {},
+  // 노래책 행에서 미리 검수한 로컬 패키지 연결. 본문은 IndexedDB에만 있고,
+  // 공유 상태에는 재사용에 필요한 package ref만 둔다.
+  songbookLyricsCache: {},
   activeIntegrationTab: 'youtube',
   autoPlayNext: false
 };
@@ -115,6 +119,21 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     : null;
 
   const volume = Number(source.volume);
+  const songbookLyricsCache = source.songbookLyricsCache
+    && typeof source.songbookLyricsCache === 'object'
+    && !Array.isArray(source.songbookLyricsCache)
+    ? Object.fromEntries(Object.entries(source.songbookLyricsCache).slice(0, 5_000)
+      .map(([key, value]) => {
+        const lyricsRef = sanitizeLyricsRef(value?.lyricsRef);
+        const videoId = typeof value?.videoId === 'string' && /^[A-Za-z0-9_-]{11}$/u.test(value.videoId)
+          ? value.videoId
+          : '';
+        return key.length <= 512 && lyricsRef && videoId
+          ? [key, { videoId, lyricsRef, updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : 0 }]
+          : null;
+      })
+      .filter(Boolean))
+    : {};
 
   const next = {
     ...defaultState,
@@ -134,6 +153,7 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     songbookMrCache: source.songbookMrCache && typeof source.songbookMrCache === 'object' && !Array.isArray(source.songbookMrCache)
       ? source.songbookMrCache
       : {},
+    songbookLyricsCache,
     activeIntegrationTab: ['youtube', 'setlink', 'youtube-playlist'].includes(source.activeIntegrationTab)
       ? source.activeIntegrationTab
       : defaultState.activeIntegrationTab,

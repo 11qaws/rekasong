@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo, GripVertical } from 'lucide-react';
+import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo, GripVertical, Captions } from 'lucide-react';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
@@ -24,10 +24,13 @@ export default function SearchPanel({
   onLocalFileDrop,
   onSongDragStart,
   onSongDragEnd,
+  onPrepareSongbookLyrics,
+  onReviewSongbookLyrics,
+  lyricsPreparationStates = {},
   sharedState,
   setSharedState,
 }) {
-  const { setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, activeIntegrationTab } = sharedState;
+  const { setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, songbookLyricsCache = {}, activeIntegrationTab } = sharedState;
   
   // Search, playlist import, and Setlink are equal top-level sources.
   const initialTab = ['youtube', 'youtube-playlist', 'setlink'].includes(activeIntegrationTab)
@@ -323,7 +326,7 @@ export default function SearchPanel({
     onSongDragEnd?.();
   };
 
-  const stageSongbookMr = (song, platform, mrId, mrVerified = false, cachedTitle = '') => {
+  const stageSongbookMr = (song, platform, mrId, mrVerified = false, cachedTitle = '', lyricsRef = null) => {
     onSelectResult({
       id: mrId,
       title: cachedTitle || song.title,
@@ -333,7 +336,8 @@ export default function SearchPanel({
       source: platform,
       songbookId: song.id,
       mrVerified,
-      skipAiTitleExtraction: true
+      skipAiTitleExtraction: true,
+      ...(lyricsRef ? { lyricsRef } : {}),
     });
   };
 
@@ -358,13 +362,13 @@ export default function SearchPanel({
     fileInputRef.current?.click();
   };
 
-  const selectSongbookSong = async (song, platform, youtubeId, cachedMr) => {
+  const selectSongbookSong = async (song, platform, youtubeId, cachedMr, cachedLyrics) => {
     const selectionKey = songbookCacheKey(platform, song.id);
     if (openingSongbookKey === selectionKey) return;
     setOpeningSongbookKey(selectionKey);
     if (cachedMr?.mrId) {
       setOpeningSongbookKey(null);
-      stageSongbookMr(song, platform, cachedMr.mrId, true, cachedMr.title);
+      stageSongbookMr(song, platform, cachedMr.mrId, true, cachedMr.title, cachedLyrics?.lyricsRef);
       return;
     }
 
@@ -383,7 +387,7 @@ export default function SearchPanel({
           }
         }));
         setOpeningSongbookKey(null);
-        stageSongbookMr(song, platform, cacheEntry.mrId, true, cacheEntry.title);
+        stageSongbookMr(song, platform, cacheEntry.mrId, true, cacheEntry.title, cachedLyrics?.lyricsRef);
         return;
       }
     } catch {
@@ -392,7 +396,14 @@ export default function SearchPanel({
 
     if (youtubeId) {
       setOpeningSongbookKey(null);
-      stageSongbookMr(song, platform, youtubeId, platform === 'youtube-playlist' || Boolean(song.mrVerified));
+      stageSongbookMr(
+        song,
+        platform,
+        youtubeId,
+        platform === 'youtube-playlist' || Boolean(song.mrVerified),
+        '',
+        cachedLyrics?.lyricsRef,
+      );
       return;
     }
     setOpeningSongbookKey(null);
@@ -697,6 +708,11 @@ export default function SearchPanel({
             const youtubeId = getYouTubeId(song.youtubeUrl);
             const cacheKey = songbookCacheKey(platform, song.id);
             const cachedMr = songbookMrCache[cacheKey];
+            const resolvedVideoId = cachedMr?.mrId || youtubeId;
+            const cachedLyrics = songbookLyricsCache[cacheKey]?.videoId === resolvedVideoId
+              ? songbookLyricsCache[cacheKey]
+              : null;
+            const lyricsState = resolvedVideoId ? lyricsPreparationStates[resolvedVideoId] : null;
             const isCheckingCache = cacheLookupKeys[cacheKey];
             const isOpening = openingSongbookKey === cacheKey;
             const hasLinkedMr = Boolean(cachedMr?.mrId || youtubeId);
@@ -729,8 +745,22 @@ export default function SearchPanel({
                   songbookId: song.id,
                   skipAiTitleExtraction: true,
                   mrVerified: Boolean(cachedMr?.mrId || platform === 'youtube-playlist' || song.mrVerified),
+                  lyricsRef: cachedLyrics?.lyricsRef,
                 })
               : null;
+            const lyricsPhase = cachedLyrics?.lyricsRef?.status === 'ready'
+              ? 'ready'
+              : lyricsState?.phase || 'none';
+            const lyricsActionKey = lyricsPhase === 'review_required'
+              ? 'search.songbook.lyrics.review'
+              : lyricsPhase === 'ready'
+                ? 'search.songbook.lyrics.ready'
+                : lyricsPhase === 'failed'
+                  ? 'search.songbook.lyrics.retry'
+                  : ['collecting', 'translating', 'timing'].includes(lyricsPhase)
+                    ? 'search.songbook.lyrics.preparing'
+                    : 'search.songbook.lyrics.prepare';
+            const lyricsBusy = ['collecting', 'translating', 'timing'].includes(lyricsPhase);
             return (
             <div
               key={song.id}
@@ -746,7 +776,7 @@ export default function SearchPanel({
               <button
                 type="button"
                 className="songbook-copy"
-                onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
+                onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr, cachedLyrics)}
                 disabled={!isTitleReady || isOpening}
                 aria-busy={isOpening || undefined}
                 aria-label={t('search.songbook.select', { title: displayTitle })}
@@ -789,7 +819,7 @@ export default function SearchPanel({
                 ) : (
                   <button
                     className="btn-primary songbook-action-primary"
-                    onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr)}
+                    onClick={() => selectSongbookSong(song, platform, youtubeId, cachedMr, cachedLyrics)}
                     disabled={!isTitleReady || isOpening}
                   >
                     {isOpening
@@ -805,6 +835,22 @@ export default function SearchPanel({
                     onClick={() => startSongbookMrSearch(song, platform)}
                   >
                     {t('search.songbook.action.findAnotherMr')}
+                  </button>
+                )}
+                {hasMrCandidate && isTitleReady && (
+                  <button
+                    className="songbook-lyrics-action"
+                    onClick={() => lyricsPhase === 'review_required'
+                      ? onReviewSongbookLyrics?.({ song, platform, videoId: resolvedVideoId, cacheKey })
+                      : onPrepareSongbookLyrics?.({ song, platform, videoId: resolvedVideoId, cacheKey })}
+                    disabled={lyricsBusy || lyricsPhase === 'ready'}
+                    aria-busy={lyricsBusy || undefined}
+                    title={t('search.songbook.lyrics.prepareTitle')}
+                  >
+                    {lyricsBusy
+                      ? <Loader2 size={14} className="spinner" aria-hidden="true" />
+                      : <Captions size={14} aria-hidden="true" />}
+                    {t(lyricsActionKey)}
                   </button>
                 )}
                 {platform !== 'youtube-playlist' && (

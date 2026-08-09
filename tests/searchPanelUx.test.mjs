@@ -50,7 +50,10 @@ test('song and songbook rows expose a visible review interaction with immediate 
   await transformWithOxc(source, file, { lang: 'jsx' });
 
   assert.match(source, /<button[\s\S]*?className="result-select-button"[\s\S]*?selectYoutubeResult\(v\)/);
-  assert.match(source, /<button[\s\S]*?className="songbook-copy"[\s\S]*?selectSongbookSong\(song, platform, youtubeId, cachedMr\)/);
+  assert.match(source, /<button[\s\S]*?className="songbook-copy"[\s\S]*?selectSongbookSong\(song, platform, youtubeId, cachedMr, cachedLyrics\)/);
+  assert.match(source, /className="songbook-lyrics-action"/);
+  assert.match(source, /onPrepareSongbookLyrics\?\.\(\{ song, platform, videoId: resolvedVideoId, cacheKey \}\)/);
+  assert.match(source, /onReviewSongbookLyrics\?\.\(\{ song, platform, videoId: resolvedVideoId, cacheKey \}\)/);
   assert.match(source, /search\.songbook\.selectHint/);
   assert.match(source, /openingSongbookKey/);
   assert.match(source, /aria-busy=\{isOpening \|\| undefined\}/);

@@ -73,6 +73,25 @@ test('cross-tab sync preserves each tab\'s current Speaker run and queue', () =>
   assert.deepEqual(merged.setlinkCatalog, incoming.setlinkCatalog);
 });
 
+test('songbook lyrics cache persists only bounded valid package references', () => {
+  const lyricsRef = {
+    packageId: 'lyrics-package:songbook',
+    packageHash: `sha256:${'b'.repeat(64)}`,
+    schemaVersion: 1,
+    status: 'ready',
+  };
+  const persisted = createPersistedSyncState({
+    songbookLyricsCache: {
+      'setlink:fixture': { videoId: 'abcdefghijk', lyricsRef, updatedAt: 123 },
+      'setlink:invalid': { videoId: 'bad', lyricsRef: { packageId: 'bad' } },
+    },
+  });
+
+  assert.deepEqual(Object.keys(persisted.songbookLyricsCache), ['setlink:fixture']);
+  assert.equal(persisted.songbookLyricsCache['setlink:fixture'].videoId, 'abcdefghijk');
+  assert.equal(persisted.songbookLyricsCache['setlink:fixture'].lyricsRef.packageHash, lyricsRef.packageHash);
+});
+
 test('tab runtime normalization preserves an in-flight OBS discard intent', () => {
   const currentEntry = entry('discard-entry', 'Discard fixture');
   const local = {

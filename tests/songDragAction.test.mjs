@@ -39,11 +39,18 @@ test('song drag candidates keep only a playable YouTube source and songbook iden
 });
 
 test('a drag candidate becomes the same reviewable staged song shape used by clicks', () => {
+  const lyricsRef = {
+    packageId: 'lyrics-package:fixture',
+    packageHash: `sha256:${'a'.repeat(64)}`,
+    schemaVersion: 1,
+    status: 'ready',
+  };
   const staged = stagedItemFromSongDragCandidate({
     id: 'abcdefghijk',
     title: 'Fixture track',
     channelTitle: 'Singer',
     source: 'youtube',
+    lyricsRef,
   }, 'stage-1');
 
   assert.equal(staged.stagingId, 'stage-1');
@@ -51,6 +58,8 @@ test('a drag candidate becomes the same reviewable staged song shape used by cli
   assert.equal(staged.src, 'abcdefghijk');
   assert.equal(staged.title, 'Fixture track');
   assert.equal(staged.artist, 'Singer');
+  assert.equal(staged.lyricsRef.packageId, lyricsRef.packageId);
+  assert.equal(staged.lyricsRef.packageHash, lyricsRef.packageHash);
 });
 
 test('drop planning never cuts a current song and keeps explicit destinations distinct', () => {
