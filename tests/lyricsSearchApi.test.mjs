@@ -379,6 +379,7 @@ test('citation-free NamuWiki discovery returns a host-validated URL when URL Con
   const modelUrl = 'https://namu.wiki/w/Discvered';
   await assert.rejects(searchLyrics(priorityInput, {
     apiKey: 'fixture-key',
+    namuWikiApiToken: 'fixture-namu-token',
     fetchImpl: async (url, options = {}) => {
       if (String(url).startsWith('https://namu.wiki/')) {
         return new Response('blocked', { status: 403, headers: { 'Content-Type': 'text/plain' } });
@@ -404,7 +405,11 @@ test('citation-free NamuWiki discovery returns a host-validated URL when URL Con
     },
   }), (error) => error.message === 'lyrics_web_candidate_not_found'
     && error.diagnostics?.namuCandidateUrl === sourceUrl
-    && error.diagnostics?.namuCandidateUrls?.includes(modelUrl));
+    && error.diagnostics?.namuCandidateUrls?.includes(modelUrl)
+    && error.diagnostics?.directNamu?.apiAttempts?.length >= 2
+    && error.diagnostics.directNamu.apiAttempts.every((attempt) => (
+      attempt.status === 403 && attempt.outcome === 'authorization_rejected'
+    )));
 });
 
 test('grounded lyrics require a direct matching citation and remain explicitly untimed', () => {

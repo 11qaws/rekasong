@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-10 - Safe NamuWiki API diagnostics (v0.2.77)
+
+- NamuWiki source API misses now report only bounded HTTP status and semantic outcome fields such as `authorization_rejected` or `document_not_found`.
+- Provider bodies, API tokens, edit tokens, and source text remain server-only and never enter diagnostics.
+
 ## 2026-08-10 - Hosted NamuWiki original cache (v0.2.76)
 
 - Added a secret-protected administrator ingestion route that stores selected NamuWiki originals in the existing Cloudflare `TITLE_CACHE` KV namespace.

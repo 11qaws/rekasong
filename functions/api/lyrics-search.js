@@ -575,7 +575,9 @@ const namuWikiPageTitle = (value) => {
 async function fetchNamuWikiSource(value, apiToken, fetchImpl) {
   const title = namuWikiPageTitle(value);
   const token = String(apiToken || '').trim();
-  if (!title || !token || token.length > 4_096) return '';
+  if (!title || !token || token.length > 4_096) {
+    return { source: '', status: 0, outcome: 'not_configured' };
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
@@ -590,16 +592,42 @@ async function fetchNamuWikiSource(value, apiToken, fetchImpl) {
     });
     const contentType = response.headers.get('content-type') || '';
     const declaredLength = Number(response.headers.get('content-length'));
-    if (!response.ok || !/^application\/json(?:;|$)/iu.test(contentType)
-      || (Number.isFinite(declaredLength) && declaredLength > MAX_NAMUWIKI_API_RESPONSE_LENGTH)) return '';
+    if (!response.ok) {
+      const outcome = response.status === 401 || response.status === 403
+        ? 'authorization_rejected'
+        : response.status === 404
+          ? 'document_not_found'
+          : response.status === 429
+            ? 'rate_limited'
+            : response.status >= 500
+              ? 'upstream_error'
+              : 'request_rejected';
+      return { source: '', status: response.status, outcome };
+    }
+    if (!/^application\/json(?:;|$)/iu.test(contentType)) {
+      return { source: '', status: response.status, outcome: 'unexpected_content_type' };
+    }
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_NAMUWIKI_API_RESPONSE_LENGTH) {
+      return { source: '', status: response.status, outcome: 'response_too_large' };
+    }
     const body = await response.text();
-    if (!body || body.length > MAX_NAMUWIKI_API_RESPONSE_LENGTH) return '';
+    if (!body || body.length > MAX_NAMUWIKI_API_RESPONSE_LENGTH) {
+      return { source: '', status: response.status, outcome: 'response_too_large' };
+    }
     let parsed;
-    try { parsed = JSON.parse(body); } catch { return ''; }
+    try { parsed = JSON.parse(body); } catch {
+      return { source: '', status: response.status, outcome: 'invalid_json' };
+    }
     const source = typeof parsed?.text === 'string' ? parsed.text : '';
-    return parsed?.exists === true && source.length <= MAX_SOURCE_WIKITEXT_LENGTH ? source : '';
+    if (parsed?.exists !== true) {
+      return { source: '', status: response.status, outcome: 'document_not_found' };
+    }
+    if (!source || source.length > MAX_SOURCE_WIKITEXT_LENGTH) {
+      return { source: '', status: response.status, outcome: 'invalid_source' };
+    }
+    return { source, status: response.status, outcome: 'retrieved' };
   } catch {
-    return '';
+    return { source: '', status: 0, outcome: 'network_error' };
   } finally {
     clearTimeout(timeout);
   }
@@ -719,7 +747,11 @@ async function extractNamuWikiLyricsPage(
 ) {
   if (discovery.sourceCategory !== 'namuwiki') return null;
   if (diagnostics) diagnostics.apiAttempted = Boolean(String(namuWikiApiToken || '').trim());
-  const source = await fetchNamuWikiSource(discovery.sourceUrl, namuWikiApiToken, fetchImpl);
+  const apiResult = await fetchNamuWikiSource(discovery.sourceUrl, namuWikiApiToken, fetchImpl);
+  const source = apiResult.source;
+  if (diagnostics && diagnostics.apiAttempted) {
+    diagnostics.apiAttempts.push(Object.freeze({ status: apiResult.status, outcome: apiResult.outcome }));
+  }
   if (diagnostics) diagnostics.apiRetrieved = Boolean(source);
   const sourceBlocks = extractNamuWikiSourceBlocks(source);
   if (diagnostics) diagnostics.apiBlockCount = sourceBlocks.length;
@@ -893,6 +925,7 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
     apiAttempted: false,
     apiRetrieved: false,
     apiBlockCount: 0,
+    apiAttempts: [],
     urlContextAttempted: false,
     urlContextSucceeded: false,
   };
