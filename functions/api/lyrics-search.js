@@ -266,6 +266,12 @@ Catalog artist: ${JSON.stringify(input.artist)}`;
   let interaction;
   try { interaction = await response.json(); } catch { interaction = null; }
   if (!response.ok) {
+    console.error(JSON.stringify({
+      event: 'lyrics_gemini_provider_failed',
+      upstreamStatus: response.status,
+      providerStatus: bounded(interaction?.error?.status, 80),
+      providerMessage: bounded(interaction?.error?.message, 500),
+    }));
     throw Object.assign(new Error(response.status === 429 ? 'lyrics_gemini_rate_limited' : 'lyrics_gemini_provider_failed'), {
       status: response.status === 429 ? 429 : 502,
     });

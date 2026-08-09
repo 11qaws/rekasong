@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 — bounded Gemini provider diagnostics
+
+- Added a bounded server-side diagnostic event for rejected Gemini video requests; client responses still expose only the stable application error code.
+- Bumped the diagnostic corrective deployment to `0.2.45`.
+
 ## 2026-08-09 — Gemini YouTube video model correction
 
 - Pinned the final generated-transcript fallback to the current Gemini video-understanding model instead of the app's older text-oriented preview model.
