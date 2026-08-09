@@ -145,14 +145,48 @@ test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page',
     },
   });
 
-  assert.equal(requests.length, 3);
-  assert.equal(requests[1].url, 'https://namu.wiki/w/Synthetic');
-  assert.deepEqual([requests[0], requests[2]].map((request) => JSON.parse(request.options.body).tools || []), [
-    [{ type: 'google_search' }],
-    [],
-  ]);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].url, 'https://namu.wiki/w/Synthetic%20Song');
+  assert.deepEqual(JSON.parse(requests[1].options.body).tools || [], []);
   assert.deepEqual(candidate.discoveryPath, ['google_search', 'namuwiki']);
   assert.equal(candidate.originalTextPolicy, 'verbatim');
+  assert.equal(candidate.lines.length, 5);
+});
+
+test('NamuWiki direct-title miss falls through to AI page discovery', async () => {
+  const priorityInput = validateLyricsSearchRequest({ ...input, sourcePriority: 'namuwiki_only' });
+  const requests = [];
+  const candidate = await searchLyrics(priorityInput, {
+    apiKey: 'fixture-key',
+    fetchImpl: async (url, options = {}) => {
+      const requestUrl = String(url);
+      requests.push(requestUrl);
+      if (requestUrl.includes('Synthetic%20Song')) {
+        return new Response('<html><h2>Not this page</h2></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      if (requestUrl === 'https://namu.wiki/w/Discovered') {
+        return new Response('<h3>Synthetic Song</h3><table><tr><td>first long lyric line<br>second long lyric line<br>third long lyric line<br>fourth long lyric line<br>fifth long lyric line</td></tr></table>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return groundedResponse(options, {
+        sourceUrl: 'https://namu.wiki/w/Discovered',
+        sourceCategory: 'namuwiki',
+      });
+    },
+  });
+
+  assert.deepEqual(requests, [
+    'https://namu.wiki/w/Synthetic%20Song',
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
+    'https://namu.wiki/w/Discovered',
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
+  ]);
+  assert.equal(candidate.sourceUrl, 'https://namu.wiki/w/Discovered');
   assert.equal(candidate.lines.length, 5);
 });
 

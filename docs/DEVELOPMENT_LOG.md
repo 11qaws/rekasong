@@ -120,3 +120,9 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 - NamuWiki fallback now fetches only bounded `namu.wiki` HTML through a same-site redirect guard, preserves candidate table-cell text directly, and asks Gemini to return only the matching block index and validation fields instead of regenerating lyrics.
 - Candidate HTML, block count, line length, total characters, redirect count, and fetch time are bounded. The selected text remains verbatim and still stops at the four-item human review gate with estimated timing.
 - Bumped the deployment version to `0.2.59`.
+
+## 2026-08-09 - Deterministic NamuWiki title probe (v0.2.60)
+
+- Added a first probe for the exact `namu.wiki/w/{song title}` page so a transient Google Search miss cannot skip an otherwise public exact-title document.
+- Gemini still has to confirm the selected HTML block matches the requested title and artist and contains the complete lyrics; a missing or rejected exact-title page falls through to grounded AI discovery.
+- Bumped the deployment version to `0.2.60`.
