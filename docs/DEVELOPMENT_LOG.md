@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-08-09 — Gemini YouTube request compatibility
+
+- Matched the official direct-YouTube Interactions input order and removed the structured-output option that Gemini rejected when combined with a YouTube URL.
+- The application still parses JSON and applies the same strict cue, timing, and size validation before accepting a generated candidate.
+- Bumped the compatibility deployment to `0.2.46`.
+
 ## 2026-08-09 — bounded Gemini provider diagnostics
 
 - Added a bounded server-side diagnostic event for rejected Gemini video requests; client responses still expose only the stable application error code.

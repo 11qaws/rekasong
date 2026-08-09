@@ -229,32 +229,9 @@ Catalog artist: ${JSON.stringify(input.artist)}`;
       body: JSON.stringify({
         model: GEMINI_VIDEO_MODEL,
         input: [
-          { type: 'video', uri: `https://www.youtube.com/watch?v=${input.videoId}` },
           { type: 'text', text: prompt },
+          { type: 'video', uri: `https://www.youtube.com/watch?v=${input.videoId}` },
         ],
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: {
-            type: 'object',
-            properties: {
-              language: { type: 'string' },
-              cues: {
-                type: 'array',
-                maxItems: MAX_CUES,
-                items: {
-                  type: 'object',
-                  properties: {
-                    anchorMs: { type: 'integer' },
-                    text: { type: 'string' },
-                  },
-                  required: ['anchorMs', 'text'],
-                },
-              },
-            },
-            required: ['language', 'cues'],
-          },
-        },
       }),
     });
   } catch (cause) {
