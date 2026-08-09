@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-08-09 - Application-owned verified originals (v0.2.68)
+
+- Verified NamuWiki or official lyrics are no longer requested in the model output; the application keeps the fetched source lines byte-for-byte after NFC normalization.
+- Gemini returns translations only for verified lyrics, while the exact application validator still requires one non-empty translation for every original line.
+
 ## 2026-08-09 - Large verified-lyrics translation schema (v0.2.67)
 
 - Removed provider-side dynamic array-length constraints that caused Gemini to reject a real 245-line NamuWiki candidate before translation.
