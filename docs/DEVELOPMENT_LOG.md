@@ -85,3 +85,8 @@ Worker와 VPS prepare worker 배포 및 실제 YouTube caption 검증은 아직 
 
 - Candidate misses now expose only bounded structural metadata: interaction status, step types, output length, citation/line counts, completion flag, and source host.
 - Diagnostics never include prompts, lyric text, provider credentials, or raw provider errors.
+
+## 2026-08-09 - Explicit URL Context evidence pass (v0.2.54)
+
+- Structured Google Search results without inline JSON citations now receive one bounded URL Context verification pass.
+- The verifier returns no lyrics and accepts the candidate only when the exact page contains every line in order, matches the requested title and artist, and cites that same public URL.

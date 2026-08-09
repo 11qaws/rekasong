@@ -155,3 +155,52 @@ test('grounded search retries once without URL Context when the combined tool re
   ]);
   assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
 });
+
+test('grounded search verifies a structured result with URL Context when JSON has no inline citation', async () => {
+  const interactionTools = [];
+  const candidate = await searchLyrics(input, {
+    apiKey: 'fixture-key',
+    fetchImpl: async (url, options = {}) => {
+      if (String(url).startsWith('https://lrclib.net/')) {
+        return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      const tools = JSON.parse(options.body).tools;
+      interactionTools.push(tools);
+      if (interactionTools.length === 1) {
+        return new Response(JSON.stringify({
+          status: 'completed',
+          steps: [{
+            type: 'model_output',
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                completeLyricsConfirmed: true,
+                language: 'en',
+                sourceTitle: 'Attributed lyric page',
+                sourceUrl: 'https://example.com/lyrics/synthetic',
+                lines: ['alpha', 'beta'],
+              }),
+            }],
+          }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        status: 'completed',
+        steps: [{
+          type: 'model_output',
+          content: [{
+            type: 'text',
+            text: 'VERIFIED',
+            annotations: [{ type: 'url_citation', url: 'https://example.com/lyrics/synthetic' }],
+          }],
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  assert.deepEqual(interactionTools, [
+    [{ type: 'url_context' }, { type: 'google_search' }],
+    [{ type: 'url_context' }],
+  ]);
+  assert.equal(candidate.sourceUrl, 'https://example.com/lyrics/synthetic');
+});
