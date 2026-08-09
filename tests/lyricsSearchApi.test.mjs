@@ -114,6 +114,27 @@ test('web search calls only the fixed provider endpoint and returns the prepared
 test('web search request rejects missing identity or unbounded metadata', () => {
   assert.equal(validateLyricsSearchRequest({ title: 'Synthetic Song' }), null);
   assert.equal(validateLyricsSearchRequest({ videoId: 'bad', title: 'Synthetic Song' }), null);
+  assert.equal(validateLyricsSearchRequest({ ...input, sourcePriority: 'official_only' }).sourcePriority, 'official_only');
+});
+
+test('official-only priority uses AI discovery and independent source verification without LRCLIB', async () => {
+  const priorityInput = validateLyricsSearchRequest({ ...input, sourcePriority: 'official_only' });
+  const requests = [];
+  const sourceUrl = 'https://artist.example/lyrics/synthetic';
+  const candidate = await searchLyrics(priorityInput, {
+    apiKey: 'fixture-key',
+    fetchImpl: async (url, options = {}) => {
+      requests.push({ url: String(url), options });
+      return groundedResponse(options, { sourceUrl, sourceCategory: 'official_web' });
+    },
+  });
+
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every((request) => !request.url.startsWith('https://lrclib.net/')));
+  assert.match(JSON.parse(requests[0].options.body).input, /Search only an official public artist/);
+  assert.equal(candidate.sourceKind, 'gemini_grounded_official_web_lyrics');
+  assert.deepEqual(candidate.discoveryPath, ['google_search', 'official_web']);
+  assert.equal(candidate.originalTextPolicy, 'verbatim');
 });
 
 test('NamuWiki-only priority bypasses LRCLIB and accepts a cited NamuWiki page', async () => {

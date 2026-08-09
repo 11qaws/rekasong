@@ -1002,6 +1002,9 @@ export default function Dashboard() {
   const automaticLyricsDraftsRef = useRef(new Map());
   const automaticLyricsJobsRef = useRef(new Map());
   const automaticLyricsGenerationsRef = useRef(new Map());
+  // 나무위키→공식 웹 우선 수집이 실패한 곡은 오디오 준비가 끝날 때까지 다시
+  // 호출하지 않는다. 준비 폴링마다 Gemini 요청을 반복하지 않는 탭 수명 캐시다.
+  const automaticLyricsPriorityMissesRef = useRef(new Set());
   const [songDragCandidate, setSongDragCandidate] = useState(null);
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
@@ -1023,6 +1026,7 @@ export default function Dashboard() {
       history: (previous.history || []).map(updateEntry),
     }));
     automaticLyricsDraftsRef.current.delete(videoId);
+    automaticLyricsPriorityMissesRef.current.delete(videoId);
     setAutomaticLyricsStates((previous) => ({
       ...previous,
       [videoId]: { phase: AUTOMATIC_LYRICS_PHASES.READY, reason: '' },
@@ -1575,7 +1579,8 @@ export default function Dashboard() {
       }
 
       const prepareInfo = prepareStatesRef.current[videoId];
-      if (prepareInfo?.lyrics?.status === 'collecting' && prepareInfo.status !== 'ready') {
+      const priorityWebMissed = automaticLyricsPriorityMissesRef.current.has(videoId);
+      if (prepareInfo?.status !== 'ready' && priorityWebMissed) {
         const generation = automaticLyricsGenerationsRef.current.get(videoId) || 0;
         const collecting = { phase: AUTOMATIC_LYRICS_PHASES.COLLECTING, reason: '' };
         automaticLyricsStatesRef.current = {
@@ -1589,9 +1594,10 @@ export default function Dashboard() {
         }
         continue;
       }
-      if (prepareInfo?.status !== 'ready') continue;
-      const lyricsInfo = prepareInfo.lyrics;
-      const candidateSource = automaticLyricsCandidateSource(lyricsInfo);
+      const lyricsInfo = prepareInfo?.lyrics;
+      const candidateSource = prepareInfo?.status === 'ready'
+        ? automaticLyricsCandidateSource(lyricsInfo)
+        : 'web_pending';
       if (!candidateSource
         || automaticLyricsJobsRef.current.has(videoId)
         || automaticLyricsStatesRef.current[videoId]?.phase === AUTOMATIC_LYRICS_PHASES.REVIEW_REQUIRED) {
@@ -1605,13 +1611,31 @@ export default function Dashboard() {
           if (stale || sessionKey !== prepareSessionKeyRef.current) return null;
           return { candidate: await fetchPreparedLyricsCandidate(videoId, auth), sessionKey };
         });
-      const fallbackCandidateRequest = () => candidateSource === 'web'
-        ? searchAutomaticLyrics(videoId, song).then((candidate) => ({ candidate, sessionKey: '' }))
-        : preparedCandidateRequest().catch(() => searchAutomaticLyrics(videoId, song)
-          .then((candidate) => ({ candidate, sessionKey: '' })));
-      const candidateRequest = searchAutomaticLyrics(videoId, song, 'namuwiki_only')
-        .then((candidate) => ({ candidate, sessionKey: '' }))
-        .catch(() => fallbackCandidateRequest());
+      const defaultWebRequest = () => searchAutomaticLyrics(videoId, song)
+        .then((candidate) => ({ candidate, sessionKey: '' }));
+      const fallbackCandidateRequest = () => {
+        const latestInfo = prepareStatesRef.current[videoId];
+        if (latestInfo?.status !== 'ready') return null;
+        const latestLyrics = latestInfo.lyrics;
+        const latestSource = automaticLyricsCandidateSource(latestLyrics);
+        if (latestSource === 'web') return defaultWebRequest();
+        const prepared = preparedCandidateRequest();
+        // 수동 자막은 검증 가능한 원문 후보로 먼저 쓰고, 자동 자막은 구조화된
+        // 웹 후보가 없을 때만 쓴다. 어느 쪽도 원문을 모델이 다시 쓰지는 않는다.
+        return latestLyrics?.sourceKind === 'youtube_manual_caption'
+          ? prepared.catch(defaultWebRequest)
+          : defaultWebRequest().catch(() => prepared);
+      };
+      const priorityWebRequest = priorityWebMissed
+        ? Promise.reject(new Error('lyrics_priority_web_missed'))
+        : searchAutomaticLyrics(videoId, song, 'namuwiki_only')
+          .catch(() => searchAutomaticLyrics(videoId, song, 'official_only'))
+          .then((candidate) => ({ candidate, sessionKey: '' }))
+          .catch((error) => {
+            automaticLyricsPriorityMissesRef.current.add(videoId);
+            throw error;
+          });
+      const candidateRequest = priorityWebRequest.catch(() => fallbackCandidateRequest());
       const job = candidateRequest
         .then(async (loaded) => {
           if (!loaded) return;
@@ -1669,6 +1693,7 @@ export default function Dashboard() {
     );
     automaticLyricsJobsRef.current.delete(videoId);
     automaticLyricsDraftsRef.current.delete(videoId);
+    automaticLyricsPriorityMissesRef.current.delete(videoId);
     const next = { ...automaticLyricsStatesRef.current };
     delete next[videoId];
     automaticLyricsStatesRef.current = next;

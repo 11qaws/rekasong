@@ -29,7 +29,9 @@ export function validateLyricsSearchRequest(value) {
   const artist = bounded(value.artist, 240);
   if (!/^[A-Za-z0-9_-]{11}$/u.test(videoId) || !title) return null;
   const durationMs = Number(value.durationMs);
-  const sourcePriority = value.sourcePriority === 'namuwiki_only' ? 'namuwiki_only' : 'default';
+  const sourcePriority = ['namuwiki_only', 'official_only'].includes(value.sourcePriority)
+    ? value.sourcePriority
+    : 'default';
   return Object.freeze({
     videoId,
     title,
@@ -529,7 +531,9 @@ export function validateGroundedLyricsResult(value, citationValues, input) {
   const category = groundedSourceCategory(value, citedSource);
   const discoveryPath = input.sourcePriority === 'namuwiki_only'
     ? ['google_search', 'namuwiki']
-    : ['lrclib', 'google_search', category];
+    : input.sourcePriority === 'official_only'
+      ? ['google_search', 'official_web']
+      : ['lrclib', 'google_search', category];
   return Object.freeze({
     schemaVersion: 1,
     videoId: input.videoId,
@@ -579,7 +583,9 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
   }
   const sourceOrder = requiredCategory === 'namuwiki'
     ? `Search only public NamuWiki pages on namu.wiki. If NamuWiki has no exact page that visibly includes the complete lyrics, return sourceFound false.`
-    : `Search in this order, continuing only when the earlier tier has no complete match:
+    : requiredCategory === 'official_web'
+      ? `Search only an official public artist, label, game, anime, or release page. If no official page visibly includes the complete lyrics, return sourceFound false.`
+      : `Search in this order, continuing only when the earlier tier has no complete match:
 1. NamuWiki.
 2. An official artist, label, game, anime, or release lyric page.
 3. Dedicated structured lyric sources with public access.
@@ -653,6 +659,9 @@ Artist: ${JSON.stringify(input.artist)}`;
 export async function searchLyrics(input, { apiKey, fetchImpl = globalThis.fetch } = {}) {
   if (input.sourcePriority === 'namuwiki_only') {
     return searchGroundedWebLyrics(input, apiKey, fetchImpl, { requiredCategory: 'namuwiki' });
+  }
+  if (input.sourcePriority === 'official_only') {
+    return searchGroundedWebLyrics(input, apiKey, fetchImpl, { requiredCategory: 'official_web' });
   }
   try {
     return await searchLrclibLyrics(input, fetchImpl);
