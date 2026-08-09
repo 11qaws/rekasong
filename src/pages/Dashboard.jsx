@@ -105,7 +105,12 @@ import {
 import { getAppMessage as t } from '../copy/appMessages';
 import { useAppLocale } from '../hooks/useAppLocale';
 import {
+  AUTOMATIC_LYRICS_PHASES,
+  createAutomaticLyricsDraft,
+} from '../lib/lyrics/lyricsAutoPreparation';
+import {
   YOUTUBE_ID_PATTERN,
+  fetchPreparedLyricsCandidate,
   fetchPrepareStatus,
   isPrepareConfigured,
   notifyPrepareActivity,
@@ -164,7 +169,7 @@ const toDisplayState = (state) => ({
 // 공개 ntfy 토픽(rekasong-{room})은 서명으로 위변조만 막을 뿐 열람은 못 막으므로
 // (PHASE_08 §3-1), payload 자체가 '시청자에게 보여도 되는 것'만 담아야 한다.
 // 위젯이 실제 표시하는 필드만 화이트리스트로 내보낸다 — 대기열(시청자 비공개
-// 설계, Widget.jsx 주석)·노래책 카탈로그·멜로밍 채널 ID·MR 캐시·설정은 어떤
+// 설계, Widget.jsx 주석)·노래책 카탈로그·MR 캐시·설정은 어떤
 // 발행 경로(BroadcastChannel/localStorage/dev API/ntfy)에도 싣지 않는다.
 const WIDGET_HISTORY_LIMIT = 50; // D-29/D-14: 발행 history 상한 — payload 비대 방지
 
@@ -989,15 +994,46 @@ export default function Dashboard() {
 
   const [stagedItem, setStagedItem] = useState(null);
   const [lyricsWorkspaceTarget, setLyricsWorkspaceTarget] = useState(null);
+  const [automaticLyricsStates, setAutomaticLyricsStates] = useState({});
+  const automaticLyricsStatesRef = useRef(automaticLyricsStates);
+  automaticLyricsStatesRef.current = automaticLyricsStates;
+  const automaticLyricsDraftsRef = useRef(new Map());
+  const automaticLyricsJobsRef = useRef(new Map());
+  const automaticLyricsGenerationsRef = useRef(new Map());
   const [songDragCandidate, setSongDragCandidate] = useState(null);
   // pagehide 리스너(마운트 시 1회 등록)가 최신 스테이징 blob을 보게 하는 거울 ref.
   const stagedItemRef = useRef(null);
   stagedItemRef.current = stagedItem;
   const obsAssetReadyNoticeRef = useRef(new Set());
 
+  const applyLyricsRefToYoutubeVideo = useCallback((videoId, lyricsRef) => {
+    if (!videoId || !lyricsRef) return;
+    setStagedItem((previous) => previous?.type === 'youtube' && previous.src === videoId
+      ? { ...previous, lyricsRef }
+      : previous);
+    const updateEntry = (entry) => entry?.song?.type === 'youtube' && entry.song.src === videoId
+      ? { ...entry, song: sanitizeSongDef({ ...entry.song, lyricsRef }) }
+      : entry;
+    setSharedState((previous) => ({
+      ...previous,
+      currentEntry: updateEntry(previous.currentEntry),
+      queue: (previous.queue || []).map(updateEntry),
+      history: (previous.history || []).map(updateEntry),
+    }));
+    automaticLyricsDraftsRef.current.delete(videoId);
+    setAutomaticLyricsStates((previous) => ({
+      ...previous,
+      [videoId]: { phase: AUTOMATIC_LYRICS_PHASES.READY, reason: '' },
+    }));
+  }, [setSharedState]);
+
   const completeLyricsPreparation = useCallback(({ lyricsRef }) => {
     const target = lyricsWorkspaceTarget;
     if (!target || !lyricsRef) return;
+    if (target.song?.type === 'youtube' && target.song.src) {
+      applyLyricsRefToYoutubeVideo(target.song.src, lyricsRef);
+      return;
+    }
     if (target.location === 'staged') {
       setStagedItem((previous) => previous
         ? { ...previous, lyricsRef }
@@ -1013,7 +1049,7 @@ export default function Dashboard() {
       queue: (previous.queue || []).map(updateEntry),
       history: (previous.history || []).map(updateEntry),
     }));
-  }, [lyricsWorkspaceTarget, setSharedState]);
+  }, [applyLyricsRefToYoutubeVideo, lyricsWorkspaceTarget, setSharedState]);
 
   const uploadLocalBlobForObs = useCallback((src, onProgress = null) => {
     if (typeof src !== 'string' || !src.startsWith('blob:')) {
@@ -1432,6 +1468,145 @@ export default function Dashboard() {
     });
     ensurePrepareRequested(videoId, { force: true });
     showToast(t('prepare.action.retry.notice'), 'info');
+  };
+
+  const noteAutomaticLyricsState = useCallback((videoId, generation, phase, reason = '') => {
+    if (automaticLyricsGenerationsRef.current.get(videoId) !== generation) return;
+    const next = { phase, reason };
+    automaticLyricsStatesRef.current = { ...automaticLyricsStatesRef.current, [videoId]: next };
+    setAutomaticLyricsStates((previous) => ({ ...previous, [videoId]: next }));
+  }, []);
+
+  const translateAutomaticLyrics = useCallback(async (input) => {
+    const response = await fetch(apiUrl('/api/lyrics-translate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'lyrics_translation_failed');
+    return result;
+  }, []);
+
+  const songForAutomaticLyrics = useCallback((videoId) => {
+    const staged = stagedItemRef.current;
+    if (staged?.type === 'youtube' && staged.src === videoId) return staged;
+    const snapshot = stateRef.current || {};
+    const entries = [snapshot.currentEntry, ...(snapshot.queue || []), ...(snapshot.history || [])];
+    return entries.find((entry) => entry?.song?.type === 'youtube' && entry.song.src === videoId)?.song || null;
+  }, []);
+
+  useEffect(() => {
+    if (!watchedVideoIds) return;
+    for (const videoId of watchedVideoIds.split(' ')) {
+      const song = songForAutomaticLyrics(videoId);
+      if (!song) continue;
+      if (song.lyricsRef?.status === 'ready') {
+        const ready = { phase: AUTOMATIC_LYRICS_PHASES.READY, reason: '' };
+        automaticLyricsStatesRef.current = { ...automaticLyricsStatesRef.current, [videoId]: ready };
+        setAutomaticLyricsStates((previous) => previous[videoId]?.phase === ready.phase
+          ? previous
+          : { ...previous, [videoId]: ready });
+        continue;
+      }
+
+      const prepareInfo = prepareStatesRef.current[videoId];
+      if (prepareInfo?.lyrics?.status === 'collecting' && prepareInfo.status !== 'ready') {
+        const generation = automaticLyricsGenerationsRef.current.get(videoId) || 0;
+        const collecting = { phase: AUTOMATIC_LYRICS_PHASES.COLLECTING, reason: '' };
+        automaticLyricsStatesRef.current = {
+          ...automaticLyricsStatesRef.current,
+          [videoId]: collecting,
+        };
+        if (automaticLyricsGenerationsRef.current.get(videoId) === generation) {
+          setAutomaticLyricsStates((previous) => previous[videoId]?.phase === collecting.phase
+            ? previous
+            : { ...previous, [videoId]: collecting });
+        }
+        continue;
+      }
+      if (prepareInfo?.status !== 'ready') continue;
+      const lyricsInfo = prepareInfo.lyrics;
+      if (!lyricsInfo || ['failed', 'unavailable'].includes(lyricsInfo.status)) {
+        const failed = {
+          phase: AUTOMATIC_LYRICS_PHASES.FAILED,
+          reason: lyricsInfo?.reason || 'lyrics_not_reported',
+        };
+        automaticLyricsStatesRef.current = { ...automaticLyricsStatesRef.current, [videoId]: failed };
+        setAutomaticLyricsStates((previous) => ({ ...previous, [videoId]: failed }));
+        continue;
+      }
+      if (!['ready', 'review_required'].includes(lyricsInfo.status)
+        || automaticLyricsJobsRef.current.has(videoId)
+        || automaticLyricsStatesRef.current[videoId]?.phase === AUTOMATIC_LYRICS_PHASES.REVIEW_REQUIRED) {
+        continue;
+      }
+
+      const generation = (automaticLyricsGenerationsRef.current.get(videoId) || 0) + 1;
+      automaticLyricsGenerationsRef.current.set(videoId, generation);
+      noteAutomaticLyricsState(videoId, generation, AUTOMATIC_LYRICS_PHASES.COLLECTING);
+      const job = getPrepareAuth()
+        .then(async ({ auth, sessionKey, stale }) => {
+          if (stale || sessionKey !== prepareSessionKeyRef.current) return;
+          const candidate = await fetchPreparedLyricsCandidate(videoId, auth);
+          const draft = await createAutomaticLyricsDraft({
+            song,
+            candidate,
+            translate: translateAutomaticLyrics,
+            onPhase: (phase) => noteAutomaticLyricsState(videoId, generation, phase),
+          });
+          if (automaticLyricsGenerationsRef.current.get(videoId) !== generation
+            || sessionKey !== prepareSessionKeyRef.current) return;
+          automaticLyricsDraftsRef.current.set(videoId, draft);
+          noteAutomaticLyricsState(videoId, generation, AUTOMATIC_LYRICS_PHASES.REVIEW_REQUIRED);
+        })
+        .catch((error) => {
+          noteAutomaticLyricsState(
+            videoId,
+            generation,
+            AUTOMATIC_LYRICS_PHASES.FAILED,
+            error?.code || 'lyrics_automatic_prepare_failed',
+          );
+        })
+        .finally(() => {
+          if (automaticLyricsJobsRef.current.get(videoId) === job) automaticLyricsJobsRef.current.delete(videoId);
+        });
+      automaticLyricsJobsRef.current.set(videoId, job);
+    }
+  }, [
+    getPrepareAuth,
+    noteAutomaticLyricsState,
+    prepareStates,
+    prepareSessionKey,
+    songForAutomaticLyrics,
+    translateAutomaticLyrics,
+    watchedVideoIds,
+  ]);
+
+  const openLyricsReview = useCallback((target) => {
+    const videoId = target?.song?.type === 'youtube' ? target.song.src : '';
+    setLyricsWorkspaceTarget({
+      ...target,
+      initialDraft: videoId ? automaticLyricsDraftsRef.current.get(videoId) || null : null,
+    });
+  }, []);
+
+  const retryAutomaticLyrics = (videoId) => {
+    if (!videoId) return;
+    automaticLyricsGenerationsRef.current.set(
+      videoId,
+      (automaticLyricsGenerationsRef.current.get(videoId) || 0) + 1,
+    );
+    automaticLyricsJobsRef.current.delete(videoId);
+    automaticLyricsDraftsRef.current.delete(videoId);
+    const next = { ...automaticLyricsStatesRef.current };
+    delete next[videoId];
+    automaticLyricsStatesRef.current = next;
+    setAutomaticLyricsStates(next);
+    if (prepareStatesRef.current[videoId]?.lyrics?.status === 'failed'
+      || prepareStatesRef.current[videoId]?.lyrics?.status === 'unavailable') {
+      void handleRetryPrepare(videoId);
+    }
   };
 
   // ── 프리버퍼(pre-buffer) 힌트 ──────────────────────────────────────────
@@ -3871,7 +4046,11 @@ export default function Dashboard() {
             onRetryOutputControl={retryOutputControlNow}
             locale={locale}
             onLocaleChange={setLocale}
-            onPrepareLyrics={() => setLyricsWorkspaceTarget({
+            lyricsPreparationState={currentSong?.type === 'youtube'
+              ? automaticLyricsStates[currentSong.src] || null
+              : null}
+            onRetryLyrics={() => retryAutomaticLyrics(currentSong?.src)}
+            onPrepareLyrics={() => openLyricsReview({
               location: 'shared',
               ...currentEntry,
             })}
@@ -3891,8 +4070,10 @@ export default function Dashboard() {
               autoPlayNext={Boolean(state?.autoPlayNext)}
               setSharedState={setSharedState}
               prepareStates={prepareStates}
+              lyricsPreparationStates={automaticLyricsStates}
               onRetryPrepare={handleRetryPrepare}
-              onPrepareLyrics={(entry) => setLyricsWorkspaceTarget({ location: 'shared', ...entry })}
+              onRetryLyrics={retryAutomaticLyrics}
+              onPrepareLyrics={(entry) => openLyricsReview({ location: 'shared', ...entry })}
             />
           </ErrorBoundary>
         </div>
@@ -3919,11 +4100,15 @@ export default function Dashboard() {
                 aiStatusPhase,
                 onRetryAiExtraction: handleRetryAiExtraction,
                 prepareState: stagedPrepareState,
+                lyricsPreparationState: stagedItem?.type === 'youtube'
+                  ? automaticLyricsStates[stagedItem.src] || null
+                  : null,
                 onRetryPrepare: handleRetryPrepare,
+                onRetryLyrics: retryAutomaticLyrics,
                 outputMode: selectedOutputMode,
                 onRetryLocalObsAsset: retryStagedLocalObsAsset,
                 showToast,
-                onPrepareLyrics: () => setLyricsWorkspaceTarget({
+                onPrepareLyrics: () => openLyricsReview({
                   location: 'staged',
                   entryId: 'staged',
                   song: stagedItem,
@@ -3946,6 +4131,7 @@ export default function Dashboard() {
         <Suspense fallback={null}>
           <LyricsPreparationWorkspace
             entry={lyricsWorkspaceTarget}
+            initialDraft={lyricsWorkspaceTarget.initialDraft}
             sessionRoom={onAirSession?.room || ''}
             publishPackage={onAir.configured ? onAir.uploadLyricsAsset : null}
             onComplete={completeLyricsPreparation}

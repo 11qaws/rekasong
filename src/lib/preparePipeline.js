@@ -31,10 +31,32 @@ const authQuery = (auth) =>
 
 // Worker 응답 화이트리스트 정규화 — 알 수 없는 status는 'unknown'으로 두어
 // 절대 ready로 오인되지 않게 한다.
+const PREPARED_LYRICS_STATUSES = new Set([
+  'collecting',
+  'review_required',
+  'ready',
+  'unavailable',
+  'failed',
+]);
+
+const normalizePreparedLyricsInfo = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const status = PREPARED_LYRICS_STATUSES.has(value.status) ? value.status : null;
+  if (!status) return null;
+  return {
+    status,
+    language: typeof value.language === 'string' ? value.language.slice(0, 16) : '',
+    sourceKind: typeof value.sourceKind === 'string' ? value.sourceKind.slice(0, 80) : '',
+    cueCount: Number.isSafeInteger(value.cueCount) && value.cueCount >= 0 ? value.cueCount : 0,
+    reason: typeof value.reason === 'string' ? value.reason.slice(0, 160) : '',
+  };
+};
+
 const normalizePrepareInfo = (data) => ({
   status: typeof data?.status === 'string' && data.status ? data.status : 'unknown',
   failureKind: typeof data?.failureKind === 'string' ? data.failureKind : null,
-  reason: typeof data?.reason === 'string' ? data.reason : ''
+  reason: typeof data?.reason === 'string' ? data.reason : '',
+  lyrics: normalizePreparedLyricsInfo(data?.lyrics),
 });
 
 export const PREPARE_REQUEST_ERROR_CODES = Object.freeze({
@@ -171,6 +193,35 @@ export const fetchPrepareStatus = async (
   undefined,
   fetchImpl
 );
+
+export const fetchPreparedLyricsCandidate = async (
+  videoId,
+  auth,
+  { fetchImpl = globalThis.fetch } = {}
+) => {
+  if (typeof fetchImpl !== 'function') {
+    throw new PrepareRequestError(PREPARE_REQUEST_ERROR_CODES.NETWORK_ERROR);
+  }
+  let response;
+  try {
+    response = await fetchImpl(
+      `${configuredBase}/v1/prepare/${encodeURIComponent(String(videoId || ''))}/lyrics?${authQuery(auth)}`
+    );
+  } catch (cause) {
+    throw new PrepareRequestError(PREPARE_REQUEST_ERROR_CODES.NETWORK_ERROR, { cause });
+  }
+  if (!response.ok) {
+    throw new PrepareRequestError(responseErrorCode(response.status), { httpStatus: response.status });
+  }
+  try {
+    return await response.json();
+  } catch (cause) {
+    throw new PrepareRequestError(PREPARE_REQUEST_ERROR_CODES.SERVER_ERROR, {
+      httpStatus: response.status,
+      cause,
+    });
+  }
+};
 
 // 준비된 오디오의 <audio src>(§3). OnAirPlayer는 위젯 URL의 api 파라미터가
 // 베이스이므로 base를 명시적으로 받는다 — URL 형태의 정의는 여기 한 곳뿐이다.

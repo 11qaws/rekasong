@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, Headphones, Languages, ListMusic, MonitorUp, Pause, Play, Radio, Repeat, RotateCcw, Settings, SkipForward, Trash2, Volume1, Volume2, VolumeX, X } from 'lucide-react';
 import { getAppMessage as t } from '../copy/appMessages';
@@ -14,6 +14,8 @@ import {
   outputVolumeForMode,
   rememberOutputUnmuteVolume,
 } from '../lib/outputVolumeProfiles';
+
+const CurrentLyricsDisplay = lazy(() => import('./lyrics/CurrentLyricsDisplay.jsx'));
 
 // 위젯 연결 칩 — 서버가 중계하는 **일반 브라우저 페이지 presence**에만 근거한다.
 // 이 값만으로 OBS CEF, 오디오 믹서, 녹화/송출 경로를 확인했다고 말하면 안 된다.
@@ -116,6 +118,8 @@ export default function PlaybackPanel({
   onRetryOutputControl,
   locale = 'ko',
   onLocaleChange,
+  lyricsPreparationState = null,
+  onRetryLyrics,
   onPrepareLyrics,
 }) {
   const previousVolumeByOutputRef = useRef(createOutputUnmuteMemory(outputVolumes));
@@ -829,16 +833,37 @@ export default function PlaybackPanel({
       {currentSong ? (
         <div className="playback-now">
           <div className="playback-title-row">
-            <strong>{currentSong.title}</strong>
-            <LyricsStatusBadge lyricsRef={currentSong.lyricsRef} />
-            <button
-              type="button"
-              className="btn-icon lyrics-prepare-button"
-              title={getLyricsMessage('action.prepare')}
-              aria-label={getLyricsMessage('action.prepare')}
-              onClick={onPrepareLyrics}
-            ><Languages size={15} /></button>
+            <div className="playback-title-copy">
+              <strong>{currentSong.title}</strong>
+              {currentSong.artist && <span>{currentSong.artist}</span>}
+            </div>
+            <div className="playback-title-actions">
+              <LyricsStatusBadge lyricsRef={currentSong.lyricsRef} preparationState={lyricsPreparationState} />
+              {onPrepareLyrics && (
+                <button
+                  type="button"
+                  className="lyrics-edit-button"
+                  title={getLyricsMessage('action.review')}
+                  aria-label={getLyricsMessage('action.review')}
+                  onClick={onPrepareLyrics}
+                ><Languages size={14} /><span>{getLyricsMessage('action.review')}</span></button>
+              )}
+            </div>
           </div>
+          <Suspense fallback={(
+            <section className="lyrics-live-stage is-loading" aria-label={getLyricsMessage('live.region')}>
+              <div className="lyrics-live-empty" role="status">{getLyricsMessage('live.loading')}</div>
+            </section>
+          )}>
+            <CurrentLyricsDisplay
+              lyricsRef={currentSong.lyricsRef}
+              preparationState={lyricsPreparationState}
+              currentTime={currentTime}
+              onPrepare={onPrepareLyrics}
+              onRetry={onRetryLyrics}
+              locale={locale}
+            />
+          </Suspense>
           <div className="playback-controls">
             {/* 정지 전이/실패 중 일반 재생 조작 잠금(§4-3, §4-5). */}
             <button type="button" onClick={onTogglePlay} className="btn-icon playback-primary" disabled={transportControlsLocked} title={transportControlsLocked ? t('playback.control.locked') : speakerResumeRequired ? t('playback.localSpeaker.resumeAction') : isPlaying ? t('playback.control.pause') : t('playback.control.play')}>

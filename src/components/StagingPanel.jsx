@@ -6,7 +6,7 @@ import { getAppMessage as t } from '../copy/appMessages';
 import { getLyricsMessage } from '../copy/lyricsMessages.js';
 import LyricsStatusBadge from './lyrics/LyricsStatusBadge.jsx';
 
-export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, aiStatusPhase = 1, onRetryAiExtraction, prepareState, onRetryPrepare, outputMode = 'speaker', onRetryLocalObsAsset = null, onPrepareLyrics = null }) {
+export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onClearStaged, hasCurrentSong, isAiLoading, aiStatusMessage, aiStatusPhase = 1, onRetryAiExtraction, prepareState, onRetryPrepare, lyricsPreparationState = null, onRetryLyrics = null, outputMode = 'speaker', onRetryLocalObsAsset = null, onPrepareLyrics = null }) {
   if (!stagedItem) {
     return (
       <div className="panel staging-panel glass-card empty">
@@ -42,7 +42,6 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
       <header className="staging-panel-header panel-title" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
         <span>
           <span className="step-number">2</span> {t('staging.heading')}
-          {stagedItem.source === 'meloming' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-emerald)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Meloming</span>}
           {stagedItem.source === 'setlink' && <span style={{marginLeft:'8px', fontSize:'0.75rem', background:'var(--eureka-azure)', color:'#fff', padding:'0.1rem 0.5rem', borderRadius:'10px'}}>Setlink</span>}
         </span>
         <button onClick={onClearStaged} className="btn-icon" title={t('staging.back.title')} style={{fontSize:'0.85rem'}}>
@@ -161,6 +160,18 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
           {type === 'youtube' && hasPlayableMr && prepareKind === 'preparing' && (
             <p className="mr-cache-note"><Loader2 size={12} className="spinner" /> {t('staging.prepare.pending')}</p>
           )}
+          {type === 'youtube' && ['collecting', 'translating', 'timing'].includes(lyricsPreparationState?.phase) && (
+            <p className="mr-cache-note"><Loader2 size={12} className="spinner" /> {getLyricsMessage(`status.${lyricsPreparationState.phase}`)}</p>
+          )}
+          {type === 'youtube' && lyricsPreparationState?.phase === 'review_required' && (
+            <p className="mr-cache-note">{getLyricsMessage('status.reviewRequired')}</p>
+          )}
+          {type === 'youtube' && lyricsPreparationState?.phase === 'failed' && (
+            <p className="mr-unavailable">
+              {getLyricsMessage('status.failed')}
+              {onRetryLyrics && <button type="button" className="ai-retry-button" onClick={() => onRetryLyrics(src)}>{getLyricsMessage('action.retry')}</button>}
+            </p>
+          )}
           {type === 'youtube' && hasPlayableMr && prepareKind === 'unreachable' && (
             <p className="mr-cache-note">{prepareBlockMessage('unreachable')}</p>
           )}
@@ -187,8 +198,8 @@ export default function StagingPanel({ stagedItem, onAliasChange, onGoLive, onCl
             className="btn-primary lyrics-staging-action"
             onClick={onPrepareLyrics}
           >
-            <Languages size={18} /> {getLyricsMessage('action.prepare')}
-            <LyricsStatusBadge lyricsRef={stagedItem.lyricsRef} />
+            <Languages size={18} /> {getLyricsMessage('action.review')}
+            <LyricsStatusBadge lyricsRef={stagedItem.lyricsRef} preparationState={lyricsPreparationState} />
           </button>
           <button
             className="btn-primary go-live-btn"

@@ -12,4 +12,6 @@
 }
 
 .lyrics-status-badge.is-ready { color: #15803d; border-color: rgb(22 163 74 / 42%); }
+.lyrics-status-badge.is-review { color: #9a6700; border-color: rgb(202 138 4 / 45%); }
+.lyrics-status-badge.is-preparing { color: #0369a1; border-color: rgb(2 132 199 / 42%); }
 .lyrics-status-badge.is-failed { color: #b91c1c; border-color: rgb(220 38 38 / 42%); }

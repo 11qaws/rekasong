@@ -12,24 +12,25 @@ const mergedCatalog = Object.freeze({
   en: Object.freeze({ ...outputMessageCatalog.en, ...appMessageCatalog.en }),
 });
 
-test('YouTube search and playlists share one top-level source before Setlink and Meloming', async () => {
+test('Search, playlist, and Setlink are equal top-level sources', async () => {
   const file = fileURLToPath(new URL('../src/components/SearchPanel.jsx', import.meta.url));
   const source = await readFile(file, 'utf8');
   await transformWithOxc(source, file, { lang: 'jsx' });
 
-  const orderedSources = ['youtube', 'setlink', 'meloming'];
+  const orderedSources = ['youtube', 'youtube-playlist', 'setlink'];
   let cursor = -1;
   for (const sourceName of orderedSources) {
     const next = source.indexOf(`data-source="${sourceName}"`, cursor + 1);
     assert.ok(next > cursor, `${sourceName} tab must follow the requested order`);
     cursor = next;
   }
-  assert.equal(appMessageCatalog.ko['search.tab.youtube'], 'YouTube');
+  assert.equal(outputMessageCatalog.ko['search.tab.youtubeSearch'], '검색');
+  assert.equal(outputMessageCatalog.ko['search.tab.youtubeList'], '플레이리스트');
   assert.match(source, /data-source-tab-count="3"/);
   assert.equal((source.match(/data-source="youtube"/g) || []).length, 1);
-  assert.doesNotMatch(source, /data-source="youtube-playlist"/);
-  assert.match(source, /role="tablist"[\s\S]*?search\.youtube\.mode\.search[\s\S]*?search\.youtube\.mode\.playlist/);
-  assert.match(source, /lastYoutubeTabRef/);
+  assert.equal((source.match(/data-source="youtube-playlist"/g) || []).length, 1);
+  assert.doesNotMatch(source, /meloming/i);
+  assert.doesNotMatch(source, /youtube-mode-switch|lastYoutubeTabRef/);
   assert.doesNotMatch(source, />유튜브 검색</);
   assert.match(source, /alt=\{t\('search\.youtube\.thumbnailAlt'/);
   assert.doesNotMatch(source, /via\.placeholder\.com|alt="thumbnail"/);
@@ -92,7 +93,6 @@ test('songbook text uses a readable dark green while emerald remains available f
     readFile(new URL('../src/components/SearchPanel.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/StagingPanel.jsx', import.meta.url), 'utf8'),
   ]);
-  assert.match(css, /\.songbook-summary\[data-source='meloming'\] \{ color: var\(--chr-vest\); \}/);
   assert.match(css, /\.songbook-mr-state\.is-linked \{ color: var\(--chr-vest\);/);
   assert.match(css, /\.songbook-copy:focus-visible/);
   assert.match(

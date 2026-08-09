@@ -78,6 +78,7 @@ function sourceTierOptions() {
 
 export default function LyricsPreparationWorkspace({
   entry,
+  initialDraft = null,
   sessionRoom = '',
   publishPackage = null,
   onComplete,
@@ -93,24 +94,24 @@ export default function LyricsPreparationWorkspace({
     packageId: `lyrics-package:${crypto.randomUUID()}`,
   }).current;
   const repository = useLyricsRepository();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(initialDraft ? 2 : 0);
   const [title, setTitle] = useState(entry?.song?.title || '');
   const [artist, setArtist] = useState(entry?.song?.artist || '');
   const [versionKind, setVersionKind] = useState(entry?.song?.type === 'local' ? 'karaoke' : 'unknown');
-  const [originalLanguage, setOriginalLanguage] = useState('ja');
-  const [originalText, setOriginalText] = useState('');
-  const [originalFileName, setOriginalFileName] = useState('');
-  const [originalSourceTier, setOriginalSourceTier] = useState('trusted_web');
-  const [originalSourceTitle, setOriginalSourceTitle] = useState('');
-  const [originalSourceUrl, setOriginalSourceUrl] = useState('');
-  const [translationText, setTranslationText] = useState('');
-  const [translationSourceTier, setTranslationSourceTier] = useState('trusted_web');
-  const [translationSourceTitle, setTranslationSourceTitle] = useState('');
+  const [originalLanguage, setOriginalLanguage] = useState(initialDraft?.originalLanguage || 'ja');
+  const [originalText, setOriginalText] = useState(initialDraft?.originalText || '');
+  const [originalFileName, setOriginalFileName] = useState(initialDraft?.originalFileName || '');
+  const [originalSourceTier, setOriginalSourceTier] = useState(initialDraft?.originalSourceTier || 'trusted_web');
+  const [originalSourceTitle, setOriginalSourceTitle] = useState(initialDraft?.originalSourceTitle || '');
+  const [originalSourceUrl, setOriginalSourceUrl] = useState(initialDraft?.originalSourceUrl || '');
+  const [translationText, setTranslationText] = useState(initialDraft?.translationText || '');
+  const [translationSourceTier, setTranslationSourceTier] = useState(initialDraft?.translationSourceTier || 'trusted_web');
+  const [translationSourceTitle, setTranslationSourceTitle] = useState(initialDraft?.translationSourceTitle || '');
   const [translationSourceUrl, setTranslationSourceUrl] = useState('');
   const [translatorName, setTranslatorName] = useState('');
   const [officialAdaptation, setOfficialAdaptation] = useState(false);
   const [lockedByUser, setLockedByUser] = useState(false);
-  const [mappingDrafts, setMappingDrafts] = useState([]);
+  const [mappingDrafts, setMappingDrafts] = useState(initialDraft?.mappingDrafts || []);
   const [bpm, setBpm] = useState('');
   const [firstDownbeat, setFirstDownbeat] = useState('0');
   const [numerator, setNumerator] = useState('4');
@@ -319,7 +320,7 @@ export default function LyricsPreparationWorkspace({
         language: originalLanguage,
         source: {
           tier: originalSourceTier,
-          providerId: 'user-import',
+          providerId: initialDraft?.originalProviderId || 'user-import',
           title: originalSourceTitle,
           url: originalSourceUrl || null,
           retrievedAt: now,
@@ -334,7 +335,7 @@ export default function LyricsPreparationWorkspace({
         sourceTier: translationSourceTier,
         translationType: officialAdaptation ? 'official_adaptation' : 'semantic_translation',
         source: {
-          providerId: 'user-import',
+          providerId: initialDraft?.translationProviderId || 'user-import',
           title: translationSourceTitle,
           url: translationSourceUrl || null,
           translatorName: translatorName || null,

@@ -36,6 +36,7 @@ Stage 6c. `SONG_LIFECYCLE.md`의 `preparing → ready`를 **증거 기반**으�
 |---|---|---|---|
 | 세션 로컬파일 (기존) | `sessions/{room}/{assetId}` | 세션 종료 시 삭제 | 방 전용 |
 | **준비 오디오 (신규)** | `audio/{videoId}` | **영구** (수동/TTL 정리) | **전역 공유** |
+| **준비 가사 후보** | `lyrics-candidates/youtube/{videoId}.json` | 오디오와 같은 캐시 정책 | 인증된 방송 세션만 읽기 |
 
 준비 캐시를 세션 자산으로 구현하면 방송마다 캐시가 날아가 봇월로 되돌아간다.
 **절대 `session.assets`에 넣지 말 것.**
@@ -53,6 +54,11 @@ ready       R2에 완성된 바이트 존재 (size, contentType, preparedAt)
 failed      실패 (reason, failureKind, attempts, nextRetryAt)
 ```
 
+오디오 작업은 `lyrics` 하위 상태도 함께 가진다. `collecting`에서 시작해
+`review_required|ready|unavailable|failed` 중 하나를 보고한 뒤 오디오를
+`ready`로 만든다. 상태 응답에는 본문 대신 `language`, `sourceKind`,
+`cueCount`, `reason`만 둔다. 가사 실패는 기본 오디오 성공을 뒤집지 않는다.
+
 `failureKind`: `botwall` | `unavailable` | `network` | `upload` | `unknown`
 → 봇월 발생률 계측이 쿠키 투입 여부를 결정하는 근거다(§6).
 
@@ -69,6 +75,7 @@ failed      실패 (reason, failureKind, attempts, nextRetryAt)
 POST /v1/prepare/activity                  → 204             앱 활성 기상 힌트
 POST /v1/prepare            {videoId}     → {status, ...}   준비 요청(스테이징 시점)
 GET  /v1/prepare/{videoId}                → {status, ...}   폴링
+GET  /v1/prepare/{videoId}/lyrics         → timed JSON      인증된 가사 후보 읽기
 GET  /v1/audio/{videoId}?token=...        → 오디오 바이트   <audio src> (Range/206)
 ```
 
@@ -84,6 +91,7 @@ GET  /v1/audio/{videoId}?token=...        → 오디오 바이트   <audio src> 
 GET  /v1/prepare/wake     WebSocket        ← prepare.wake 기상 프레임
 POST /v1/prepare/claim                    → {videoId, leaseUntil} | 204   작업 집어가기
 PUT  /v1/prepare/{videoId}/bytes          → {ok}    본문=오디오 바이트, R2에 저장 후 ready
+PUT  /v1/prepare/{videoId}/lyrics         → {ok}    원언어 timed-caption 결과를 먼저 저장
 POST /v1/prepare/{videoId}/fail           {failureKind, reason} → {ok}
 POST /v1/prepare/{videoId}/heartbeat      → {leaseUntil}   긴 다운로드용 리스 연장
 GET  /v1/prepare/stats                    → 큐/실패율 계측 (§6)
@@ -108,8 +116,10 @@ loop:
     if wake: idle_backoff.reset()
     continue
   idle_backoff.reset()
-  audio = yt-dlp(job.videoId)        # bestaudio, android_vr 우선, 파일로 저장
-  if ok:   PUT /v1/prepare/{id}/bytes   (파일 스트리밍 업로드)
+  audio + metadata = yt-dlp(job.videoId)
+  lyrics = 같은 공개물의 수동 caption 우선, 없으면 원언어 ASR 후보
+  PUT /v1/prepare/{id}/lyrics            # review_required/unavailable/failed 포함
+  if audio ok: PUT /v1/prepare/{id}/bytes # 마지막 성공 보고가 ready를 확정
   else:    POST /v1/prepare/{id}/fail   (failureKind 분류)
   로컬 임시파일 삭제
 ```

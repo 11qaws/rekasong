@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, Music, UploadCloud, Loader2, RefreshCw, AlertCircle, Link, FileUp, ChevronRight, ListVideo, GripVertical } from 'lucide-react';
-import { useMeloming } from '../hooks/useMeloming';
 import { useSetlink } from '../hooks/useSetlink';
 import { useYoutubePlaylist } from '../hooks/useYoutubePlaylist';
 import { apiUrl } from '../lib/api';
@@ -28,18 +27,13 @@ export default function SearchPanel({
   sharedState,
   setSharedState,
 }) {
-  const { melomingChannelId, setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, activeIntegrationTab } = sharedState;
+  const { setlinkCatalog = [], setlinkSourceUrl = '', setlinkCatalogMeta = null, youtubePlaylistCatalog = [], youtubePlaylistSourceUrl = '', songbookMrCache = {}, activeIntegrationTab } = sharedState;
   
-  // YouTube search and imported playlists share one top-level source.  Keep the
-  // legacy persisted tab values so existing sessions reopen the same inner
-  // view without exposing two competing YouTube labels in the main nav.
-  const initialTab = ['youtube', 'youtube-playlist', 'setlink', 'meloming'].includes(activeIntegrationTab)
+  // Search, playlist import, and Setlink are equal top-level sources.
+  const initialTab = ['youtube', 'youtube-playlist', 'setlink'].includes(activeIntegrationTab)
     ? activeIntegrationTab
     : 'youtube';
   const [activeTab, setActiveTab] = useState(initialTab);
-  const lastYoutubeTabRef = useRef(['youtube', 'youtube-playlist'].includes(initialTab)
-    ? initialTab
-    : 'youtube');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -52,7 +46,6 @@ export default function SearchPanel({
   setSharedStateRef.current = setSharedState;
   
   // Integration Onboarding States
-  const [tempMeloId, setTempMeloId] = useState('');
   const [tempSetlinkUrl, setTempSetlinkUrl] = useState(setlinkSourceUrl);
   const [tempPlaylistUrl, setTempPlaylistUrl] = useState(youtubePlaylistSourceUrl);
   const [catalogImportError, setCatalogImportError] = useState('');
@@ -65,7 +58,6 @@ export default function SearchPanel({
   const [openingSongbookKey, setOpeningSongbookKey] = useState(null);
 
   // Local search queries for songbooks
-  const [meloSearch, setMeloSearch] = useState('');
   const [playlistSearch, setPlaylistSearch] = useState('');
   const [setlinkSearch, setSetlinkSearch] = useState('');
   const fileInputRef = useRef(null);
@@ -73,14 +65,11 @@ export default function SearchPanel({
   const youtubePlaylistCatalogRef = useRef(youtubePlaylistCatalog);
   youtubePlaylistCatalogRef.current = youtubePlaylistCatalog;
   
-  const melo = useMeloming(melomingChannelId);
   const setlink = useSetlink(setlinkCatalog);
   const playlist = useYoutubePlaylist(youtubePlaylistCatalog);
 
   useEffect(() => {
-    const activeSongbook = activeTab === 'meloming'
-      ? { platform: 'meloming', songs: melo.songs, connected: Boolean(melomingChannelId) }
-      : activeTab === 'setlink'
+    const activeSongbook = activeTab === 'setlink'
         ? { platform: 'setlink', songs: setlink.songs, connected: setlinkCatalog.length > 0 }
         : activeTab === 'youtube-playlist'
           ? { platform: 'youtube-playlist', songs: playlist.songs, connected: youtubePlaylistCatalog.length > 0 }
@@ -129,7 +118,7 @@ export default function SearchPanel({
       });
 
     return () => { cancelled = true; };
-  }, [activeTab, melomingChannelId, melo.songs, setlink.songs, setlinkCatalog.length, playlist.songs, youtubePlaylistCatalog.length]);
+  }, [activeTab, setlink.songs, setlinkCatalog.length, playlist.songs, youtubePlaylistCatalog.length]);
 
   const playlistFingerprint = youtubePlaylistCatalog.map((song) => song.sourceId || song.id).join('|');
 
@@ -199,12 +188,9 @@ export default function SearchPanel({
   }, [playlistFingerprint, playlistImportRun]);
 
   const handleTabChange = (tab) => {
-    if (tab === 'youtube' || tab === 'youtube-playlist') lastYoutubeTabRef.current = tab;
     setActiveTab(tab);
     setSharedState(prev => ({ ...prev, activeIntegrationTab: tab }));
   };
-
-  const openYoutubeSource = () => handleTabChange(lastYoutubeTabRef.current);
 
   const runYoutubeSearch = async (searchQuery) => {
     if (!searchQuery.trim()) return;
@@ -413,13 +399,6 @@ export default function SearchPanel({
     startSongbookMrSearch(song, platform);
   };
 
-  const handleIntegrationConnect = (platform, id) => {
-    if (!id.trim()) return;
-    if (platform === 'meloming') {
-      setSharedState(prev => ({ ...prev, melomingChannelId: id.trim() }));
-    }
-  };
-
   const handleSetlinkImport = async (value = tempSetlinkUrl) => {
     const sourceUrl = value.trim();
     if (!sourceUrl) return;
@@ -473,13 +452,9 @@ export default function SearchPanel({
 
   const handleIntegrationDisconnect = (platform) => {
     if(window.confirm(t('search.import.disconnectConfirm'))) {
-      if (platform === 'meloming') {
-        setSharedState(prev => ({ ...prev, melomingChannelId: '' }));
-      } else {
-        setSharedState(prev => platform === 'youtube-playlist'
-          ? ({ ...prev, youtubePlaylistSourceUrl: '', youtubePlaylistCatalog: [], youtubePlaylistCatalogMeta: null })
-          : ({ ...prev, setlinkSourceUrl: '', setlinkCatalog: [], setlinkCatalogMeta: null }));
-      }
+      setSharedState(prev => platform === 'youtube-playlist'
+        ? ({ ...prev, youtubePlaylistSourceUrl: '', youtubePlaylistCatalog: [], youtubePlaylistCatalogMeta: null })
+        : ({ ...prev, setlinkSourceUrl: '', setlinkCatalog: [], setlinkCatalogMeta: null }));
     }
   };
 
@@ -593,33 +568,26 @@ export default function SearchPanel({
     </>
   );
 
-  const renderSongbook = (platform, hookData, localSearch, setLocalSearch, isConnected, idValue, setIdValue, emptyMessage) => {
+  const renderSongbook = (platform, hookData, localSearch, setLocalSearch, isConnected, emptyMessage) => {
     if (!isConnected) {
-      const isMeloming = platform === 'meloming';
       const isPlaylist = platform === 'youtube-playlist';
-      const inputValue = isMeloming ? idValue : isPlaylist ? tempPlaylistUrl : tempSetlinkUrl;
-      const inputPlaceholder = isMeloming
-        ? t('search.import.placeholder.meloming')
-        : isPlaylist
+      const inputValue = isPlaylist ? tempPlaylistUrl : tempSetlinkUrl;
+      const inputPlaceholder = isPlaylist
           ? t('search.import.placeholder.youtubePlaylist')
           : t('search.import.placeholder.setlink');
-      const submitImport = isMeloming ? () => handleIntegrationConnect('meloming', idValue) : isPlaylist ? () => handlePlaylistImport(tempPlaylistUrl) : () => handleSetlinkImport(tempSetlinkUrl);
+      const submitImport = isPlaylist ? () => handlePlaylistImport(tempPlaylistUrl) : () => handleSetlinkImport(tempSetlinkUrl);
       const sourceError = isPlaylist ? playlistImportError : catalogImportError;
-      const isImporting = isPlaylist ? isPlaylistLoading : !isMeloming && isSetlinkLoading;
-      const handleInputChange = isMeloming ? setIdValue : isPlaylist ? setTempPlaylistUrl : setTempSetlinkUrl;
-      const sourceName = t(isMeloming
-        ? 'search.import.source.meloming'
-        : isPlaylist
+      const isImporting = isPlaylist ? isPlaylistLoading : isSetlinkLoading;
+      const handleInputChange = isPlaylist ? setTempPlaylistUrl : setTempSetlinkUrl;
+      const sourceName = t(isPlaylist
           ? 'search.import.source.youtubePlaylist'
           : 'search.import.source.setlink');
-      const sourceHelp = t(isMeloming
-        ? 'search.import.help.meloming'
-        : isPlaylist
+      const sourceHelp = t(isPlaylist
           ? 'search.import.help.youtubePlaylist'
           : 'search.import.help.setlink');
       return (
         <section className="songbook-connect">
-          {isMeloming ? <Music className="songbook-connect-icon" size={32} color="var(--eureka-emerald)" /> : <Link className="songbook-connect-icon" size={32} color="var(--eureka-azure)" />}
+          <Link className="songbook-connect-icon" size={32} color="var(--eureka-azure)" />
           <h3 className="songbook-connect-title">{t('search.import.addTitle', { source: sourceName })}</h3>
           <p className="songbook-connect-description">
             {t('search.import.description.attach')}<br/>
@@ -627,7 +595,7 @@ export default function SearchPanel({
           </p>
           <form className="source-connect-form" onSubmit={(event) => { event.preventDefault(); submitImport(); }}>
             <input 
-              type={isMeloming ? 'text' : 'url'}
+              type="url"
               placeholder={inputPlaceholder}
               className="glass-input"
               value={inputValue}
@@ -645,7 +613,7 @@ export default function SearchPanel({
       );
     }
 
-    const { songs, isLoading, error, refresh } = hookData;
+    const { songs, isLoading, error } = hookData;
     
     // 로컬 필터링
     const filteredSongs = songs.filter(s =>
@@ -670,9 +638,7 @@ export default function SearchPanel({
       || storedSetlinkName === 'Setlink public list';
     const catalogName = platform === 'setlink'
       ? (setlinkUsesDefaultName ? t('search.import.source.setlink') : storedSetlinkName)
-      : platform === 'youtube-playlist'
-        ? t('search.import.source.youtubePlaylist')
-        : (hookData.source?.name || t('search.import.source.meloming'));
+      : t('search.import.source.youtubePlaylist');
 
     return (
       <section className="songbook-list" aria-label={t('search.songbook.listLabel')}>
@@ -688,9 +654,6 @@ export default function SearchPanel({
           <div className="songbook-toolbar-actions">
             {platform === 'setlink' && setlinkSourceUrl && <button onClick={() => handleSetlinkImport(setlinkSourceUrl)} className="btn-icon" title={t('search.songbook.refresh.setlink')}><RefreshCw size={14} className={isSetlinkLoading ? 'spinner' : ''} /></button>}
             {platform === 'youtube-playlist' && youtubePlaylistSourceUrl && <button onClick={() => handlePlaylistImport(youtubePlaylistSourceUrl)} className="btn-icon" title={t('search.songbook.refresh.youtube')}><RefreshCw size={14} className={isPlaylistLoading ? 'spinner' : ''} /></button>}
-            {platform !== 'setlink' && platform !== 'youtube-playlist' && <button onClick={refresh} className="btn-icon" title={t('search.songbook.refresh.general')}>
-              <RefreshCw size={14} className={isLoading ? 'spinner' : ''} />
-            </button>}
             <button onClick={() => handleIntegrationDisconnect(platform)} className="btn-icon btn-icon-danger" style={{fontSize:'0.75rem'}}>{t('search.songbook.disconnect')}</button>
           </div>
         </div>
@@ -878,14 +841,25 @@ export default function SearchPanel({
         >
           <button
             type="button"
-            className={`tab-btn source-tab ${['youtube', 'youtube-playlist'].includes(activeTab) ? 'active' : ''}`}
+            className={`tab-btn source-tab ${activeTab === 'youtube' ? 'active' : ''}`}
             data-source="youtube"
-            aria-pressed={['youtube', 'youtube-playlist'].includes(activeTab)}
-            title={t('search.tab.youtube')}
-            onClick={openYoutubeSource}
+            aria-pressed={activeTab === 'youtube'}
+            title={t('search.tab.youtubeSearch')}
+            onClick={() => handleTabChange('youtube')}
           >
             <Search size={14} aria-hidden="true" />
-            <span className="source-tab-label">{t('search.tab.youtube')}</span>
+            <span className="source-tab-label">{t('search.tab.youtubeSearch')}</span>
+          </button>
+          <button
+            type="button"
+            className={`tab-btn source-tab ${activeTab === 'youtube-playlist' ? 'active' : ''}`}
+            data-source="youtube-playlist"
+            aria-pressed={activeTab === 'youtube-playlist'}
+            title={t('search.tab.youtubeList')}
+            onClick={() => handleTabChange('youtube-playlist')}
+          >
+            <ListVideo size={14} aria-hidden="true" />
+            <span className="source-tab-label">{t('search.tab.youtubeList')}</span>
           </button>
           <button
             type="button"
@@ -898,73 +872,25 @@ export default function SearchPanel({
             <Link size={14} aria-hidden="true" />
             <span className="source-tab-label">{t('search.tab.setlink')}</span>
           </button>
-          <button
-            type="button"
-            className={`tab-btn source-tab ${activeTab === 'meloming' ? 'active' : ''}`}
-            data-source="meloming"
-            aria-pressed={activeTab === 'meloming'}
-            title={t('search.tab.meloming')}
-            onClick={() => handleTabChange('meloming')}
-          >
-            <Music size={14} aria-hidden="true" />
-            <span className="source-tab-label">{t('search.tab.meloming')}</span>
-          </button>
         </div>
       </header>
       
       <main className="composer-content">
-        {['youtube', 'youtube-playlist'].includes(activeTab) && (
-          <section className="youtube-source-workspace" aria-label={t('search.tab.youtube')}>
-            <div className="youtube-mode-switch" role="tablist" aria-label={t('search.youtube.mode.label')}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'youtube'}
-                className={activeTab === 'youtube' ? 'is-active' : ''}
-                onClick={() => handleTabChange('youtube')}
-              >
-                <Search size={14} aria-hidden="true" /> {t('search.youtube.mode.search')}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'youtube-playlist'}
-                className={activeTab === 'youtube-playlist' ? 'is-active' : ''}
-                onClick={() => handleTabChange('youtube-playlist')}
-              >
-                <ListVideo size={14} aria-hidden="true" /> {t('search.youtube.mode.playlist')}
-              </button>
-            </div>
-            {activeTab === 'youtube' ? renderYoutubeTab() : renderSongbook(
-              'youtube-playlist',
-              { ...playlist, isLoading: isPlaylistLoading, error: playlistImportError || playlist.error, refresh: () => handlePlaylistImport(youtubePlaylistSourceUrl) },
-              playlistSearch,
-              setPlaylistSearch,
-              youtubePlaylistCatalog.length > 0,
-              '',
-              () => {},
-              t('search.songbook.empty.youtubePlaylist')
-            )}
-          </section>
-        )}
-        {activeTab === 'meloming' && renderSongbook(
-          'meloming', 
-          melo, 
-          meloSearch, 
-          setMeloSearch, 
-          melomingChannelId, 
-          tempMeloId, 
-          setTempMeloId, 
-          t('search.songbook.empty.meloming')
+        {activeTab === 'youtube' && renderYoutubeTab()}
+        {activeTab === 'youtube-playlist' && renderSongbook(
+          'youtube-playlist',
+          { ...playlist, isLoading: isPlaylistLoading, error: playlistImportError || playlist.error },
+          playlistSearch,
+          setPlaylistSearch,
+          youtubePlaylistCatalog.length > 0,
+          t('search.songbook.empty.youtubePlaylist')
         )}
         {activeTab === 'setlink' && renderSongbook(
           'setlink', 
-          { ...setlink, isLoading: isSetlinkLoading, error: catalogImportError || setlink.error, refresh: () => handleSetlinkImport(setlinkSourceUrl) },
+          { ...setlink, isLoading: isSetlinkLoading, error: catalogImportError || setlink.error },
           setlinkSearch, 
           setSetlinkSearch, 
           setlinkCatalog.length > 0,
-          '',
-          () => {},
           t('search.songbook.empty.setlink')
         )}
       </main>

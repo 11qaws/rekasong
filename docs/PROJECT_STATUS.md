@@ -20,13 +20,16 @@ Rekasong은 스트리머가 미리 검증한 “부를 수 있는 곡 + 바로 �
 
 ### 입력·카탈로그
 
-- YouTube 검색·URL 입력과 YouTube 플레이리스트 입력 경로가 있다.
-- 멜로밍과 Setlink를 노래책 입력원으로 불러오는 경로가 있다.
+- 상단의 `검색 · 플레이리스트 · Setlink` 세 선택에서 YouTube 검색·URL 입력과 플레이리스트 입력을 같은 층위로 연다.
+- Setlink 공개 목록을 노래책 입력원으로 불러오는 경로가 있다.
 - 로컬 오디오/MP4를 스테이징하고, On-Air 모드에서는 임시 업로드 자산으로 전환하는 경로가 있다.
 - AI 제목 정리, 제목 캐시, 노래책 MR 매핑 캐시가 있다.
 - 노래책에 이미 등록된 제목은 AI 정리 없이 그대로 사용하는 흐름이 있다.
 
 ### 방송 제어·표시
+
+- YouTube 스테이징의 기존 prepare 작업은 오디오와 timed-caption 수집을 함께 수행하고, Dashboard는 수집된 원문 전체로 한국어 초안을 자동 생성해 `검수 필요` 상태로 연결한다.
+- 가사 후보 본문은 prepare 상태·WebSocket·로그에 넣지 않고 인증된 별도 JSON 자산으로만 읽는다.
 
 - 대시보드에 현재 재생, 대기열, 이전 재생, 곡 스테이징 화면이 있다.
 - 직접 재생 모드에서는 YouTube iframe과 로컬 audio/video 요소를 재생한다.
@@ -42,6 +45,7 @@ Rekasong은 스트리머가 미리 검증한 “부를 수 있는 곡 + 바로 �
 - 목적 cue 1/4음표 전부터 1/8음표 전까지 원문+한국어 그룹을 전환하고, 간주를 명시적 blank cue로 처리한다.
 - 가사 package는 IndexedDB와 별도 세션 JSON asset에 저장하며 WebSocket과 display state에는 본문을 넣지 않는다.
 - Protocol v2 Player는 실제 audio currentTime으로 투명 1920×1080 overlay를 렌더한다.
+- 대시보드의 현재 재생 공간도 같은 media time과 cue 해석기를 사용해 원문과 한국어를 표시한다.
 - 상세 계약은 [LYRICS_OVERLAY_CONTRACT](LYRICS_OVERLAY_CONTRACT.md), [LYRICS_TRANSLATION_POLICY](LYRICS_TRANSLATION_POLICY.md), [LYRICS_OBS_ACCEPTANCE](LYRICS_OBS_ACCEPTANCE.md)를 따른다.
 
 ### 이번 기록에 포함한 변경

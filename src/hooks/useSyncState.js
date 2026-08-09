@@ -29,7 +29,6 @@ const defaultState = {
   active: null,
   volume: 100,
   isMuted: false,
-  melomingChannelId: '',
   setlinkCatalog: [],
   setlinkSourceUrl: '',
   setlinkCatalogMeta: null,
@@ -126,7 +125,6 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     active,
     volume: Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : defaultState.volume,
     isMuted: Boolean(source.isMuted),
-    melomingChannelId: typeof source.melomingChannelId === 'string' ? source.melomingChannelId : '',
     setlinkCatalog: Array.isArray(source.setlinkCatalog) ? source.setlinkCatalog : [],
     setlinkSourceUrl: typeof source.setlinkSourceUrl === 'string' ? source.setlinkSourceUrl : '',
     setlinkCatalogMeta: source.setlinkCatalogMeta && typeof source.setlinkCatalogMeta === 'object' ? source.setlinkCatalogMeta : null,
@@ -136,13 +134,14 @@ const normaliseState = (candidate, { fromStorage = false, resetCurrentSong = fal
     songbookMrCache: source.songbookMrCache && typeof source.songbookMrCache === 'object' && !Array.isArray(source.songbookMrCache)
       ? source.songbookMrCache
       : {},
-    activeIntegrationTab: ['youtube', 'meloming', 'setlink', 'youtube-playlist'].includes(source.activeIntegrationTab)
+    activeIntegrationTab: ['youtube', 'setlink', 'youtube-playlist'].includes(source.activeIntegrationTab)
       ? source.activeIntegrationTab
       : defaultState.activeIntegrationTab,
     autoPlayNext: Boolean(source.autoPlayNext)
   };
   // v1 잔재가 상태에 남아 다시 저장·발행되지 않게 제거한다.
   delete next.currentSong;
+  delete next.melomingChannelId;
   return next;
 };
 

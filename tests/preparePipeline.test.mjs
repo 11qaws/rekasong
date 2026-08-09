@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import {
   PREPARE_REQUEST_ERROR_CODES,
   PrepareRequestError,
+  fetchPreparedLyricsCandidate,
   fetchPrepareStatus,
   notifyPrepareActivity,
   prepareBlockMessage,
@@ -82,7 +83,46 @@ test('successful prepare requests preserve the API contract and normalize respon
   assert.match(requestUrl, /token=player-token/);
   assert.equal(requestInit.method, 'POST');
   assert.deepEqual(JSON.parse(requestInit.body), { videoId: VIDEO_ID, force: true });
-  assert.deepEqual(info, { status: 'ready', failureKind: null, reason: '' });
+  assert.deepEqual(info, { status: 'ready', failureKind: null, reason: '', lyrics: null });
+});
+
+test('prepare status carries only a compact lyrics outcome and fetches content separately', async () => {
+  const info = await fetchPrepareStatus(VIDEO_ID, AUTH, {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'ready',
+        lyrics: {
+          status: 'review_required',
+          language: 'ja',
+          sourceKind: 'youtube_manual_caption',
+          cueCount: 12,
+          reason: '',
+          cues: [{ text: 'must not cross the status boundary' }],
+        },
+      }),
+    }),
+  });
+  assert.deepEqual(info.lyrics, {
+    status: 'review_required',
+    language: 'ja',
+    sourceKind: 'youtube_manual_caption',
+    cueCount: 12,
+    reason: '',
+  });
+  assert.equal(Object.hasOwn(info.lyrics, 'cues'), false);
+
+  let candidateUrl = '';
+  const candidate = await fetchPreparedLyricsCandidate(VIDEO_ID, AUTH, {
+    fetchImpl: async (url) => {
+      candidateUrl = url;
+      return { ok: true, status: 200, json: async () => ({ schemaVersion: 1, cues: [] }) };
+    },
+  });
+  assert.match(candidateUrl, /\/v1\/prepare\/abcdefghijk\/lyrics\?/);
+  assert.match(candidateUrl, /room=room-1234/);
+  assert.deepEqual(candidate, { schemaVersion: 1, cues: [] });
 });
 
 test('prepare activity is a bounded non-authoritative hint without a response body contract', async () => {
@@ -199,4 +239,5 @@ test('Dashboard resets prepare state by session identity and fences stale async 
   assert.match(source, /recoverOnAirConnection\(\)/);
   assert.match(source, /notifyPrepareActivity\(/);
   assert.match(source, /now - signalState\.lastAttemptAt < 60000/);
+  assert.match(source, /noteAutomaticLyricsState,\s+prepareStates,\s+prepareSessionKey,/);
 });

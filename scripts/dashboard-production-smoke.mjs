@@ -170,17 +170,13 @@ try {
 
   assert.equal((await page.locator('h1.logo').innerText()).trim(), 'Rekasong');
   assert.equal(await page.locator('.dashboard-header .subtitle').count(), 0, 'The removed subtitle returned.');
-  assert.equal(await page.locator('.source-tab').count(), 3, 'YouTube must remain one top-level source.');
+  assert.equal(await page.locator('.source-tab').count(), 3, 'Search, Playlist, and Setlink must remain top-level sources.');
   assert.deepEqual(
     await page.locator('.source-tab-label').allInnerTexts(),
-    ['YouTube', 'Setlink', '멜로밍'],
+    ['검색', '플레이리스트', 'Setlink'],
   );
   assert.equal(await page.locator('.source-tab[data-source="youtube"]').count(), 1);
-  assert.equal(await page.locator('.youtube-mode-switch button').count(), 2);
-  assert.deepEqual(
-    await page.locator('.youtube-mode-switch button').allInnerTexts(),
-    ['검색', '플레이리스트'],
-  );
+  assert.equal(await page.locator('.source-tab[data-source="youtube-playlist"]').count(), 1);
 
   await page.waitForFunction(() => {
     const status = document.querySelector('#output-route-live-status');
@@ -289,11 +285,7 @@ try {
   await page.waitForFunction(() => document.documentElement.lang === 'en');
   assert.deepEqual(
     await page.locator('.source-tab-label').allInnerTexts(),
-    ['YouTube', 'Setlink', 'Meloming'],
-  );
-  assert.deepEqual(
-    await page.locator('.youtube-mode-switch button').allInnerTexts(),
-    ['Search', 'Playlist'],
+    ['Search', 'Playlist', 'Setlink'],
   );
   assert.match(await page.locator('#output-route-live-status').innerText(), /speaker/i);
 
@@ -390,8 +382,7 @@ try {
     executablePath,
     checks: {
       defaultOutput: 'speaker',
-      topLevelSources: ['YouTube', 'Setlink', 'Meloming'],
-      youtubeModes: ['Search', 'Playlist'],
+      topLevelSources: ['Search', 'Playlist', 'Setlink'],
       localePersistence: 'ko -> en -> reload',
       responsiveWidths: responsiveLayouts.map(({ viewportWidth }) => viewportWidth),
       englishResponsiveWidths: englishResponsiveLayouts.map(({ viewportWidth }) => viewportWidth),

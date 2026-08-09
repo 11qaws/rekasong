@@ -145,7 +145,6 @@ export default function DisplayWidget({
                 </div>
               </div>
               <div className="current-song-text" style={{display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start'}}>
-                {currentSong.source === 'meloming' && <div style={{fontSize:'12px', background:'var(--eureka-emerald)', color:'#fff', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>Meloming</div>}
                 {currentSong.source === 'setlink' && <div style={{fontSize:'12px', background:'var(--eureka-azure)', color:'#fff', padding:'2px 8px', borderRadius:'10px', display:'inline-block'}}>Setlink</div>}
                 {/* Stage 5: 재생 상태 배지 — 기존 출처 배지와 같은 최소 텍스트 형식. */}
                 {playbackStatusText && (

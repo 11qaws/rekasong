@@ -77,7 +77,9 @@ export default function QueuePanel({
   autoPlayNext,
   setSharedState,
   prepareStates,
+  lyricsPreparationStates = {},
   onRetryPrepare,
+  onRetryLyrics,
   onPrepareLyrics,
 }) {
   const [dragOverEntryId, setDragOverEntryId] = useState(null);
@@ -230,14 +232,30 @@ export default function QueuePanel({
                 >
                   <span className="queue-grip"><GripVertical size={15} /> {index + 1}</span>
                   <strong>{entry.song.title}</strong>
-                  <LyricsStatusBadge lyricsRef={entry.song.lyricsRef} />
+                  <LyricsStatusBadge
+                    lyricsRef={entry.song.lyricsRef}
+                    preparationState={entry.song.type === 'youtube'
+                      ? lyricsPreparationStates[entry.song.src] || null
+                      : null}
+                  />
                   <button
                     type="button"
                     className="btn-icon lyrics-prepare-button"
-                    title={getLyricsMessage('action.prepare')}
-                    aria-label={getLyricsMessage('action.prepare')}
+                    title={getLyricsMessage('action.review')}
+                    aria-label={getLyricsMessage('action.review')}
                     onClick={() => onPrepareLyrics?.(entry)}
                   ><Languages size={14} /></button>
+                  {entry.song.type === 'youtube'
+                    && lyricsPreparationStates[entry.song.src]?.phase === 'failed'
+                    && onRetryLyrics && (
+                    <button
+                      type="button"
+                      className="btn-icon lyrics-prepare-button"
+                      title={getLyricsMessage('action.retry')}
+                      aria-label={getLyricsMessage('action.retry')}
+                      onClick={() => onRetryLyrics(entry.song.src)}
+                    ><RotateCcw size={14} /></button>
+                  )}
                   {expiredLocal ? (
                     <span className="queue-prepare-badge is-unavailable">
                       <AlertTriangle size={11} /> {t('queue.localFile.requiredLabel')}

@@ -7,7 +7,7 @@ const ACCENTED_ASCII = Object.freeze({
   u: 'û', v: 'ṽ', w: 'ŵ', x: 'ẍ', y: 'ŷ', z: 'ž',
 });
 
-const PROTECTED_SEGMENT_SOURCE = String.raw`\{\{[^{}]+\}\}|\$\{[^{}]+\}|https?:\/\/[^\s<>"']+|[\w.+-]+@[\w.-]+\.\w+|\b(?:Rekasong|YouTube|Setlink|Meloming|Cloudflare|GitHub|Chrome|Edge|Windows|macOS)\b|\b[A-Z][A-Z0-9_-]{1,}\b|\b[vV]\d+(?:\.\d+)*\b|\b\d+(?:\.\d+)*(?:ms|px|Hz|kHz|KiB|MiB|GiB|B|%)?\b`;
+const PROTECTED_SEGMENT_SOURCE = String.raw`\{\{[^{}]+\}\}|\$\{[^{}]+\}|https?:\/\/[^\s<>"']+|[\w.+-]+@[\w.-]+\.\w+|\b(?:Rekasong|YouTube|Setlink|Cloudflare|GitHub|Chrome|Edge|Windows|macOS)\b|\b[A-Z][A-Z0-9_-]{1,}\b|\b[vV]\d+(?:\.\d+)*\b|\b\d+(?:\.\d+)*(?:ms|px|Hz|kHz|KiB|MiB|GiB|B|%)?\b`;
 
 export const PSEUDO_LOCALE_EXPANSION_RATIO = 0.4;
 

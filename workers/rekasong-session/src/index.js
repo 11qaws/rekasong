@@ -11,6 +11,8 @@ const SESSION_RECONNECT_GRACE_MS = 30 * 60 * 1000;
 const SESSION_INITIAL_GRACE_MS = 30 * 60 * 1000;
 const ASSET_DELETE_DELAY_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_PREPARED_LYRICS_BYTES = 512 * 1024;
+const MAX_PREPARED_LYRICS_CUES = 2_000;
 
 const PREPARE_LEASE_MS = 120 * 1000;
 const PREPARE_WAKE_PROTOCOL_VERSION = 1;
@@ -80,7 +82,7 @@ const FAILURE_KINDS = ['botwall', 'unavailable', 'network', 'upload', 'unknown']
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Rekasong-Name, X-Rekasong-Type, X-Rekasong-Size, X-Rekasong-Hash, X-Rekasong-Package'
 };
 
@@ -115,6 +117,34 @@ const assetKey = (room, assetId) => `sessions/${room}/${assetId}`;
 // deleteAssets()가 세션 종료 시 세션 경로를 지우므로, 여기에 섞이면 방송마다
 // 캐시가 사라져 봇월 압력이 되돌아온다. (PREPARE_PIPELINE.md §1)
 const audioKey = (videoId) => `audio/${videoId}`;
+const preparedLyricsKey = (videoId) => `lyrics-candidates/youtube/${videoId}.json`;
+
+const preparedLyricsSummary = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const statuses = ['review_required', 'ready', 'unavailable', 'failed'];
+  if (value.schemaVersion !== 1
+    || !VIDEO_ID_PATTERN.test(value.videoId || '')
+    || !statuses.includes(value.status)) return null;
+  const summary = {
+    status: value.status,
+    language: typeof value.language === 'string' ? value.language.slice(0, 16) : '',
+    sourceKind: typeof value.sourceKind === 'string' ? value.sourceKind.slice(0, 80) : '',
+    cueCount: Array.isArray(value.cues) ? value.cues.length : 0,
+    reason: typeof value.reason === 'string' ? value.reason.slice(0, 160) : '',
+  };
+  if (['unavailable', 'failed'].includes(value.status)) return summary;
+  if (!Array.isArray(value.cues)
+    || value.cues.length === 0
+    || value.cues.length > MAX_PREPARED_LYRICS_CUES) return null;
+  let previousAnchor = -1;
+  for (const cue of value.cues) {
+    if (!cue || typeof cue !== 'object' || Array.isArray(cue)
+      || !Number.isFinite(cue.anchorMs) || cue.anchorMs < previousAnchor || cue.anchorMs < 0
+      || typeof cue.text !== 'string' || !cue.text.trim() || cue.text.length > 500) return null;
+    previousAnchor = cue.anchorMs;
+  }
+  return summary;
+};
 
 // Protocol v2 identity fields are deliberately bounded before they enter a
 // WebSocket attachment or Durable Object storage. They are opaque IDs, not
@@ -313,6 +343,17 @@ const streamPreparedAudio = async (request, env, videoId) => {
   return mediaResponse(object);
 };
 
+const streamPreparedLyrics = async (request, env, videoId) => {
+  if (!(await verifyRoomPlayerToken(request, env))) return json({ error: 'Unauthorized' }, 401);
+  const object = await env.MEDIA_BUCKET.get(preparedLyricsKey(videoId));
+  if (!object) return json({ error: 'Prepared lyrics not found' }, 404);
+  const headers = new Headers(corsHeaders);
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  headers.set('Content-Length', String(object.size));
+  headers.set('Cache-Control', 'private, max-age=300');
+  return new Response(object.body, { headers });
+};
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
@@ -321,6 +362,11 @@ export default {
 
     const audioMatch = url.pathname.match(/^\/v1\/audio\/([A-Za-z0-9_-]{11})$/);
     if (audioMatch && request.method === 'GET') return streamPreparedAudio(request, env, audioMatch[1]);
+
+    const preparedLyricsMatch = url.pathname.match(/^\/v1\/prepare\/([A-Za-z0-9_-]{11})\/lyrics$/);
+    if (preparedLyricsMatch && request.method === 'GET') {
+      return streamPreparedLyrics(request, env, preparedLyricsMatch[1]);
+    }
 
     if (url.pathname === '/v1/prepare' || url.pathname.startsWith('/v1/prepare/')) {
       // 대시보드 구간(큐잉·폴링)은 /v1/audio와 동일한 room+player 토큰 게이트.
@@ -4536,11 +4582,12 @@ export class PrepareQueue {
     if (url.pathname === '/v1/prepare/claim' && request.method === 'POST') return this.claim(request);
     if (url.pathname === '/v1/prepare/stats' && request.method === 'GET') return this.stats(request);
 
-    const match = url.pathname.match(/^\/v1\/prepare\/([A-Za-z0-9_-]{11})(?:\/(bytes|fail|heartbeat))?$/);
+    const match = url.pathname.match(/^\/v1\/prepare\/([A-Za-z0-9_-]{11})(?:\/(bytes|lyrics|fail|heartbeat))?$/);
     if (!match) return json({ error: 'Not found' }, 404);
     const [, videoId, action] = match;
     if (!action && request.method === 'GET') return this.status(videoId);
     if (action === 'bytes' && request.method === 'PUT') return this.uploadBytes(request, videoId);
+    if (action === 'lyrics' && request.method === 'PUT') return this.uploadPreparedLyrics(request, videoId);
     if (action === 'fail' && request.method === 'POST') return this.markFailed(request, videoId);
     if (action === 'heartbeat' && request.method === 'POST') return this.heartbeat(request, videoId);
     return json({ error: 'Not found' }, 404);
@@ -4668,6 +4715,16 @@ export class PrepareQueue {
       view.contentType = job.contentType;
       view.preparedAt = job.preparedAt;
     }
+    if (job.lyrics) view.lyrics = job.lyrics;
+    else if (job.status === 'ready') {
+      view.lyrics = {
+        status: 'failed',
+        language: '',
+        sourceKind: '',
+        cueCount: 0,
+        reason: 'lyrics_not_reported',
+      };
+    }
     if (job.status === 'failed') {
       view.failureKind = job.failureKind;
       view.reason = job.reason;
@@ -4684,7 +4741,14 @@ export class PrepareQueue {
       status: 'queued',
       createdAt: previous?.createdAt || now,
       queuedAt: now,
-      attempts: previous?.attempts || 0
+      attempts: previous?.attempts || 0,
+      lyrics: {
+        status: 'collecting',
+        language: '',
+        sourceKind: '',
+        cueCount: 0,
+        reason: '',
+      }
     };
     await this.putJob(job);
     this.signalWorkers('job_enqueued');
@@ -4709,7 +4773,9 @@ export class PrepareQueue {
       // 수동/TTL 정리로 바이트만 사라진 ready는 거짓 안전이다. 폴링(GET)이 아닌
       // 스테이징 시점에만 실존을 확인해 R2 head 비용을 요청 1회로 묶는다.
       // force도 여기엔 적용하지 않는다 — 실존하는 바이트를 다시 받을 이유가 없다.
-      if (await this.env.MEDIA_BUCKET.head(audioKey(videoId))) return json(this.publicJob(job));
+      if (await this.env.MEDIA_BUCKET.head(audioKey(videoId)) && job.lyrics) {
+        return json(this.publicJob(job));
+      }
       return json(this.publicJob(await this.enqueue(videoId, job)), 202);
     }
 
@@ -4760,7 +4826,14 @@ export class PrepareQueue {
       createdAt: candidate.createdAt,
       attempts: (candidate.attempts || 0) + 1,
       claimedAt: now,
-      leaseUntil: now + PREPARE_LEASE_MS
+      leaseUntil: now + PREPARE_LEASE_MS,
+      lyrics: candidate.lyrics || {
+        status: 'collecting',
+        language: '',
+        sourceKind: '',
+        cueCount: 0,
+        reason: '',
+      }
     };
     await this.putJob(claimed);
     await this.bumpCounters((counters) => { counters.claims += 1; });
@@ -4795,11 +4868,48 @@ export class PrepareQueue {
       attempts: job.attempts || 0,
       size: object.size,
       contentType,
-      preparedAt: Date.now()
+      preparedAt: Date.now(),
+      lyrics: job.lyrics || {
+        status: 'failed',
+        language: '',
+        sourceKind: '',
+        cueCount: 0,
+        reason: 'lyrics_not_reported',
+      }
     });
     await this.bumpCounters((counters) => { counters.ready += 1; });
     await this.scheduleLeaseAlarm();
     return json({ ok: true, size: object.size });
+  }
+
+  async uploadPreparedLyrics(request, videoId) {
+    if (!(await this.verifyWorker(request))) return json({ error: 'Unauthorized' }, 401);
+    const job = await this.getJob(videoId);
+    if (!job) return json({ error: 'Unknown prepare job' }, 404);
+    const declaredSize = Number(request.headers.get('Content-Length'));
+    if (!Number.isFinite(declaredSize) || declaredSize <= 0
+      || declaredSize > MAX_PREPARED_LYRICS_BYTES
+      || !request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) {
+      return json({ error: 'Unsupported lyrics candidate' }, 400);
+    }
+    const value = await request.json().catch(() => null);
+    const summary = preparedLyricsSummary(value);
+    if (!summary || value.videoId !== videoId) return json({ error: 'Invalid lyrics candidate' }, 400);
+
+    if (['review_required', 'ready'].includes(summary.status)) {
+      await this.env.MEDIA_BUCKET.put(
+        preparedLyricsKey(videoId),
+        JSON.stringify(value),
+        {
+          httpMetadata: { contentType: 'application/json; charset=utf-8' },
+          customMetadata: { videoId, lyricsStatus: summary.status },
+        },
+      );
+    } else {
+      await this.env.MEDIA_BUCKET.delete(preparedLyricsKey(videoId));
+    }
+    await this.putJob({ ...job, lyrics: summary });
+    return json({ ok: true, lyrics: summary });
   }
 
   async markFailed(request, videoId) {

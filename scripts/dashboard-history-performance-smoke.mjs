@@ -49,7 +49,6 @@ const fixtureState = {
   active: null,
   volume: 100,
   isMuted: false,
-  melomingChannelId: '',
   setlinkCatalog: [],
   setlinkSourceUrl: '',
   setlinkCatalogMeta: null,
