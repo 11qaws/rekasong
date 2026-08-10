@@ -79,6 +79,16 @@ test('App and Widget keep dashboard, display, and player routes behind lazy boun
   assert.match(widget, /lazy\(\(\) => import\('\.\.\/components\/OnAirPlayerV2'\)\)/);
 });
 
+test('dashboard ships critical lyrics display and review code without deploy-stale lazy chunks', async () => {
+  const dashboard = await source('src/pages/Dashboard.jsx');
+  const playbackPanel = await source('src/components/PlaybackPanel.jsx');
+
+  assert.ok(staticImportSpecifiers(dashboard).includes('../components/lyrics/LyricsPreparationWorkspace.jsx'));
+  assert.ok(staticImportSpecifiers(playbackPanel).includes('./lyrics/CurrentLyricsDisplay.jsx'));
+  assert.doesNotMatch(dashboard, /lazy\(\(\) => import\('\.\.\/components\/lyrics\/LyricsPreparationWorkspace\.jsx'\)\)/);
+  assert.doesNotMatch(playbackPanel, /lazy\(\(\) => import\('\.\/lyrics\/CurrentLyricsDisplay\.jsx'\)\)/);
+});
+
 test('Widget preserves existing direct-query and HashRouter parameter precedence', async () => {
   const widget = await source('src/pages/Widget.jsx');
 

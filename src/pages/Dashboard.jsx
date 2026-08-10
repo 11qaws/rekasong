@@ -115,6 +115,7 @@ import {
 } from '../lib/lyrics/lyricsAutoPreparation';
 import { searchHostedLyrics } from '../lib/lyrics/lyricsSearchClient';
 import { attachTrustedLyricsTiming } from '../lib/lyrics/lyricsTimingMatch';
+import LyricsPreparationWorkspace from '../components/lyrics/LyricsPreparationWorkspace.jsx';
 import {
   PREPARE_REQUEST_ERROR_CODES,
   YOUTUBE_ID_PATTERN,
@@ -151,7 +152,6 @@ const LOCAL_FILE_MAX_BYTES = 200 * 1024 * 1024;
 const playbackProgressNow = () => globalThis.performance?.now?.() ?? Date.now();
 
 const DashboardLocalSpeaker = lazy(() => import('../components/DashboardLocalSpeaker'));
-const LyricsPreparationWorkspace = lazy(() => import('../components/lyrics/LyricsPreparationWorkspace.jsx'));
 
 const songbookCacheKey = (source, songbookId) => `${source}:${songbookId}`;
 const EMPTY_PREPARE_STATES = Object.freeze({});
@@ -1587,7 +1587,7 @@ export default function Dashboard() {
     return result;
   }, []);
 
-  const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default', lines = null) => {
+  const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default', lines = null, timingSource = null) => {
     return searchHostedLyrics({
       endpoint: apiUrl('/api/lyrics-search'),
       catalogBaseUrl: new URL(`${import.meta.env.BASE_URL}lyrics-catalog/v1/`, window.location.href).toString(),
@@ -1597,7 +1597,12 @@ export default function Dashboard() {
         artist: automaticLyricsSearchArtist(song),
         sourcePriority,
         ...(Number.isFinite(song?.durationMs) ? { durationMs: song.durationMs } : {}),
-        ...(sourcePriority === 'timing_only' && Array.isArray(lines) ? { lines } : {}),
+        ...(sourcePriority === 'timing_only' && Array.isArray(lines) ? {
+          lines,
+          playbackKind: song?.source === 'setlink' ? 'instrumental' : 'unknown',
+          lyricsSourceTitle: timingSource?.sourceTitle || '',
+          lyricsSourceUrl: timingSource?.sourceUrl || '',
+        } : {}),
       },
     });
   }, []);
@@ -1736,7 +1741,13 @@ export default function Dashboard() {
             } catch { /* continue to bounded playback audio timing */ }
           }
           try {
-            const timed = await searchAutomaticLyrics(videoId, song, 'timing_only', loaded.candidate.lines);
+            const timed = await searchAutomaticLyrics(
+              videoId,
+              song,
+              'timing_only',
+              loaded.candidate.lines,
+              loaded.candidate,
+            );
             return {
               candidate: attachTrustedLyricsTiming(loaded.candidate, timed),
               sessionKey: loaded.sessionKey,

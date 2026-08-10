@@ -1,5 +1,13 @@
 # Rekasong 개발 로그 (DEVELOPMENT_LOG)
 
+## 2026-08-10 (Codex) — v0.2.81 재생 가사 번들 안정화와 off vocal 싱크
+
+- 오래 열어 둔 공개 `e49e1b1` 탭에서 `두근 어질`을 재생하자 `CurrentLyricsDisplay-DDHJpOKo.js` 동적 청크가 이전 배포와 함께 사라져 `Failed to fetch dynamically imported module`로 재생 패널이 오류 경계에 들어가는 현상을 실제 재현했다. 현재 가사 표시와 가사 검수 작업공간을 Dashboard의 정적 의존성으로 옮겨, 대시보드를 처음 연 시점에 필요한 코드를 함께 받은 뒤 후속 배포가 있어도 재생·검수 순간에 사라진 청크를 다시 요구하지 않게 했다.
+- 같은 화면에서 `두근 어질`은 `가사 정리됨`이 아니라 `가사 검수 필요` 상태였다. 자동 수집과 방송 패키지 저장을 계속 분리하며, 신뢰 출처 원문·번역·타이밍 검수 4개 확인과 `방송 준비 완료` 전에는 재생 곡에 ready `lyricsRef`를 붙이지 않는 기존 안전 경계를 유지했다.
+- Setlink의 연결 MR은 timing 요청에서 `instrumental`로 명시한다. Gemini는 먼저 Google Search 근거와 YouTube 존재 확인을 통과한 동일 곡 원곡 보컬을 고른다. 원곡 제목으로 LRCLIB 동기 가사를 찾고, 신뢰 출처에서 고정한 원문과 70% 이상이 정확한 순서로 일치할 때만 그 타임라인을 사용한다. 행 분할이 다른 구간은 일치 행 사이의 문자 위치로 타임스탬프만 투영하며 원문은 바꾸지 않는다. Gemini의 두 영상 분석은 60개 가사를 다시 추측하지 않고 동일 편곡 여부와 시작·끝 오프셋만 판정한다. 결과는 단조 증가·행별 원문 동일성·알려진 재생 길이 범위를 통과해야 검수 단계로 간다.
+- Cloudflare 고유 배포 `061f2210.rekasong.pages.dev`에서 실제 `두근 어질` Setlink MR로 API를 호출했다. Vocaro 원문 `60/60`행이 그대로 유지됐고 검증된 LRCLIB `24023279`를 기준으로 `20,060ms → 210,300ms`, 단조 증가, 알려진 225초 재생 범위 안, 분석 신뢰도 `0.98`인 `review_required` 후보가 반환됐다. 잘못된 초기 Gemini 전행 추정은 `210,000ms → 23,100ms` 역행을 서버가 422로 차단했고 저장하지 않았다.
+- 전체 `856/856` 테스트, production build, 가사 준비 브라우저 smoke와 OBS bundle 예산(`406,535B raw / 125,687B gzip`)을 통과했다. lint는 신규 오류 없이 기존 `functions/api/gemini.js` escape 경고 2건만 남는다. 빌드 산출물에는 `CurrentLyricsDisplay`·`LyricsPreparationWorkspace` 지연 청크가 없고 두 기능은 Dashboard 초기 의존성에 포함된다.
+
 ## 2026-07-23 (Codex) — v0.2.39 준비 지연 곡의 정직한 드래그 재생
 
 - 목표 전체 재감사에서 공개 drag smoke가 클릭→검토, 취소 mutation 0, 이력 drop 무재생만 직접 증명하고 `지금 재생`·`대기열 끝`·현재곡 보존은 단위/이전 증거에 의존하는 약점을 다시 확인했다. 더 깊게 추적하자 새 검색 결과는 drop 전 prepare 감시 대상이 아니어서 거의 항상 `preparing`인데, 영문 트레이는 “준비 완료 후 바로 시작”을 약속하면서 실제 구현은 대기열 맨 앞에만 두고 자동 시작하지 않는 계약·UI 모순이 있었다.

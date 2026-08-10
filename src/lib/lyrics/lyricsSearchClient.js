@@ -76,7 +76,7 @@ export async function searchHostedLyrics({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
-  }, fetchImpl, input.sourcePriority === 'timing_only' ? 105_000 : 90_000);
+  }, fetchImpl, input.sourcePriority === 'timing_only' ? 150_000 : 90_000);
   if (response.ok) return body;
   const error = new Error(body.error || 'lyrics_web_search_failed');
   error.code = body.error || 'lyrics_web_search_failed';

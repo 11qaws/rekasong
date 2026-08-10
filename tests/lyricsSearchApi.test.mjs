@@ -203,7 +203,7 @@ test('playback audio timing fails closed without vocals or enough anchors', asyn
         }],
       }],
     })),
-    (error) => error.message === 'lyrics_timing_candidate_not_found' && error.status === 404,
+    (error) => error.message === 'lyrics_original_vocal_video_not_found' && error.status === 404,
   );
   assert.equal(validateLyricsSearchRequest({
     videoId: 'abcdefghijk',
@@ -211,6 +211,128 @@ test('playback audio timing fails closed without vocals or enough anchors', asyn
     sourcePriority: 'timing_only',
     lines: ['too few'],
   }), null);
+});
+
+test('instrumental playback timing maps locked lyric anchors from a cited original vocal video', async () => {
+  const instrumentalInput = validateLyricsSearchRequest({
+    ...timingInput,
+    playbackKind: 'instrumental',
+  });
+  const requests = [];
+  const candidate = await searchPlaybackLyricsTiming(instrumentalInput, 'fixture-key', async (url, options = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl.startsWith('https://www.youtube.com/oembed')) {
+      return Response.json({ title: 'Original Song', author_name: 'Example Artist' });
+    }
+    if (requestUrl.startsWith('https://www.youtube.com/watch?v=refvideo123')) {
+      return new Response('<script>var player={"lengthSeconds":"180"}</script>', { status: 200 });
+    }
+    if (requestUrl.startsWith('https://lrclib.net/api/search')) {
+      const syncedLyrics = timingLines.map((line, lineIndex) => {
+        const totalMs = 2_000 + (lineIndex * 2_500);
+        const seconds = Math.floor(totalMs / 1_000);
+        const hundredths = Math.floor((totalMs % 1_000) / 10);
+        return `[00:${String(seconds).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}]${line}`;
+      }).join('\n');
+      return Response.json([{
+        id: 123,
+        trackName: 'Original Song',
+        artistName: 'Example Artist',
+        duration: 180,
+        instrumental: false,
+        syncedLyrics,
+      }]);
+    }
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    if ((body.tools || []).some((tool) => tool.type === 'google_search')) {
+      const referenceUrl = 'https://www.youtube.com/watch?v=refvideo123';
+      return Response.json({
+        status: 'completed',
+        steps: [{
+          type: 'model_output',
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              sourceFound: true,
+              exactSongMatch: true,
+              vocalsExpected: true,
+              videoUrl: referenceUrl,
+            }),
+            annotations: [{ type: 'url_citation', url: referenceUrl }],
+          }],
+        }],
+      });
+    }
+    return Response.json({
+      status: 'completed',
+      steps: [{
+        type: 'model_output',
+        content: [{
+          type: 'text',
+            text: JSON.stringify({
+              targetInstrumentalOrKaraoke: true,
+              sameSongArrangement: true,
+              analysisConfidencePercent: 91,
+              startOffsetMs: 500,
+              endOffsetMs: 500,
+            }),
+        }],
+      }],
+    });
+  });
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1].input.slice(0, 2).map((item) => item.uri), [
+    'https://www.youtube.com/watch?v=refvideo123',
+    'https://www.youtube.com/watch?v=abcdefghijk',
+  ]);
+  assert.equal(requests[1].response_format.schema.properties.startOffsetMs.maximum, 30_000);
+  assert.match(requests[1].input[2].text, /Video 2 timestamp = Video 1 timestamp \+ offsetMs/u);
+  assert.equal(candidate.sourceKind, 'lrclib_reference_to_playback_timing');
+  assert.equal(candidate.timingAnalysisConfidence, 0.91);
+  assert.deepEqual(candidate.cues.map((cue) => cue.text), timingLines);
+  assert.deepEqual(candidate.cues.map((cue) => cue.anchorMs), [2_500, 5_000, 7_500, 10_000, 12_500]);
+});
+
+test('timing fetches the exact playback duration and rejects anchors outside the video', async () => {
+  const unknownDurationInput = validateLyricsSearchRequest({
+    videoId: 'abcdefghijk',
+    title: 'Synthetic Song',
+    artist: 'Example Artist',
+    sourcePriority: 'timing_only',
+    lines: timingLines,
+  });
+  await assert.rejects(
+    searchPlaybackLyricsTiming(unknownDurationInput, 'fixture-key', async (url) => {
+      if (String(url).startsWith('https://www.youtube.com/watch')) {
+        return new Response('<script>var player={"lengthSeconds":"12"}</script>', { status: 200 });
+      }
+      return Response.json({
+        status: 'completed',
+        steps: [{
+          type: 'model_output',
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              vocalsDetected: true,
+              exactLyricsSequence: true,
+              analysisConfidencePercent: 90,
+              anchors: timingLines.map((_, lineIndex) => ({
+                lineIndex,
+                anchorMs: 5_000 + (lineIndex * 2_000),
+                confidencePercent: 85,
+              })),
+            }),
+          }],
+        }],
+      });
+    }),
+    (error) => error.message === 'lyrics_timing_candidate_invalid'
+      && error.status === 422
+      && error.diagnostics.durationMs === 12_000
+      && error.diagnostics.anchorMs === 13_000,
+  );
 });
 
 test('synced web lyrics normalize into bounded timed cues', () => {
