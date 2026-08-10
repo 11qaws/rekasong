@@ -87,6 +87,13 @@ whole-song coverage. Missing anchors are review-only estimates and keep `timingE
 Unrelated captions leave the candidate untimed. Cross-track captions still require the existing
 two-reference remap because another arrangement is not proof of playback synchronization.
 
+If the exact playback captions do not meet that contract, the hosted Function may ask Gemini 3.6
+to analyze the exact YouTube playback against the locked line sequence. The model returns only
+zero-based line indexes and start milliseconds; application code reattaches the unchanged text.
+This fallback requires detected vocals, exact sequence confirmation, 70 percent overall confidence,
+60 percent per-anchor confidence, monotonic in-duration timestamps, and 70 percent line coverage.
+Instrumental or karaoke audio fails closed to the visible fixed-ms review mode.
+
 An MDict or newer dump can populate the same catalog record format during a maintainer build, but
 the publicly documented NamuWiki MDict archive ends in March 2021. It is therefore a supplemental
 source, not evidence that the current songbook is complete.

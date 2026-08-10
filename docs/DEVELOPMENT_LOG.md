@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-08-10 - Locked-text playback audio timing fallback (v0.2.80)
+
+- When same-playback captions cannot align to trusted lyrics, the hosted preparation flow can ask Gemini 3.6 to analyze the exact YouTube playback and return line indexes with start milliseconds only.
+- The model never owns or returns lyric wording. Rekasong attaches accepted anchors back to the already locked lines and preserves the source original and translation unchanged.
+- Timing fails closed unless vocals and the exact lyric sequence are detected, analysis confidence is at least 70 percent, each anchor confidence is at least 60 percent, anchors are strictly monotonic and in duration, and at least 70 percent of lines are covered.
+- Instrumental or karaoke tracks without usable vocals remain in explicit fixed-ms review mode instead of receiving invented precise timestamps.
+
 ## 2026-08-10 - Bundled songbook lyrics and trusted-text timing alignment (v0.2.79)
 
 - Registered all 949 Eureka Setlink entries in a generated coverage manifest and bundled 170 high-confidence Vocaro records whose title, author credits, original/reading/Korean triplets, and bounds all validate.

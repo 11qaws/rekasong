@@ -1587,7 +1587,7 @@ export default function Dashboard() {
     return result;
   }, []);
 
-  const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default') => {
+  const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default', lines = null) => {
     return searchHostedLyrics({
       endpoint: apiUrl('/api/lyrics-search'),
       catalogBaseUrl: new URL(`${import.meta.env.BASE_URL}lyrics-catalog/v1/`, window.location.href).toString(),
@@ -1597,6 +1597,7 @@ export default function Dashboard() {
         artist: automaticLyricsSearchArtist(song),
         sourcePriority,
         ...(Number.isFinite(song?.durationMs) ? { durationMs: song.durationMs } : {}),
+        ...(sourcePriority === 'timing_only' && Array.isArray(lines) ? { lines } : {}),
       },
     });
   }, []);
@@ -1722,14 +1723,23 @@ export default function Dashboard() {
         .then(async (loaded) => {
           if (!loaded || Array.isArray(loaded.candidate?.cues) && loaded.candidate.cues.length > 0) return loaded;
           const latestInfo = prepareStatesRef.current[videoId];
-          if (latestInfo?.status !== 'ready'
-            || automaticLyricsCandidateSource(latestInfo.lyrics) !== 'prepare') return loaded;
+          if (latestInfo?.status === 'ready'
+            && automaticLyricsCandidateSource(latestInfo.lyrics) === 'prepare') {
+            try {
+              const timed = await preparedCandidateRequest();
+              if (timed) {
+                const aligned = attachTrustedLyricsTiming(loaded.candidate, timed.candidate);
+                if (Array.isArray(aligned.cues) && aligned.cues.length > 0) {
+                  return { candidate: aligned, sessionKey: timed.sessionKey };
+                }
+              }
+            } catch { /* continue to bounded playback audio timing */ }
+          }
           try {
-            const timed = await preparedCandidateRequest();
-            if (!timed) return loaded;
+            const timed = await searchAutomaticLyrics(videoId, song, 'timing_only', loaded.candidate.lines);
             return {
-              candidate: attachTrustedLyricsTiming(loaded.candidate, timed.candidate),
-              sessionKey: timed.sessionKey,
+              candidate: attachTrustedLyricsTiming(loaded.candidate, timed),
+              sessionKey: loaded.sessionKey,
             };
           } catch { return loaded; }
         });

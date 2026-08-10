@@ -43,6 +43,35 @@ test('low-confidence captions cannot assign timestamps to trusted lyrics', () =>
   assert.equal(rejected, trusted);
 });
 
+test('partial trusted anchors interpolate missing lines but remain estimated', () => {
+  const partialTrusted = {
+    ...trusted,
+    lines: [
+      'red sunrise melody',
+      'blue ocean refrain',
+      'green forest cadence',
+      'golden moon chorus',
+      'silver river verse',
+      'violet sky ending',
+    ],
+  };
+  const aligned = attachTrustedLyricsTiming(partialTrusted, {
+    sourceKind: 'gemini_playback_audio_timing',
+    timingEstimated: true,
+    timingAnalysisConfidence: 0.84,
+    cues: [0, 1, 3, 4, 5].map((index) => ({
+      anchorMs: 1_000 + (index * 2_500),
+      text: partialTrusted.lines[index],
+    })),
+  });
+
+  assert.deepEqual(aligned.cues.map((cue) => cue.text), partialTrusted.lines);
+  assert.deepEqual(aligned.cues.map((cue) => cue.anchorMs), [1_000, 3_500, 6_000, 8_500, 11_000, 13_500]);
+  assert.equal(aligned.timingEstimated, true);
+  assert.equal(aligned.timingMatchCount, 5);
+  assert.equal(aligned.timingAnalysisConfidence, 0.84);
+});
+
 test('line similarity tolerates punctuation but not unrelated wording', () => {
   assert.ok(lyricsLineSimilarity('気付いたんだ、今は', '気付いたんだ 今は!') > 0.95);
   assert.ok(lyricsLineSimilarity('locked lyric', 'different sentence') < 0.3);

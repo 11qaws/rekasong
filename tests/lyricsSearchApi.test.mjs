@@ -7,6 +7,7 @@ import {
   extractVocaroLyrics,
   lyricsCacheKey,
   parseSyncedLyrics,
+  searchPlaybackLyricsTiming,
   searchLyrics,
   searchLrclibLyrics,
   selectLrclibCandidate,
@@ -19,6 +20,16 @@ const input = validateLyricsSearchRequest({
   title: 'Synthetic Song',
   artist: 'Example Artist',
   durationMs: 180_000,
+});
+
+const timingLines = Array.from({ length: 5 }, (_, index) => `locked lyric line ${index + 1}`);
+const timingInput = validateLyricsSearchRequest({
+  videoId: 'abcdefghijk',
+  title: 'Synthetic Song',
+  artist: 'Example Artist',
+  durationMs: 180_000,
+  sourcePriority: 'timing_only',
+  lines: timingLines,
 });
 
 function groundedResponse(options, {
@@ -138,6 +149,68 @@ test('Vocaro triplets preserve the original and Korean translation layers withou
   assert.equal(extracted.language, 'ja');
   assert.deepEqual(extracted.lines, Array.from({ length: 5 }, (_, index) => `original ${index + 1} 日本語`));
   assert.deepEqual(extracted.translations, Array.from({ length: 5 }, (_, index) => `번역 ${index + 1}`));
+});
+
+test('playback audio timing returns anchors attached only to the locked input lines', async () => {
+  let requestBody;
+  const candidate = await searchPlaybackLyricsTiming(timingInput, 'fixture-key', async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return Response.json({
+      status: 'completed',
+      steps: [{
+        type: 'model_output',
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            vocalsDetected: true,
+            exactLyricsSequence: true,
+            analysisConfidencePercent: 88,
+            anchors: timingLines.map((_, lineIndex) => ({
+              lineIndex,
+              anchorMs: 1_000 + (lineIndex * 2_500),
+              confidencePercent: 82,
+            })),
+          }),
+        }],
+      }],
+    });
+  });
+
+  assert.equal(requestBody.input[0].type, 'video');
+  assert.equal(requestBody.input[0].uri, 'https://www.youtube.com/watch?v=abcdefghijk');
+  assert.equal(requestBody.input[1].type, 'text');
+  assert.equal(candidate.sourceKind, 'gemini_playback_audio_timing');
+  assert.equal(candidate.timingEstimated, true);
+  assert.equal(candidate.timingAnalysisConfidence, 0.88);
+  assert.deepEqual(candidate.cues.map((cue) => cue.text), timingLines);
+  assert.deepEqual(candidate.cues.map((cue) => cue.anchorMs), [1_000, 3_500, 6_000, 8_500, 11_000]);
+});
+
+test('playback audio timing fails closed without vocals or enough anchors', async () => {
+  await assert.rejects(
+    searchPlaybackLyricsTiming(timingInput, 'fixture-key', async () => Response.json({
+      status: 'completed',
+      steps: [{
+        type: 'model_output',
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            vocalsDetected: false,
+            exactLyricsSequence: false,
+            analysisConfidencePercent: 30,
+            anchors: [],
+          }),
+        }],
+      }],
+    })),
+    (error) => error.message === 'lyrics_timing_candidate_not_found' && error.status === 404,
+  );
+  assert.equal(validateLyricsSearchRequest({
+    videoId: 'abcdefghijk',
+    title: 'Synthetic Song',
+    sourcePriority: 'timing_only',
+    lines: ['too few'],
+  }), null);
 });
 
 test('synced web lyrics normalize into bounded timed cues', () => {

@@ -96,6 +96,9 @@ export function validatePreparedLyricsCandidate(value, expectedVideoId = '') {
     timingAlignmentConfidence: Number.isFinite(value.timingAlignmentConfidence)
       ? value.timingAlignmentConfidence
       : null,
+    timingAnalysisConfidence: Number.isFinite(value.timingAnalysisConfidence)
+      ? value.timingAnalysisConfidence
+      : null,
     discoveryPath: Object.freeze((Array.isArray(value.discoveryPath) ? value.discoveryPath : [])
       .slice(0, 8)
       .map((item) => bounded(item, 80))
@@ -278,6 +281,7 @@ export async function createAutomaticLyricsDraft({
     timingMatchCount: candidate.timingMatchCount,
     timingLineCount: candidate.timingLineCount,
     timingAlignmentConfidence: candidate.timingAlignmentConfidence,
+    timingAnalysisConfidence: candidate.timingAnalysisConfidence,
     discoveryPath: candidate.discoveryPath,
   });
 }

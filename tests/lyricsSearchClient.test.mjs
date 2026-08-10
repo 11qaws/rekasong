@@ -86,3 +86,27 @@ test('a mismatched bundled record fails closed and falls through to the hosted p
   assert.equal(requests.length, 2);
   assert.equal(result.sourceKind, 'hosted');
 });
+
+test('timing-only analysis bypasses the bundled text catalog', async () => {
+  const timingInput = {
+    ...input,
+    sourcePriority: 'timing_only',
+    lines: Array.from({ length: 5 }, (_, index) => `line ${index + 1}`),
+  };
+  const requests = [];
+  const result = await searchHostedLyrics({
+    endpoint: 'https://rekasong.pages.dev/api/lyrics-search',
+    catalogBaseUrl: 'https://11qaws.github.io/rekasong/lyrics-catalog/v1/',
+    input: timingInput,
+    fetchImpl: async (url, options) => {
+      requests.push({ url: String(url), method: options.method });
+      return Response.json({ sourceKind: 'gemini_playback_audio_timing' });
+    },
+  });
+
+  assert.deepEqual(requests, [{
+    url: 'https://rekasong.pages.dev/api/lyrics-search',
+    method: 'POST',
+  }]);
+  assert.equal(result.sourceKind, 'gemini_playback_audio_timing');
+});

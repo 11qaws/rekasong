@@ -76,6 +76,9 @@ export function attachTrustedLyricsTiming(trustedCandidate, timingCandidate, {
     timingMatchCount: matches.length,
     timingLineCount: lines.length,
     timingAlignmentConfidence: Number(averageSimilarity.toFixed(3)),
+    timingAnalysisConfidence: Number.isFinite(timingCandidate.timingAnalysisConfidence)
+      ? timingCandidate.timingAnalysisConfidence
+      : null,
     discoveryPath: [...new Set([
       ...(trustedCandidate.discoveryPath || []),
       'trusted_text_timing_alignment',

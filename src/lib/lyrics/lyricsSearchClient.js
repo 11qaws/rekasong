@@ -68,13 +68,15 @@ export async function searchHostedLyrics({
   if (typeof fetchImpl !== 'function' || !endpoint || !input) {
     throw new TypeError('lyrics_search_configuration_invalid');
   }
-  const bundled = await searchBundledSongbookLyrics({ catalogBaseUrl, input, fetchImpl });
+  const bundled = input.sourcePriority === 'timing_only'
+    ? null
+    : await searchBundledSongbookLyrics({ catalogBaseUrl, input, fetchImpl });
   if (bundled) return bundled;
   const { response, body } = await requestJson(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
-  }, fetchImpl, 90_000);
+  }, fetchImpl, input.sourcePriority === 'timing_only' ? 105_000 : 90_000);
   if (response.ok) return body;
   const error = new Error(body.error || 'lyrics_web_search_failed');
   error.code = body.error || 'lyrics_web_search_failed';
