@@ -1,7 +1,7 @@
 {
   "name": "rekasong",
   "private": true,
-  "version": "0.2.78",
+  "version": "0.2.79",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,6 +27,7 @@
     "test:dashboard:smoke:local": "npm run build && node scripts/dashboard-production-smoke.mjs --local",
     "test:lyrics:smoke": "node scripts/lyrics-preparation-smoke.mjs",
     "test:lyrics:worker": "node scripts/lyrics-worker-production-smoke.mjs",
+    "build:lyrics:songbook": "node scripts/build-songbook-lyrics-catalog.mjs",
     "test:dashboard:pseudo": "node scripts/dashboard-pseudo-locale-smoke.mjs",
     "test:dashboard:history": "npm run build && node scripts/dashboard-history-performance-smoke.mjs",
     "test:dashboard:speaker-network": "node scripts/dashboard-speaker-network-smoke.mjs",

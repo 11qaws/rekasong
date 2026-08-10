@@ -35,7 +35,7 @@ export function validateLyricsSearchRequest(value) {
   const artist = bounded(value.artist, 240);
   if (!/^[A-Za-z0-9_-]{11}$/u.test(videoId) || !title) return null;
   const durationMs = Number(value.durationMs);
-  const sourcePriority = ['namuwiki_only', 'official_only'].includes(value.sourcePriority)
+  const sourcePriority = ['namuwiki_only', 'official_only', 'vocaro_only'].includes(value.sourcePriority)
     ? value.sourcePriority
     : 'default';
   return Object.freeze({
@@ -252,6 +252,7 @@ const samePublicPage = (left, right) => left.origin === right.origin
 const sourceCategory = (url) => {
   const host = url.hostname.toLocaleLowerCase('en');
   if (host === 'namu.wiki' || host.endsWith('.namu.wiki')) return 'namuwiki';
+  if (host === 'vocaro.wikidot.com') return 'vocaro';
   if (host === 'touhouwiki.net' || host.endsWith('.touhouwiki.net')
     || host === 'thwiki.cc' || host.endsWith('.thwiki.cc')) return 'touhou_wiki';
   if (host === 'vocadb.net' || host.endsWith('.vocadb.net')) return 'vocadb';
@@ -435,6 +436,75 @@ export function extractNamuWikiLyricsBlocks(value) {
     .map((block, blockIndex) => Object.freeze({ ...block, blockIndex })));
 }
 
+const inferLyricsLanguage = (lines) => {
+  const text = lines.join('');
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(text)) return 'ja';
+  if (/\p{Script=Hangul}/u.test(text)) return 'ko';
+  if (/\p{Script=Latin}/u.test(text)) return 'en';
+  return 'und';
+};
+
+export function extractVocaroLyrics(value, input = {}) {
+  const html = String(value || '');
+  if (!html || html.length > MAX_SOURCE_HTML_LENGTH) return null;
+  const titleMatch = html.match(/<([a-z][a-z\d]*)\b(?=[^>]*\bid=(['"])page-title\2)[^>]*>([^]*?)<\/\1>/iu);
+  const pageTitle = titleMatch ? htmlText(titleMatch[3]).replace(/\s+/gu, ' ').trim().slice(0, 240) : '';
+  const wantedTitle = comparable(input.title);
+  const foundTitle = comparable(pageTitle);
+  if (!wantedTitle || !foundTitle
+    || !(wantedTitle === foundTitle || wantedTitle.includes(foundTitle) || foundTitle.includes(wantedTitle))) return null;
+
+  const headings = [...html.matchAll(/<h([1-6])\b[^>]*>([^]*?)<\/h\1>/giu)].map((match) => ({
+    index: match.index,
+    end: match.index + match[0].length,
+    level: Number(match[1]),
+    text: htmlText(match[2]).replace(/\s+/gu, ' ').trim(),
+  }));
+  const lyricsHeading = headings.find((heading) => heading.text === '가사');
+  if (!lyricsHeading) return null;
+  const informationHeading = headings.find((heading) => heading.text === '정보');
+  const informationSection = informationHeading && informationHeading.index < lyricsHeading.index
+    ? html.slice(informationHeading.end, lyricsHeading.index)
+    : '';
+  const credits = [];
+  for (const row of informationSection.matchAll(/<tr\b[^>]*>([^]*?)<\/tr>/giu)) {
+    const cells = [...row[1].matchAll(/<t[dh]\b[^>]*>([^]*?)<\/t[dh]>/giu)]
+      .map((cell) => htmlText(cell[1]).replace(/\s+/gu, ' ').trim())
+      .filter(Boolean);
+    if (cells.length === 2 && ['작곡', '작사', '노래'].includes(cells[0])) {
+      credits.push(Object.freeze({ role: cells[0], name: cells[1].slice(0, 240) }));
+    }
+  }
+  const nextHeading = headings.find((heading) => (
+    heading.index > lyricsHeading.index && heading.level <= lyricsHeading.level
+  ));
+  const section = html.slice(lyricsHeading.end, nextHeading?.index || html.length);
+  const rows = [];
+  for (const row of section.matchAll(/<tr\b[^>]*>([^]*?)<\/tr>/giu)) {
+    const cells = [...row[1].matchAll(/<td\b[^>]*>([^]*?)<\/td>/giu)];
+    if (cells.length !== 1) continue;
+    const cellLines = htmlText(cells[0][1], { lineBreaks: true })
+      .split('\n')
+      .map((line) => line.replace(/[\t ]+/gu, ' ').trim())
+      .filter(Boolean);
+    if (cellLines.length !== 1) return null;
+    rows.push(cellLines[0]);
+  }
+  if (rows.length < 15 || rows.length > MAX_CUES * 3 || rows.length % 3 !== 0) return null;
+  const lines = normalizedVerbatimLines(rows.filter((_, index) => index % 3 === 0));
+  const readings = normalizedVerbatimLines(rows.filter((_, index) => index % 3 === 1));
+  const translations = normalizedVerbatimLines(rows.filter((_, index) => index % 3 === 2));
+  if (!lines || !readings || !translations
+    || lines.length !== readings.length || lines.length !== translations.length) return null;
+  return Object.freeze({
+    pageTitle,
+    language: inferLyricsLanguage(lines),
+    credits: Object.freeze(credits),
+    lines,
+    translations,
+  });
+}
+
 const namuWikiSourceText = (value) => decodeHtmlEntities(String(value || ''))
   .replace(/\[br(?:\s+[^\]]*)?\]|<br\b[^>]*>/giu, '\n')
   .replace(/\[ruby\(([^,\]]+),[^\]]*\)\]/giu, '$1')
@@ -529,13 +599,13 @@ async function requestGeminiInteraction({ apiKey, fetchImpl, input, tools, schem
   return interaction;
 }
 
-async function fetchNamuWikiHtml(value, fetchImpl) {
+async function fetchSourceHtml(value, expectedCategory, fetchImpl) {
   let url = safePublicUrl(value);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      if (!url || sourceCategory(url) !== 'namuwiki') return '';
+      if (!url || sourceCategory(url) !== expectedCategory) return '';
       const response = await fetchImpl(url, {
         headers: { 'User-Agent': 'Rekasong/0.2 (+https://github.com/11qaws/rekasong)' },
         redirect: 'manual',
@@ -761,13 +831,31 @@ async function extractNamuWikiLyricsPage(
     if (diagnostics) diagnostics.selected = true;
     return { ...sourceSelected, evidenceKind: 'namuwiki_api' };
   }
-  const html = await fetchNamuWikiHtml(discovery.sourceUrl, fetchImpl);
+  const html = await fetchSourceHtml(discovery.sourceUrl, 'namuwiki', fetchImpl);
   if (diagnostics) diagnostics.htmlRetrieved = Boolean(html);
   const blocks = extractNamuWikiLyricsBlocks(html);
   if (diagnostics) diagnostics.blockCount = blocks.length;
   const selected = await selectNamuWikiLyricsBlock(blocks, discovery, input, apiKey, fetchImpl);
   if (diagnostics) diagnostics.selected = Boolean(selected);
   return selected ? { ...selected, evidenceKind: 'direct_html' } : null;
+}
+
+async function extractVocaroLyricsPage(discovery, input, fetchImpl) {
+  if (discovery.sourceCategory !== 'vocaro') return null;
+  const html = await fetchSourceHtml(discovery.sourceUrl, 'vocaro', fetchImpl);
+  const extracted = extractVocaroLyrics(html, input);
+  if (!extracted) return null;
+  return {
+    completeLyricsConfirmed: true,
+    language: extracted.language,
+    sourceTitle: `${extracted.pageTitle} - 보카로 가사 위키`,
+    sourceUrl: discovery.sourceUrl,
+    sourceCategory: 'vocaro',
+    evidenceKind: 'vocaro_html',
+    lines: extracted.lines,
+    translations: extracted.translations,
+    translationSourceKind: 'vocaro_korean_translation',
+  };
 }
 
 async function extractGroundedLyricsPage(
@@ -778,6 +866,10 @@ async function extractGroundedLyricsPage(
   diagnostics = null,
   namuWikiApiToken = '',
 ) {
+  try {
+    const vocaro = await extractVocaroLyricsPage(discovery, input, fetchImpl);
+    if (vocaro) return vocaro;
+  } catch { /* fall through to the other verified extraction paths */ }
   try {
     const selected = await extractNamuWikiLyricsPage(
       discovery,
@@ -884,10 +976,18 @@ export function validateGroundedLyricsResult(value, citationValues, input) {
 
   const category = groundedSourceCategory(value, citedSource);
   const apiEvidence = category === 'namuwiki' && value.evidenceKind === 'namuwiki_api';
+  const vocaroEvidence = category === 'vocaro' && value.evidenceKind === 'vocaro_html';
+  const translations = value.translations == null
+    ? null
+    : normalizedVerbatimLines(value.translations);
+  if ((value.translations != null && (!translations || translations.length !== lines.length))
+    || (vocaroEvidence && !translations)) return null;
   const discoveryPath = input.sourcePriority === 'namuwiki_only'
       ? ['google_search', ...(apiEvidence ? ['namuwiki_api'] : []), 'namuwiki']
     : input.sourcePriority === 'official_only'
       ? ['google_search', 'official_web']
+      : input.sourcePriority === 'vocaro_only'
+        ? ['google_search', 'vocaro']
       : ['lrclib', 'google_search', category];
   return Object.freeze({
     schemaVersion: 1,
@@ -896,17 +996,25 @@ export function validateGroundedLyricsResult(value, citationValues, input) {
     language: bounded(value.language, 16) || 'und',
     sourceKind: apiEvidence
       ? 'namuwiki_api_verbatim_lyrics'
+      : vocaroEvidence
+        ? 'vocaro_verbatim_lyrics'
       : category === 'official_web'
         ? 'gemini_grounded_official_web_lyrics'
         : 'gemini_grounded_web_lyrics',
     sourceTitle: bounded(value.sourceTitle, 240) || `${input.title} lyrics`,
     sourceUrl: citedSource.toString(),
     retrievedAt: Date.now(),
-    autoGenerated: !['direct_html', 'namuwiki_api'].includes(value.evidenceKind),
+    autoGenerated: !['direct_html', 'namuwiki_api', 'vocaro_html'].includes(value.evidenceKind),
     originalTextPolicy: 'verbatim',
     timingEstimated: true,
     discoveryPath: Object.freeze(discoveryPath),
     lines: Object.freeze(lines),
+    ...(translations ? {
+      translations,
+      translationSourceKind: bounded(value.translationSourceKind, 80) || 'trusted_web_translation',
+      translationSourceTitle: bounded(value.sourceTitle, 240) || `${input.title} translation`,
+      translationSourceUrl: citedSource.toString(),
+    } : {}),
   });
 }
 
@@ -972,12 +1080,15 @@ export async function searchGroundedWebLyrics(input, apiKey, fetchImpl = globalT
     ? `Search only public NamuWiki pages on namu.wiki. If NamuWiki has no exact page that visibly includes the complete lyrics, return sourceFound false.`
     : requiredCategory === 'official_web'
       ? `Search only an official public artist, label, game, anime, or release page. If no official page visibly includes the complete lyrics, return sourceFound false.`
+      : requiredCategory === 'vocaro'
+        ? `Search only exact song pages on vocaro.wikidot.com. If Vocaro has no exact page with its three-row original, reading, and Korean translation table, return sourceFound false.`
       : `Search in this order, continuing only when the earlier tier has no complete match:
 1. NamuWiki.
 2. An official artist, label, game, anime, or release lyric page.
-3. Dedicated structured lyric sources with public access.
-4. Other subculture sources and discovery databases, especially Touhou Wiki and VocaDB. Follow their cited original source when the database itself does not expose the full lyrics.
-5. General web search.`;
+3. Vocaro (vocaro.wikidot.com) for Vocaloid and voice-synth songs.
+4. Dedicated structured lyric sources with public access.
+5. Other subculture sources and discovery databases, especially Touhou Wiki and VocaDB. Follow their cited original source when the database itself does not expose the full lyrics.
+6. General web search.`;
   const prompt = `Find one public source page that contains the complete original lyrics for this exact song.
 
 ${sourceOrder}
@@ -988,7 +1099,7 @@ Rules:
 - Use Google Search to identify the direct page, not a search results page.
 - Do not return, quote, reconstruct, translate, or summarize any lyrics in this discovery step.
 - Set sourceFound true only when the cited page visibly appears to contain the complete lyrics for the exact song.
-- Classify sourceCategory as namuwiki, official_web, structured_lyrics, or other.
+- Classify sourceCategory as namuwiki, vocaro, official_web, structured_lyrics, or other.
 - Return JSON only.
 
 Song title: ${JSON.stringify(input.title)}
@@ -1034,8 +1145,7 @@ Artist: ${JSON.stringify(input.artist)}`;
       )) ? '' : namuWikiApiToken,
     )
     : null;
-  const citations = extracted?.sourceCategory === 'namuwiki'
-    && ['direct_html', 'namuwiki_api'].includes(extracted?.evidenceKind)
+  const citations = ['direct_html', 'namuwiki_api', 'vocaro_html'].includes(extracted?.evidenceKind)
     ? [extracted.sourceUrl]
     : extracted
     ? await verifyGroundedLyricsPage(extracted, input, apiKey, fetchImpl)
@@ -1096,10 +1206,17 @@ export async function searchLyrics(input, {
   if (input.sourcePriority === 'official_only') {
     return searchGroundedWebLyrics(input, apiKey, fetchImpl, { requiredCategory: 'official_web' });
   }
+  if (input.sourcePriority === 'vocaro_only') {
+    return searchGroundedWebLyrics(input, apiKey, fetchImpl, { requiredCategory: 'vocaro' });
+  }
   try {
     return await searchLrclibLyrics(input, fetchImpl);
   } catch {
-    return searchGroundedWebLyrics(input, apiKey, fetchImpl);
+    try {
+      return await searchGroundedWebLyrics(input, apiKey, fetchImpl);
+    } catch {
+      return searchGroundedWebLyrics(input, apiKey, fetchImpl, { requiredCategory: 'vocaro' });
+    }
   }
 }
 

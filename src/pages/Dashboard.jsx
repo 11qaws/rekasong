@@ -114,6 +114,7 @@ import {
   createAutomaticLyricsDraft,
 } from '../lib/lyrics/lyricsAutoPreparation';
 import { searchHostedLyrics } from '../lib/lyrics/lyricsSearchClient';
+import { attachTrustedLyricsTiming } from '../lib/lyrics/lyricsTimingMatch';
 import {
   PREPARE_REQUEST_ERROR_CODES,
   YOUTUBE_ID_PATTERN,
@@ -1589,6 +1590,7 @@ export default function Dashboard() {
   const searchAutomaticLyrics = useCallback(async (videoId, song, sourcePriority = 'default') => {
     return searchHostedLyrics({
       endpoint: apiUrl('/api/lyrics-search'),
+      catalogBaseUrl: new URL(`${import.meta.env.BASE_URL}lyrics-catalog/v1/`, window.location.href).toString(),
       input: {
         videoId,
         title: song?.title || '',
@@ -1709,12 +1711,28 @@ export default function Dashboard() {
         ? Promise.reject(new Error('lyrics_priority_web_missed'))
         : searchAutomaticLyrics(videoId, song, 'namuwiki_only')
           .catch(() => searchAutomaticLyrics(videoId, song, 'official_only'))
+          .catch(() => searchAutomaticLyrics(videoId, song, 'vocaro_only'))
           .then((candidate) => ({ candidate, sessionKey: '' }))
           .catch((error) => {
             automaticLyricsPriorityMissesRef.current.add(videoId);
             throw error;
           });
-      const candidateRequest = priorityWebRequest.catch(() => fallbackCandidateRequest());
+      const candidateRequest = priorityWebRequest
+        .catch(() => fallbackCandidateRequest())
+        .then(async (loaded) => {
+          if (!loaded || Array.isArray(loaded.candidate?.cues) && loaded.candidate.cues.length > 0) return loaded;
+          const latestInfo = prepareStatesRef.current[videoId];
+          if (latestInfo?.status !== 'ready'
+            || automaticLyricsCandidateSource(latestInfo.lyrics) !== 'prepare') return loaded;
+          try {
+            const timed = await preparedCandidateRequest();
+            if (!timed) return loaded;
+            return {
+              candidate: attachTrustedLyricsTiming(loaded.candidate, timed.candidate),
+              sessionKey: timed.sessionKey,
+            };
+          } catch { return loaded; }
+        });
       const job = candidateRequest
         .then(async (loaded) => {
           if (!loaded) return;

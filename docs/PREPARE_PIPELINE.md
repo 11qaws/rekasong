@@ -68,6 +68,29 @@ failed      실패 (reason, failureKind, attempts, nextRetryAt)
 **재시도:** `failed`는 지수 백오프(`nextRetryAt`). `botwall`은 더 길게(5분→
 30분). `unavailable`(삭제/비공개 영상)은 **재시도하지 않는다** — 영구 실패.
 
+### Four-stage lyrics preparation
+
+1. Collect and lock the exact original lines from a trusted text source.
+2. Reuse a source-provided Korean translation when its line structure validates; otherwise create a separate review-only translation draft.
+3. Obtain start anchors from the exact playback video's manual/automatic captions or synchronized LRC. Trusted text and timing are separate inputs.
+4. Align timing to the locked lines monotonically, reject low-confidence matches, then require playback preview and per-cue review before publishing.
+
+The bundled Eureka catalog is generated into `public/lyrics-catalog/v1`. Its manifest registers all
+949 Setlink identities and records explicit `bundled` or `missing` coverage. Ordinary browsers fetch
+one SHA-256-addressed JSON record for the requested title and artist; they never download the whole
+catalog or run npm. Vocaro records preserve both the original and Korean translation triplet layers
+and include source/licence attribution.
+
+For timing, captions never replace verified lyrics. Rekasong compares each locked line against the
+next bounded caption window, accepts matches at 0.60 or higher, and requires at least 70 percent
+whole-song coverage. Missing anchors are review-only estimates and keep `timingEstimated=true`.
+Unrelated captions leave the candidate untimed. Cross-track captions still require the existing
+two-reference remap because another arrangement is not proof of playback synchronization.
+
+An MDict or newer dump can populate the same catalog record format during a maintainer build, but
+the publicly documented NamuWiki MDict archive ends in March 2021. It is therefore a supplemental
+source, not evidence that the current songbook is complete.
+
 ### Web lyrics fallback
 
 If prepared audio is ready but YouTube reports no usable timed caption, the Dashboard calls

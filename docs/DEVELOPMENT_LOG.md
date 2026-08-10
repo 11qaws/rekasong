@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-08-10 - Bundled songbook lyrics and trusted-text timing alignment (v0.2.79)
+
+- Registered all 949 Eureka Setlink entries in a generated coverage manifest and bundled 170 high-confidence Vocaro records whose title, author credits, original/reading/Korean triplets, and bounds all validate.
+- The browser checks the same-origin bundled record before hosted providers. Source-specific searches still enforce their requested NamuWiki, official, or Vocaro tier.
+- Vocaro originals and Korean translations remain source-owned and locked. Their CC BY 4.0 attribution and direct page URL travel with each generated record; Gemini translation is skipped.
+- Trusted text can now receive start anchors from the same playback video's timed captions without accepting the caption wording. A monotonic comparison needs at least 60 percent line similarity and 70 percent song coverage; otherwise it fails closed to review.
+- Automatic preparation exposes an explicit timing phase and retains match count, confidence, timing source, estimated-timing status, and the existing review gate.
+- UtaTen is discovery-only because its published terms restrict lyrics to personal viewing and require prior written permission for reproduction or republication. The official and third-party NamuWiki viewer apps expose no reusable public data API.
+- Legacy public NamuWiki MDict archives stop at March 2021, so the format is accepted as a future catalog input but cannot prove current 949-song coverage by itself.
+
 ## 2026-08-10 - Bounded NamuWiki API attempts (v0.2.78)
 
 - A NamuWiki API authorization rejection or rate limit now stops additional API candidates within the same lyrics request.

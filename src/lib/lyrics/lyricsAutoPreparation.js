@@ -3,6 +3,7 @@ import { sha256TextHash } from './lyricsPackage.js';
 export const AUTOMATIC_LYRICS_PHASES = Object.freeze({
   COLLECTING: 'collecting',
   TRANSLATING: 'translating',
+  TIMING: 'timing',
   REVIEW_REQUIRED: 'review_required',
   READY: 'ready',
   FAILED: 'failed',
@@ -17,6 +18,7 @@ const verbatimSourceKinds = new Set([
   'lrclib_synced_lyrics',
   'gemini_grounded_web_lyrics',
   'gemini_grounded_official_web_lyrics',
+  'vocaro_verbatim_lyrics',
 ]);
 
 const bounded = (value, max = 240) => String(value ?? '').trim().slice(0, max);
@@ -48,7 +50,8 @@ export function validatePreparedLyricsCandidate(value, expectedVideoId = '') {
     || !allowedCandidateStatuses.has(value.status)
     || (expectedVideoId && value.videoId !== expectedVideoId)
     || (value.cues != null && !Array.isArray(value.cues))
-    || (value.lines != null && !Array.isArray(value.lines))) return null;
+    || (value.lines != null && !Array.isArray(value.lines))
+    || (value.translations != null && !Array.isArray(value.translations))) return null;
 
   let previousAnchor = -1;
   const cues = [];
@@ -65,6 +68,11 @@ export function validatePreparedLyricsCandidate(value, expectedVideoId = '') {
     : (value.lines || []).map((line) => String(line ?? '').normalize('NFC').trim());
   if (lines.length === 0 || lines.length > MAX_CUES
     || lines.some((line) => !line || line.length > MAX_TEXT_LENGTH)) return null;
+  const translations = value.translations == null
+    ? null
+    : value.translations.map((line) => String(line ?? '').normalize('NFC').trim());
+  if (translations && (translations.length !== lines.length
+    || translations.some((line) => !line || line.length > MAX_TEXT_LENGTH))) return null;
   const sourceKind = bounded(value.sourceKind, 80) || 'youtube_caption';
 
   return Object.freeze({
@@ -81,12 +89,25 @@ export function validatePreparedLyricsCandidate(value, expectedVideoId = '') {
       ? 'verbatim'
       : 'caption_correction',
     timingEstimated: cues.length === 0 || value.timingEstimated === true,
+    timingSourceKind: bounded(value.timingSourceKind, 80),
+    timingSourceUrl: bounded(value.timingSourceUrl, 1_024) || null,
+    timingMatchCount: Number.isInteger(value.timingMatchCount) ? value.timingMatchCount : 0,
+    timingLineCount: Number.isInteger(value.timingLineCount) ? value.timingLineCount : 0,
+    timingAlignmentConfidence: Number.isFinite(value.timingAlignmentConfidence)
+      ? value.timingAlignmentConfidence
+      : null,
     discoveryPath: Object.freeze((Array.isArray(value.discoveryPath) ? value.discoveryPath : [])
       .slice(0, 8)
       .map((item) => bounded(item, 80))
       .filter(Boolean)),
     lines: Object.freeze(lines),
     cues: Object.freeze(cues),
+    ...(translations ? {
+      translations: Object.freeze(translations),
+      translationSourceKind: bounded(value.translationSourceKind, 80) || 'trusted_web_translation',
+      translationSourceTitle: bounded(value.translationSourceTitle, 240) || bounded(value.sourceTitle, 240),
+      translationSourceUrl: bounded(value.translationSourceUrl, 1_024) || bounded(value.sourceUrl, 1_024) || null,
+    } : {}),
   });
 }
 
@@ -157,19 +178,29 @@ export async function createAutomaticLyricsDraft({
   const originalLines = candidate.lines;
   const contentHash = await sha256TextHash(originalLines.join('\n'));
   const preserveOriginal = candidate.originalTextPolicy === 'verbatim';
+  const usesProvidedTranslation = Array.isArray(candidate.translations);
   onPhase(AUTOMATIC_LYRICS_PHASES.TRANSLATING);
   let result;
-  try {
-    result = await translate({
-      contentHash,
-      title: song?.title || '',
-      artist: automaticLyricsSearchArtist(song),
-      originalLanguage: candidate.language,
-      preserveOriginal,
-      originalLines,
-    });
-  } catch (cause) {
-    throw new AutomaticLyricsPreparationError('lyrics_translation_failed', cause);
+  if (usesProvidedTranslation) {
+    result = {
+      correctedOriginalLines: originalLines,
+      translations: candidate.translations,
+      sourceTier: 'trusted_web',
+      providerId: candidate.translationSourceKind,
+    };
+  } else {
+    try {
+      result = await translate({
+        contentHash,
+        title: song?.title || '',
+        artist: automaticLyricsSearchArtist(song),
+        originalLanguage: candidate.language,
+        preserveOriginal,
+        originalLines,
+      });
+    } catch (cause) {
+      throw new AutomaticLyricsPreparationError('lyrics_translation_failed', cause);
+    }
   }
   if (!Array.isArray(result?.correctedOriginalLines)
     || result.correctedOriginalLines.length !== originalLines.length
@@ -202,6 +233,7 @@ export async function createAutomaticLyricsDraft({
   };
   const correctedContentHash = await sha256TextHash(correctedOriginalLines.join('\n'));
 
+  onPhase(AUTOMATIC_LYRICS_PHASES.TIMING);
   onPhase(AUTOMATIC_LYRICS_PHASES.REVIEW_REQUIRED);
   return Object.freeze({
     source: 'automatic_prepare',
@@ -220,9 +252,12 @@ export async function createAutomaticLyricsDraft({
       : candidate.sourceKind,
     translationText: translations.join('\n'),
     translationSourceTier,
-    translationSourceTitle: isKorean(candidate.language)
-      ? 'Contextual Korean caption polish'
-      : 'Contextual Korean machine draft',
+    translationSourceTitle: usesProvidedTranslation
+      ? candidate.translationSourceTitle
+      : isKorean(candidate.language)
+        ? 'Contextual Korean caption polish'
+        : 'Contextual Korean machine draft',
+    translationSourceUrl: usesProvidedTranslation ? candidate.translationSourceUrl : null,
     translationProviderId,
     mappingDrafts: translations.map((displayKo, index) => ({
       mappingId: `M${String(index + 1).padStart(3, '0')}`,
@@ -231,11 +266,18 @@ export async function createAutomaticLyricsDraft({
     })),
     reviewRequired: true,
     originalTextLocked: preserveOriginal,
-    autoGenerated: candidate.autoGenerated || !isKorean(candidate.language) || correctionCount > 0,
+    autoGenerated: candidate.autoGenerated
+      || (!usesProvidedTranslation && !isKorean(candidate.language))
+      || correctionCount > 0,
     contentHash: correctedContentHash,
     sourceContentHash: contentHash,
     correctionCount,
     timingEstimated: candidate.timingEstimated,
+    timingSourceKind: candidate.timingSourceKind,
+    timingSourceUrl: candidate.timingSourceUrl,
+    timingMatchCount: candidate.timingMatchCount,
+    timingLineCount: candidate.timingLineCount,
+    timingAlignmentConfidence: candidate.timingAlignmentConfidence,
     discoveryPath: candidate.discoveryPath,
   });
 }
